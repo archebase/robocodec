@@ -10,10 +10,10 @@
 - **Unified API**: Single `RoboReader`/`RoboWriter` interface for all formats with auto-detection
 - **Multi-Format Support**: Read and write MCAP and ROS1 bag files
 - **Auto-Strategy Selection**: Uses parallel processing when available, falls back to sequential
-- **Message Codecs**: CDR (ROS1/ROS2), Protobuf, and JSON (experimental) encoding/decoding
+- **Message Codecs**: CDR (ROS1/ROS2), Protobuf, and JSON encoding/decoding
 - **Schema Parsing**: Parse ROS `.msg` files, ROS2 IDL, and OMG IDL formats
-- **Data Transformation**: Built-in support for topic renaming, type normalization, and format conversion
-- **Memory Efficient**: Arena allocation and zero-copy operations
+- **Data Transformation**: Built-in support for topic renaming, type renaming, and wildcard-based transformations
+- **Memory Efficient**: Arena allocation and zero-copy operations via memory-mapped files
 
 ## Installation
 
@@ -54,7 +54,7 @@ robocodec = { version = "0.1", features = ["jemalloc"] }
 
 | Feature | Description |
 |---------|-------------|
-| `python` | Python bindings via PyO3 (under development) |
+| `python` | Python bindings via PyO3 |
 | `jemalloc` | Use jemalloc allocator (Linux only) |
 
 ## Quick Start
@@ -62,7 +62,7 @@ robocodec = { version = "0.1", features = ["jemalloc"] }
 ### Reading Files (Auto-Detect Format)
 
 ```rust
-use robocodec::RoboReader;
+use robocodec::{FormatReader, RoboReader};
 
 // Format auto-detected, parallel mode used when available
 let reader = RoboReader::open("data.mcap")?;
@@ -72,7 +72,7 @@ println!("Channels: {}", reader.channels().len());
 ### Writing Files (Auto-Detect Format)
 
 ```rust
-use robocodec::RoboWriter;
+use robocodec::{FormatWriter, RoboWriter};
 
 // Format detected from extension (.mcap or .bag)
 let mut writer = RoboWriter::create("output.mcap")?;
@@ -80,13 +80,40 @@ let channel_id = writer.add_channel("/topic", "type", "cdr", None)?;
 writer.finish()?;
 ```
 
-### Rewriting with Auto-Detection
+### Rewriting with Transformations
 
 ```rust
-use robocodec::RoboRewriter;
+use robocodec::{RoboRewriter, TransformBuilder};
 
 let mut rewriter = RoboRewriter::open("input.mcap")?;
+
+// Optional: Add transformations
+let transform = TransformBuilder::new()
+    .with_topic_rename("/old/topic", "/new/topic")
+    .with_type_rename("OldType", "NewType")
+    .build();
+rewriter.set_transform(transform);
+
 rewriter.rewrite("output.mcap")?;
+```
+
+### Python API
+
+```python
+from robocodec import RoboReader, RoboWriter, RoboRewriter
+
+# Reading
+reader = RoboReader("data.mcap")
+print(f"Channels: {len(reader.channels)}")
+
+# Writing
+writer = RoboWriter("output.bag")
+channel_id = writer.add_channel("/topic", "type", "cdr")
+writer.finish()
+
+# Rewriting with transforms
+rewriter = RoboRewriter("input.mcap")
+rewriter.rewrite("output.mcap")
 ```
 
 ## Architecture
@@ -99,25 +126,29 @@ Robocodec provides a **unified API** through `RoboReader` and `RoboWriter`, with
 ┌─────────────────────────────────────────────┐
 │  User Layer (lib.rs)                        │
 │  - RoboReader, RoboWriter, RoboRewriter     │
+│  - TransformBuilder, FormatReader/Writer    │
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
 │  Unified I/O Layer                          │
 │  - io/reader/mod.rs (auto-strategy)         │
 │  - io/writer/mod.rs (auto-strategy)         │
+│  - io/traits.rs (FormatReader/Writer)       │
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
-│  Format-Specific Layer (internal)           │
-│  - io/formats/mcap/ (MCAP impl)             │
-│  - io/formats/bag/ (ROS1 bag impl)          │
+│  Format-Specific Layer                      │
+│  - io/formats/mcap/ (parallel/sequential)   │
+│  - io/formats/bag/ (parallel/sequential)    │
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
 │  Foundation Layer                           │
 │  - core/ (errors, types)                    │
-│  - encoding/ (codecs)                        │
-│  - schema/ (parsing)                         │
+│  - encoding/ (CDR, Protobuf, JSON)          │
+│  - schema/ (msg, IDL parsers)               │
+│  - transform/ (topic/type renaming)         │
+│  - types/ (arena, chunk, buffer pool)       │
 └─────────────────────────────────────────────┘
 ```
 
@@ -134,16 +165,79 @@ For more details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | Format | Read | Write | Notes |
 |--------|------|-------|-------|
 | MCAP | ✅ | ✅ | Common data format optimized for appending |
-| ROS1 Bag | ✅ | ✅ | ROS1 rosbag format |
+| ROS1 Bag | ✅ | ✅ | ROS1 rosbag format with v2 support |
+
+## Message Encodings
+
+| Encoding | Read | Write | Notes |
+|----------|------|-------|-------|
 | CDR | ✅ | ✅ | Common Data Representation (ROS1/ROS2) |
 | Protobuf | ✅ | ✅ | Protocol Buffers |
-| JSON | ⚠️ | ⚠️ | Experimental (not well-tested) |
+| JSON | ✅ | ✅ | JSON encoding |
 
 ## Schema Support
 
-- ROS `.msg` files (ROS1)
-- ROS2 IDL (Interface Definition Language)
-- OMG IDL (Object Management Group)
+| Format | Status |
+|--------|--------|
+| ROS `.msg` files | ✅ |
+| ROS2 IDL | ✅ |
+| OMG IDL | ✅ |
+
+## Transformations
+
+The `transform` module provides flexible data transformation capabilities:
+
+- **Topic Rename**: Map individual topics or use wildcard patterns
+- **Type Rename**: Rename message types with wildcard support
+- **Combined Transform**: Rename topics and types together
+
+```rust
+use robocodec::TransformBuilder;
+
+let transform = TransformBuilder::new()
+    .with_topic_rename("/camera/front", "/sensors/camera_front")
+    .with_topic_rename_wildcard("/old/*", "/new/*")
+    .with_type_rename("geometry_msgs/Point", "my_pkg/Point3D")
+    .with_type_rename_wildcard("std_msgs/*", "my_msgs/*")
+    .build();
+```
+
+## Python Bindings
+
+Python bindings are available via PyO3:
+
+```bash
+# Build Python package
+cargo build --release --features python
+
+# Install in development mode
+make build-python-dev
+```
+
+### Python API
+
+```python
+from robocodec import RoboReader, RoboWriter, RoboRewriter, TransformBuilder
+
+# Reading
+reader = RoboReader("data.mcap")
+for channel in reader.channels:
+    print(f"{channel.topic}: {channel.message_type}")
+
+# Writing
+writer = RoboWriter("output.mcap")
+ch_id = writer.add_channel("/imu", "sensor_msgs/Imu", "cdr")
+
+# Rewriting with transforms
+transform = TransformBuilder()
+    .with_topic_rename("/old/topic", "/new/topic")
+    .build()
+
+rewriter = RoboRewriter("input.bag")
+rewriter.with_transforms(transform)
+stats = rewriter.rewrite("output.mcap")
+print(f"Processed {stats.message_count} messages")
+```
 
 ## Development
 
@@ -156,8 +250,14 @@ cargo build --release
 # Run tests
 cargo test
 
-# Run with specific features
-cargo build --features python
+# Format code
+make fmt
+
+# Run linter
+make lint
+
+# Run all checks
+make check
 ```
 
 ## Contributing
