@@ -11,7 +11,7 @@ pub mod builder;
 pub mod write_strategy;
 
 pub use builder::{WriterBuilder, WriterConfig};
-pub use write_strategy::{ParallelWrite, SequentialWrite, WriteStrategy};
+pub use write_strategy::{AutoWrite, ParallelWrite, SequentialWrite, WriteStrategy};
 
 use crate::io::metadata::RawMessage;
 use crate::io::traits::FormatWriter;
@@ -34,7 +34,7 @@ impl RoboWriter {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use roboflow::io::RoboWriter;
+    /// use robocodec::io::RoboWriter;
     ///
     /// let writer = RoboWriter::create("output.mcap")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -102,5 +102,166 @@ impl FormatWriter for RoboWriter {
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self.inner.as_any_mut()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::io::metadata::{ChannelInfo, RawMessage};
+
+    // Mock FormatWriter for testing
+    struct MockWriter {
+        path: String,
+        channels: Vec<ChannelInfo>,
+        messages: Vec<RawMessage>,
+    }
+
+    impl MockWriter {
+        fn new(path: &str) -> Self {
+            Self {
+                path: path.to_string(),
+                channels: Vec::new(),
+                messages: Vec::new(),
+            }
+        }
+    }
+
+    impl FormatWriter for MockWriter {
+        fn path(&self) -> &str {
+            &self.path
+        }
+
+        fn add_channel(
+            &mut self,
+            topic: &str,
+            message_type: &str,
+            _encoding: &str,
+            _schema: Option<&str>,
+        ) -> Result<u16> {
+            let id = self.channels.len() as u16;
+            self.channels.push(ChannelInfo {
+                id,
+                topic: topic.to_string(),
+                message_type: message_type.to_string(),
+                encoding: "mock".to_string(),
+                schema: None,
+                schema_data: None,
+                schema_encoding: None,
+                message_count: 0,
+                callerid: None,
+            });
+            Ok(id)
+        }
+
+        fn write(&mut self, message: &RawMessage) -> Result<()> {
+            self.messages.push(message.clone());
+            Ok(())
+        }
+
+        fn write_batch(&mut self, messages: &[RawMessage]) -> Result<()> {
+            self.messages.extend(messages.iter().cloned());
+            Ok(())
+        }
+
+        fn finish(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn message_count(&self) -> u64 {
+            self.messages.len() as u64
+        }
+
+        fn channel_count(&self) -> usize {
+            self.channels.len()
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+    }
+
+    #[test]
+    fn test_robowriter_downcast_ref() {
+        let mock = MockWriter::new("test.mcap");
+        let writer = RoboWriter {
+            inner: Box::new(mock),
+        };
+
+        // Should be able to downcast to MockWriter
+        let mock_ref = writer.downcast_ref::<MockWriter>();
+        assert!(mock_ref.is_some());
+        assert_eq!(mock_ref.unwrap().path(), "test.mcap");
+    }
+
+    #[test]
+    fn test_robowriter_downcast_mut() {
+        let mock = MockWriter::new("test.mcap");
+        let mut writer = RoboWriter {
+            inner: Box::new(mock),
+        };
+
+        // Should be able to downcast mutably to MockWriter
+        let mock_mut = writer.downcast_mut::<MockWriter>();
+        assert!(mock_mut.is_some());
+        assert_eq!(mock_mut.unwrap().path(), "test.mcap");
+    }
+
+    #[test]
+    fn test_robowriter_downcast_wrong_type() {
+        let mock = MockWriter::new("test.mcap");
+        let mut writer = RoboWriter {
+            inner: Box::new(mock),
+        };
+
+        // Try to downcast to wrong type should fail
+        let wrong_ref = writer.downcast_ref::<String>();
+        assert!(wrong_ref.is_none());
+
+        let wrong_mut = writer.downcast_mut::<String>();
+        assert!(wrong_mut.is_none());
+    }
+
+    #[test]
+    fn test_robowriter_delegates_to_inner() {
+        let mut mock = MockWriter::new("test.bag");
+        let channel_id = mock
+            .add_channel("/test", "test_msgs/Test", "cdr", None)
+            .unwrap();
+
+        let mut writer = RoboWriter {
+            inner: Box::new(mock),
+        };
+
+        // Test delegation of path
+        assert_eq!(writer.path(), "test.bag");
+
+        // Test delegation of channel_count
+        assert_eq!(writer.channel_count(), 1);
+
+        // Test delegation of message_count
+        assert_eq!(writer.message_count(), 0);
+
+        // Test write delegation
+        let msg = RawMessage {
+            channel_id,
+            log_time: 1000,
+            publish_time: 1000,
+            data: vec![1, 2, 3],
+            sequence: None,
+        };
+        writer.write(&msg).unwrap();
+        assert_eq!(writer.message_count(), 1);
+
+        // Test write_batch delegation
+        writer.write_batch(&[msg.clone(), msg.clone()]).unwrap();
+        assert_eq!(writer.message_count(), 3);
+
+        // Test finish delegation
+        writer.finish().unwrap();
     }
 }

@@ -201,7 +201,7 @@ impl BufferPoolInner {
 /// # Example
 ///
 /// ```no_run
-/// use roboflow::pipeline::types::buffer_pool::BufferPool;
+/// use robocodec::types::buffer_pool::BufferPool;
 ///
 /// # fn main() {
 /// let pool = BufferPool::with_capacity(4 * 1024 * 1024);
@@ -249,7 +249,7 @@ impl BufferPool {
     /// # Example
     ///
     /// ```no_run
-    /// use roboflow::pipeline::types::buffer_pool::BufferPool;
+    /// use robocodec::types::buffer_pool::BufferPool;
     ///
     /// # fn main() {
     /// let pool = BufferPool::new();
@@ -314,7 +314,7 @@ impl BufferPool {
     ///
     /// ```no_run
     /// # fn main() {
-    /// use roboflow::pipeline::types::buffer_pool::BufferPool;
+    /// use robocodec::types::buffer_pool::BufferPool;
     ///
     /// let buffer_pool = BufferPool::new();
     /// let mut data = vec![1, 2, 3];

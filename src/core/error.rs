@@ -304,3 +304,252 @@ impl From<std::io::Error> for CodecError {
 
 /// Result type for robocodec operations.
 pub type Result<T> = std::result::Result<T, CodecError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_error() {
+        let err = CodecError::parse("TestContext", "test error message");
+        assert!(matches!(err, CodecError::ParseError { .. }));
+        assert_eq!(
+            err.to_string(),
+            "Parse error in TestContext: test error message"
+        );
+    }
+
+    #[test]
+    fn test_invalid_schema_error() {
+        let err = CodecError::invalid_schema("MySchema", "invalid field");
+        assert!(matches!(err, CodecError::InvalidSchema { .. }));
+        assert_eq!(err.to_string(), "Invalid schema 'MySchema': invalid field");
+    }
+
+    #[test]
+    fn test_type_not_found_error() {
+        let err = CodecError::type_not_found("UnknownType");
+        assert!(matches!(err, CodecError::TypeNotFound { .. }));
+        assert_eq!(err.to_string(), "Type not found: 'UnknownType'");
+    }
+
+    #[test]
+    fn test_encode_error() {
+        let err = CodecError::encode("CDR", "encoding failed");
+        assert!(matches!(err, CodecError::EncodeError { .. }));
+        assert_eq!(err.to_string(), "CDR encode error: encoding failed");
+    }
+
+    #[test]
+    fn test_buffer_too_short_error() {
+        let err = CodecError::buffer_too_short(100, 50, 10);
+        assert!(matches!(err, CodecError::BufferTooShort { .. }));
+        assert_eq!(
+            err.to_string(),
+            "Buffer too short: requested 100 bytes at position 10, but only 50 bytes available"
+        );
+    }
+
+    #[test]
+    fn test_alignment_error() {
+        let err = CodecError::alignment_error(8, 5);
+        assert!(matches!(err, CodecError::AlignmentError { .. }));
+        assert_eq!(
+            err.to_string(),
+            "Alignment error: expected alignment of 8, but position is 5"
+        );
+    }
+
+    #[test]
+    fn test_length_exceeded_error() {
+        let err = CodecError::length_exceeded(1000, 500, 800);
+        assert!(matches!(err, CodecError::LengthExceeded { .. }));
+        assert_eq!(
+            err.to_string(),
+            "Length 1000 exceeds buffer at position 500 (buffer length: 800)"
+        );
+    }
+
+    #[test]
+    fn test_unsupported_error() {
+        let err = CodecError::unsupported("complex_feature");
+        assert!(matches!(err, CodecError::Unsupported { .. }));
+        assert_eq!(err.to_string(), "Unsupported feature: 'complex_feature'");
+    }
+
+    #[test]
+    fn test_invariant_violation_error() {
+        let err = CodecError::invariant_violation("buffer invariant");
+        assert!(matches!(err, CodecError::InvariantViolation { .. }));
+        assert_eq!(err.to_string(), "Invariant violation: buffer invariant");
+    }
+
+    #[test]
+    fn test_unknown_codec_error() {
+        let err = CodecError::unknown_codec("unknown_encoding");
+        assert!(matches!(err, CodecError::Unsupported { .. }));
+        assert_eq!(
+            err.to_string(),
+            "Unsupported feature: 'unknown codec: unknown_encoding'"
+        );
+    }
+
+    #[test]
+    fn test_other_error() {
+        let err = CodecError::Other("something went wrong".to_string());
+        assert!(matches!(err, CodecError::Other(_)));
+        assert_eq!(err.to_string(), "Other error: something went wrong");
+    }
+
+    #[test]
+    fn test_log_fields_parse_error() {
+        let err = CodecError::parse("Context", "message");
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "context");
+        assert_eq!(fields[0].1, "Context");
+        assert_eq!(fields[1].0, "message");
+        assert_eq!(fields[1].1, "message");
+    }
+
+    #[test]
+    fn test_log_fields_buffer_too_short() {
+        let err = CodecError::buffer_too_short(100, 50, 10);
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 3);
+        assert_eq!(fields[0].0, "requested");
+        assert_eq!(fields[0].1, "100");
+        assert_eq!(fields[1].0, "available");
+        assert_eq!(fields[1].1, "50");
+        assert_eq!(fields[2].0, "cursor");
+        assert_eq!(fields[2].1, "10");
+    }
+
+    #[test]
+    fn test_log_fields_alignment_error() {
+        let err = CodecError::alignment_error(8, 5);
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "expected");
+        assert_eq!(fields[0].1, "8");
+        assert_eq!(fields[1].0, "actual");
+        assert_eq!(fields[1].1, "5");
+    }
+
+    #[test]
+    fn test_log_fields_length_exceeded() {
+        let err = CodecError::length_exceeded(1000, 500, 800);
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 3);
+        assert_eq!(fields[0].0, "length");
+        assert_eq!(fields[0].1, "1000");
+        assert_eq!(fields[1].0, "position");
+        assert_eq!(fields[1].1, "500");
+        assert_eq!(fields[2].0, "buffer_len");
+        assert_eq!(fields[2].1, "800");
+    }
+
+    #[test]
+    fn test_log_fields_invalid_schema() {
+        let err = CodecError::invalid_schema("MySchema", "reason");
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "schema");
+        assert_eq!(fields[0].1, "MySchema");
+        assert_eq!(fields[1].0, "reason");
+        assert_eq!(fields[1].1, "reason");
+    }
+
+    #[test]
+    fn test_log_fields_type_not_found() {
+        let err = CodecError::type_not_found("MyType");
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "type");
+        assert_eq!(fields[0].1, "MyType");
+    }
+
+    #[test]
+    fn test_log_fields_unsupported() {
+        let err = CodecError::unsupported("feature");
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "feature");
+        assert_eq!(fields[0].1, "feature");
+    }
+
+    #[test]
+    fn test_log_fields_encode_error() {
+        let err = CodecError::encode("Codec", "error");
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].0, "codec");
+        assert_eq!(fields[0].1, "Codec");
+        assert_eq!(fields[1].0, "message");
+        assert_eq!(fields[1].1, "error");
+    }
+
+    #[test]
+    fn test_log_fields_invariant_violation() {
+        let err = CodecError::invariant_violation("test");
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "invariant");
+        assert_eq!(fields[0].1, "test");
+    }
+
+    #[test]
+    fn test_log_fields_other() {
+        let err = CodecError::Other("msg".to_string());
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].0, "message");
+        assert_eq!(fields[0].1, "msg");
+    }
+
+    #[test]
+    fn test_from_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let codec_err: CodecError = io_err.into();
+        assert!(matches!(codec_err, CodecError::EncodeError { .. }));
+        assert_eq!(codec_err.to_string(), "IO encode error: file not found");
+    }
+
+    #[test]
+    fn test_error_debug_format() {
+        let err = CodecError::parse("Test", "message");
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("ParseError"));
+    }
+
+    #[test]
+    fn test_field_decode_error() {
+        let err = CodecError::FieldDecodeError {
+            field_name: "my_field".to_string(),
+            field_type: "int32".to_string(),
+            cursor_pos: 42,
+            cause: "invalid value".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "Failed to decode field 'my_field' (type: 'int32', cursor_pos: 42): invalid value"
+        );
+        let fields = err.log_fields();
+        assert_eq!(fields.len(), 4);
+        assert_eq!(fields[0].0, "field");
+        assert_eq!(fields[0].1, "my_field");
+        assert_eq!(fields[1].0, "type");
+        assert_eq!(fields[1].1, "int32");
+        assert_eq!(fields[2].0, "cursor");
+        assert_eq!(fields[2].1, "42");
+        assert_eq!(fields[3].0, "cause");
+        assert_eq!(fields[3].1, "invalid value");
+    }
+
+    #[test]
+    fn test_error_clone() {
+        let err1 = CodecError::parse("Context", "message");
+        let err2 = err1.clone();
+        assert_eq!(err1.to_string(), err2.to_string());
+    }
+}

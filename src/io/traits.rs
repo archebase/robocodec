@@ -535,4 +535,345 @@ mod tests {
         let ch1_channels = reader.channels_by_topic("/ch1");
         assert_eq!(ch1_channels.len(), 2);
     }
+
+    #[test]
+    fn test_parallel_reader_config_default() {
+        let config = ParallelReaderConfig::default();
+        assert_eq!(config.num_threads, None);
+        assert!(config.topic_filter.is_none());
+        assert_eq!(config.channel_capacity, Some(32));
+        assert_eq!(config.progress_interval, 10);
+        assert!(config.merge_enabled);
+        assert_eq!(config.merge_target_size, 16 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parallel_reader_config_builders() {
+        let filter = TopicFilter::include(vec!["/test".to_string()]);
+
+        let config = ParallelReaderConfig::default()
+            .with_threads(4)
+            .with_topic_filter(filter)
+            .with_channel_capacity(64)
+            .with_progress_interval(20)
+            .with_merge_enabled(false)
+            .with_merge_target_size(8 * 1024 * 1024);
+
+        assert_eq!(config.num_threads, Some(4));
+        assert_eq!(config.channel_capacity, Some(64));
+        assert_eq!(config.progress_interval, 20);
+        assert!(!config.merge_enabled);
+        assert_eq!(config.merge_target_size, 8 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_parallel_reader_stats_default() {
+        let stats = ParallelReaderStats::default();
+        assert_eq!(stats.messages_read, 0);
+        assert_eq!(stats.chunks_processed, 0);
+        assert_eq!(stats.total_bytes, 0);
+        assert_eq!(stats.read_time_sec, 0.0);
+        assert_eq!(stats.decompress_time_sec, 0.0);
+        assert_eq!(stats.deserialize_time_sec, 0.0);
+        assert_eq!(stats.total_time_sec, 0.0);
+    }
+
+    #[test]
+    fn test_message_chunk_data_new() {
+        let chunk = MessageChunkData::new(42);
+        assert_eq!(chunk.sequence, 42);
+        assert!(chunk.is_empty());
+        assert_eq!(chunk.message_count(), 0);
+        assert_eq!(chunk.total_data_size(), 0);
+        assert_eq!(chunk.message_start_time, u64::MAX);
+        assert_eq!(chunk.message_end_time, 0);
+    }
+
+    #[test]
+    fn test_message_chunk_data_add_message() {
+        let mut chunk = MessageChunkData::new(1);
+
+        let msg = RawMessage {
+            channel_id: 0,
+            log_time: 1000,
+            publish_time: 1000,
+            data: vec![1, 2, 3, 4],
+            sequence: None,
+        };
+
+        chunk.add_message(msg.clone());
+        assert!(!chunk.is_empty());
+        assert_eq!(chunk.message_count(), 1);
+        assert_eq!(chunk.total_data_size(), 4);
+        assert_eq!(chunk.message_start_time, 1000);
+        assert_eq!(chunk.message_end_time, 1000);
+
+        // Add another message with different timestamps
+        let msg2 = RawMessage {
+            channel_id: 0,
+            log_time: 2000,
+            publish_time: 2000,
+            data: vec![5, 6],
+            sequence: None,
+        };
+        chunk.add_message(msg2);
+        assert_eq!(chunk.message_count(), 2);
+        assert_eq!(chunk.total_data_size(), 6);
+        assert_eq!(chunk.message_start_time, 1000);
+        assert_eq!(chunk.message_end_time, 2000);
+    }
+
+    #[test]
+    fn test_message_chunk_data_multiple_messages() {
+        let mut chunk = MessageChunkData::new(1);
+
+        for i in 0..5 {
+            chunk.add_message(RawMessage {
+                channel_id: 0,
+                log_time: i * 1000,
+                publish_time: i * 1000,
+                data: vec![i as u8],
+                sequence: None,
+            });
+        }
+
+        assert_eq!(chunk.message_count(), 5);
+        assert_eq!(chunk.total_data_size(), 5);
+        assert_eq!(chunk.message_start_time, 0);
+        assert_eq!(chunk.message_end_time, 4000);
+    }
+
+    #[test]
+    fn test_file_info() {
+        let mut channels = HashMap::new();
+        channels.insert(1, ChannelInfo::new(1, "/test", "std_msgs/String"));
+
+        struct TestReader {
+            channels: HashMap<u16, ChannelInfo>,
+        }
+
+        impl FormatReader for TestReader {
+            fn channels(&self) -> &HashMap<u16, ChannelInfo> {
+                &self.channels
+            }
+
+            fn message_count(&self) -> u64 {
+                100
+            }
+
+            fn start_time(&self) -> Option<u64> {
+                Some(1000)
+            }
+
+            fn end_time(&self) -> Option<u64> {
+                Some(5000)
+            }
+
+            fn path(&self) -> &str {
+                "test.mcap"
+            }
+
+            fn format(&self) -> crate::io::metadata::FileFormat {
+                crate::io::metadata::FileFormat::Mcap
+            }
+
+            fn file_size(&self) -> u64 {
+                10000
+            }
+
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+        }
+
+        let reader = TestReader { channels };
+        let info = reader.file_info();
+
+        assert_eq!(info.path, "test.mcap");
+        assert_eq!(info.message_count, 100);
+        assert_eq!(info.start_time, 1000);
+        assert_eq!(info.end_time, 5000);
+        assert_eq!(info.duration, 4000);
+        assert_eq!(info.size, 10000);
+    }
+
+    #[test]
+    fn test_duration_no_times() {
+        let empty_channels = HashMap::new();
+
+        struct TestReader {
+            _channels: HashMap<u16, ChannelInfo>,
+        }
+
+        impl FormatReader for TestReader {
+            fn channels(&self) -> &HashMap<u16, ChannelInfo> {
+                &self._channels
+            }
+
+            fn message_count(&self) -> u64 {
+                0
+            }
+
+            fn start_time(&self) -> Option<u64> {
+                None
+            }
+
+            fn end_time(&self) -> Option<u64> {
+                None
+            }
+
+            fn path(&self) -> &str {
+                "test"
+            }
+
+            fn format(&self) -> crate::io::metadata::FileFormat {
+                crate::io::metadata::FileFormat::Unknown
+            }
+
+            fn file_size(&self) -> u64 {
+                0
+            }
+
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+        }
+
+        let reader = TestReader {
+            _channels: empty_channels,
+        };
+        assert_eq!(reader.duration(), 0);
+    }
+
+    #[test]
+    fn test_duration_equal_times() {
+        let empty_channels = HashMap::new();
+
+        struct TestReader {
+            _channels: HashMap<u16, ChannelInfo>,
+        }
+
+        impl FormatReader for TestReader {
+            fn channels(&self) -> &HashMap<u16, ChannelInfo> {
+                &self._channels
+            }
+
+            fn message_count(&self) -> u64 {
+                0
+            }
+
+            fn start_time(&self) -> Option<u64> {
+                Some(1000)
+            }
+
+            fn end_time(&self) -> Option<u64> {
+                Some(1000)
+            }
+
+            fn path(&self) -> &str {
+                "test"
+            }
+
+            fn format(&self) -> crate::io::metadata::FileFormat {
+                crate::io::metadata::FileFormat::Unknown
+            }
+
+            fn file_size(&self) -> u64 {
+                0
+            }
+
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+        }
+
+        let reader = TestReader {
+            _channels: empty_channels,
+        };
+        assert_eq!(reader.duration(), 0);
+    }
+
+    #[test]
+    fn test_format_writer_write_batch_default() {
+        struct TestWriter {
+            messages: Vec<RawMessage>,
+        }
+
+        impl FormatWriter for TestWriter {
+            fn path(&self) -> &str {
+                "test"
+            }
+
+            fn add_channel(
+                &mut self,
+                _topic: &str,
+                _message_type: &str,
+                _encoding: &str,
+                _schema: Option<&str>,
+            ) -> Result<u16> {
+                Ok(0)
+            }
+
+            fn write(&mut self, message: &RawMessage) -> Result<()> {
+                self.messages.push(message.clone());
+                Ok(())
+            }
+
+            fn message_count(&self) -> u64 {
+                self.messages.len() as u64
+            }
+
+            fn channel_count(&self) -> usize {
+                0
+            }
+
+            fn finish(&mut self) -> Result<()> {
+                Ok(())
+            }
+
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+        }
+
+        let mut writer = TestWriter {
+            messages: Vec::new(),
+        };
+
+        let msgs = vec![
+            RawMessage {
+                channel_id: 0,
+                log_time: 0,
+                publish_time: 0,
+                data: vec![1],
+                sequence: None,
+            },
+            RawMessage {
+                channel_id: 0,
+                log_time: 1,
+                publish_time: 1,
+                data: vec![2],
+                sequence: None,
+            },
+        ];
+
+        writer.write_batch(&msgs).unwrap();
+        assert_eq!(writer.message_count(), 2);
+    }
 }

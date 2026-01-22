@@ -103,11 +103,11 @@ impl WildcardTopicMapping {
 ///
 /// ```no_run
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// use roboflow::transform::TopicRenameTransform;
+/// use robocodec::transform::TopicRenameTransform;
 ///
 /// let mut rename = TopicRenameTransform::new();
 /// rename.add_mapping("/old_camera/image_raw", "/camera/image");
-/// rename.add_wildcard_mapping("/foo/*", "/roboflow/*")?;
+/// rename.add_wildcard_mapping("/foo/*", "/robocodec/*")?;
 ///
 /// // When applied, topics will be renamed according to mappings.
 /// // Collisions are auto-resolved: /a and /b both → /c becomes /c and /c_2

@@ -629,4 +629,301 @@ mod tests {
         let decoded: CodecValue = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, value);
     }
+
+    // Additional tests for better coverage
+
+    #[test]
+    fn test_is_signed_integer() {
+        assert!(CodecValue::Int8(1).is_signed_integer());
+        assert!(CodecValue::Int16(1).is_signed_integer());
+        assert!(CodecValue::Int32(1).is_signed_integer());
+        assert!(CodecValue::Int64(1).is_signed_integer());
+        assert!(!CodecValue::UInt8(1).is_signed_integer());
+        assert!(!CodecValue::UInt16(1).is_signed_integer());
+        assert!(!CodecValue::UInt32(1).is_signed_integer());
+        assert!(!CodecValue::UInt64(1).is_signed_integer());
+        assert!(!CodecValue::Float32(1.0).is_signed_integer());
+    }
+
+    #[test]
+    fn test_is_unsigned_integer() {
+        assert!(CodecValue::UInt8(1).is_unsigned_integer());
+        assert!(CodecValue::UInt16(1).is_unsigned_integer());
+        assert!(CodecValue::UInt32(1).is_unsigned_integer());
+        assert!(CodecValue::UInt64(1).is_unsigned_integer());
+        assert!(!CodecValue::Int8(1).is_unsigned_integer());
+        assert!(!CodecValue::Int16(1).is_unsigned_integer());
+        assert!(!CodecValue::Float64(1.0).is_unsigned_integer());
+    }
+
+    #[test]
+    fn test_is_container() {
+        assert!(CodecValue::Array(vec![]).is_container());
+        assert!(CodecValue::Struct(HashMap::new()).is_container());
+        assert!(!CodecValue::Int32(1).is_container());
+        assert!(!CodecValue::String("test".to_string()).is_container());
+    }
+
+    #[test]
+    fn test_as_u64() {
+        assert_eq!(CodecValue::UInt8(1).as_u64(), Some(1));
+        assert_eq!(CodecValue::UInt16(2).as_u64(), Some(2));
+        assert_eq!(CodecValue::UInt32(3).as_u64(), Some(3));
+        assert_eq!(CodecValue::UInt64(4).as_u64(), Some(4));
+        assert_eq!(CodecValue::Int8(1).as_u64(), Some(1));
+        assert_eq!(CodecValue::Int16(1).as_u64(), Some(1));
+        assert_eq!(CodecValue::Int32(1).as_u64(), Some(1));
+        assert_eq!(CodecValue::Int64(1).as_u64(), Some(1));
+        assert_eq!(CodecValue::Int8(-1).as_u64(), None);
+        assert_eq!(CodecValue::Float32(1.0).as_u64(), None);
+    }
+
+    #[test]
+    fn test_as_u64_overflow() {
+        // Test that u64 values that overflow i64 return None for as_i64
+        let large_u64 = CodecValue::UInt64(i64::MAX as u64 + 1);
+        assert_eq!(large_u64.as_i64(), None);
+        assert_eq!(large_u64.as_u64(), Some(i64::MAX as u64 + 1));
+    }
+
+    #[test]
+    fn test_as_str() {
+        assert_eq!(
+            CodecValue::String("hello".to_string()).as_str(),
+            Some("hello")
+        );
+        assert_eq!(CodecValue::Int32(1).as_str(), None);
+    }
+
+    #[test]
+    fn test_as_bytes() {
+        let data = vec![1, 2, 3];
+        assert_eq!(
+            CodecValue::Bytes(data.clone()).as_bytes(),
+            Some(data.as_slice())
+        );
+        assert_eq!(CodecValue::Int32(1).as_bytes(), None);
+    }
+
+    #[test]
+    fn test_as_struct() {
+        let mut map = HashMap::new();
+        map.insert("field".to_string(), CodecValue::Int32(42));
+        let val = CodecValue::Struct(map.clone());
+
+        assert_eq!(val.as_struct(), Some(&map));
+        assert_eq!(CodecValue::Int32(1).as_struct(), None);
+    }
+
+    #[test]
+    fn test_as_struct_mut() {
+        let mut map = HashMap::new();
+        map.insert("field".to_string(), CodecValue::Int32(42));
+        let mut val = CodecValue::Struct(map);
+
+        let inner = val.as_struct_mut().unwrap();
+        inner.insert("new".to_string(), CodecValue::Bool(true));
+        assert_eq!(inner.len(), 2);
+    }
+
+    #[test]
+    fn test_as_array() {
+        let arr = vec![CodecValue::Int32(1), CodecValue::Int32(2)];
+        assert_eq!(
+            CodecValue::Array(arr.clone()).as_array(),
+            Some(arr.as_slice())
+        );
+        assert_eq!(CodecValue::Int32(1).as_array(), None);
+    }
+
+    #[test]
+    fn test_as_array_mut() {
+        let arr = vec![CodecValue::Int32(1)];
+        let mut val = CodecValue::Array(arr);
+
+        let inner = val.as_array_mut().unwrap();
+        inner.push(CodecValue::Int32(2));
+        assert_eq!(inner.len(), 2);
+    }
+
+    #[test]
+    fn test_as_timestamp_nanos() {
+        assert_eq!(
+            CodecValue::Timestamp(123456).as_timestamp_nanos(),
+            Some(123456)
+        );
+        assert_eq!(CodecValue::Duration(123456).as_timestamp_nanos(), None);
+    }
+
+    #[test]
+    fn test_as_duration_nanos() {
+        assert_eq!(CodecValue::Duration(-1000).as_duration_nanos(), Some(-1000));
+        assert_eq!(CodecValue::Timestamp(123456).as_duration_nanos(), None);
+    }
+
+    #[test]
+    fn test_type_name() {
+        assert_eq!(CodecValue::Bool(true).type_name(), "bool");
+        assert_eq!(CodecValue::Int8(0).type_name(), "int8");
+        assert_eq!(CodecValue::Int64(0).type_name(), "int64");
+        assert_eq!(CodecValue::UInt8(0).type_name(), "uint8");
+        assert_eq!(CodecValue::UInt64(0).type_name(), "uint64");
+        assert_eq!(CodecValue::Float32(0.0).type_name(), "float32");
+        assert_eq!(CodecValue::Float64(0.0).type_name(), "float64");
+        assert_eq!(CodecValue::String("".to_string()).type_name(), "string");
+        assert_eq!(CodecValue::Bytes(vec![]).type_name(), "bytes");
+        assert_eq!(CodecValue::Timestamp(0).type_name(), "timestamp");
+        assert_eq!(CodecValue::Duration(0).type_name(), "duration");
+        assert_eq!(CodecValue::Array(vec![]).type_name(), "array");
+        assert_eq!(CodecValue::Struct(HashMap::new()).type_name(), "struct");
+        assert_eq!(CodecValue::Null.type_name(), "null");
+    }
+
+    #[test]
+    fn test_size_hint_array() {
+        let arr = vec![
+            CodecValue::Int32(1),
+            CodecValue::Int32(2),
+            CodecValue::Int32(3),
+        ];
+        // 3 * 4 (int size) + 3 * 8 (vec overhead) = 12 + 24 = 36
+        let hint = CodecValue::Array(arr).size_hint();
+        assert_eq!(hint, 12 + 24);
+    }
+
+    #[test]
+    fn test_size_hint_struct() {
+        let mut map = HashMap::new();
+        map.insert("a".to_string(), CodecValue::Int32(1));
+        map.insert("b".to_string(), CodecValue::Float64(2.0));
+        // 4 + 8 = 12
+        let hint = CodecValue::Struct(map).size_hint();
+        assert_eq!(hint, 12);
+    }
+
+    #[test]
+    fn test_size_hint_various_sizes() {
+        assert_eq!(CodecValue::Bool(true).size_hint(), 1);
+        assert_eq!(CodecValue::Int16(0).size_hint(), 2);
+        assert_eq!(CodecValue::UInt32(0).size_hint(), 4);
+        assert_eq!(CodecValue::Float32(0.0).size_hint(), 4);
+        assert_eq!(CodecValue::Int64(0).size_hint(), 8);
+        assert_eq!(CodecValue::Float64(0.0).size_hint(), 8);
+        assert_eq!(CodecValue::Timestamp(0).size_hint(), 8);
+        assert_eq!(CodecValue::Duration(0).size_hint(), 8);
+    }
+
+    #[test]
+    fn test_duration_from_secs_nanos() {
+        let dur = CodecValue::duration_from_secs_nanos(1, 500_000_000);
+        assert_eq!(dur.as_duration_nanos(), Some(1_500_000_000));
+
+        // Negative duration
+        let dur = CodecValue::duration_from_secs_nanos(-1, 0);
+        assert_eq!(dur.as_duration_nanos(), Some(-1_000_000_000));
+    }
+
+    #[test]
+    fn test_from_ros1_time() {
+        let ts = CodecValue::from_ros1_time(1704067200, 500_000_000);
+        assert_eq!(ts.as_timestamp_nanos(), Some(1_704_067_200_500_000_000));
+    }
+
+    #[test]
+    fn test_from_ros2_time() {
+        let ts = CodecValue::from_ros2_time(1704067200, 500_000_000);
+        assert_eq!(ts.as_timestamp_nanos(), Some(1_704_067_200_500_000_000));
+
+        // Negative time (before Unix epoch)
+        let ts = CodecValue::from_ros2_time(-1, 0);
+        assert_eq!(ts.as_timestamp_nanos(), Some(-1_000_000_000));
+    }
+
+    #[test]
+    fn test_from_ros1_duration() {
+        let dur = CodecValue::from_ros1_duration(5, 123_456_789);
+        assert_eq!(dur.as_duration_nanos(), Some(5_123_456_789));
+    }
+
+    #[test]
+    fn test_from_ros2_duration() {
+        let dur = CodecValue::from_ros2_duration(5, 123_456_789);
+        assert_eq!(dur.as_duration_nanos(), Some(5_123_456_789));
+    }
+
+    #[test]
+    fn test_display() {
+        assert_eq!(format!("{}", CodecValue::Bool(true)), "true");
+        assert_eq!(format!("{}", CodecValue::Int32(42)), "42");
+        assert_eq!(format!("{}", CodecValue::Float32(1.5)), "1.5");
+        assert_eq!(
+            format!("{}", CodecValue::String("test".to_string())),
+            "\"test\""
+        );
+        assert_eq!(format!("{}", CodecValue::Bytes(vec![1, 2, 3])), "<3 bytes>");
+        assert_eq!(
+            format!("{}", CodecValue::Timestamp(123)),
+            "Timestamp(123ns)"
+        );
+        assert_eq!(
+            format!("{}", CodecValue::Duration(-100)),
+            "Duration(-100ns)"
+        );
+        assert_eq!(format!("{}", CodecValue::Array(vec![])), "[0 elements]");
+        assert_eq!(format!("{}", CodecValue::Null), "null");
+    }
+
+    #[test]
+    fn test_primitive_type_alignment_extended() {
+        assert_eq!(PrimitiveType::Bool.alignment(), 1);
+        assert_eq!(PrimitiveType::Byte.alignment(), 1);
+        assert_eq!(PrimitiveType::Int16.alignment(), 2);
+        assert_eq!(PrimitiveType::UInt16.alignment(), 2);
+        assert_eq!(PrimitiveType::Float32.alignment(), 4);
+        assert_eq!(PrimitiveType::Int64.alignment(), 8);
+        assert_eq!(PrimitiveType::String.alignment(), 4);
+    }
+
+    #[test]
+    fn test_primitive_type_size_none() {
+        assert_eq!(PrimitiveType::String.size(), None);
+    }
+
+    #[test]
+    fn test_primitive_type_try_from_str_variants() {
+        assert_eq!(
+            PrimitiveType::try_from_str("byte"),
+            Some(PrimitiveType::Byte)
+        );
+        assert_eq!(
+            PrimitiveType::try_from_str("char"),
+            Some(PrimitiveType::Byte)
+        );
+        assert_eq!(
+            PrimitiveType::try_from_str("bool"),
+            Some(PrimitiveType::Bool)
+        );
+        assert_eq!(
+            PrimitiveType::try_from_str("uint8"),
+            Some(PrimitiveType::UInt8)
+        );
+        assert_eq!(PrimitiveType::try_from_str("invalid"), None);
+    }
+
+    #[test]
+    fn test_primitive_type_display() {
+        assert_eq!(format!("{}", PrimitiveType::Bool), "bool");
+        assert_eq!(format!("{}", PrimitiveType::Int32), "int32");
+        assert_eq!(format!("{}", PrimitiveType::Float64), "float64");
+        assert_eq!(format!("{}", PrimitiveType::Byte), "byte");
+    }
+
+    #[test]
+    fn test_clone_and_equality() {
+        let val = CodecValue::Int32(42);
+        assert_eq!(val, val.clone());
+
+        let arr = CodecValue::Array(vec![CodecValue::Int32(1), CodecValue::Int32(2)]);
+        assert_eq!(arr, arr.clone());
+    }
 }

@@ -24,7 +24,7 @@
 //!
 //! ```no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use roboflow::format::writer::{BagWriter, BagMessage};
+//! use robocodec::io::formats::bag::{BagWriter, BagMessage};
 //!
 //! let mut writer = BagWriter::create("output.bag")?;
 //!

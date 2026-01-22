@@ -77,9 +77,9 @@ impl McapRewriter {
     ///
     /// ```no_run
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// use roboflow::format::rewriter::McapRewriter;
-    /// use roboflow::transform::TransformBuilder;
-    /// use roboflow::rewriter::RewriteOptions;
+    /// use robocodec::rewriter::mcap::McapRewriter;
+    /// use robocodec::transform::TransformBuilder;
+    /// use robocodec::rewriter::RewriteOptions;
     ///
     /// // With transformations
     /// let options = RewriteOptions::default().with_transforms(
@@ -506,7 +506,7 @@ impl Default for McapRewriter {
 ///
 /// ```no_run
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// use roboflow::format::rewriter::mcap::rewrite_mcap;
+/// use robocodec::rewriter::mcap::rewrite_mcap;
 ///
 /// let stats = rewrite_mcap("input.mcap", "output.mcap")?;
 /// println!("Processed {} messages", stats.message_count);

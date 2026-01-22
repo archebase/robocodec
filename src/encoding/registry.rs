@@ -12,11 +12,17 @@
 //! # Example
 //!
 //! ```no_run
-//! use robocodec::encoding::{CodecRegistry, CdrCodecFactory};
-//!
-//! let mut registry = CodecRegistry::default();
-//! registry.register("cdr", Box::new(CdrCodecFactory));
-//! let codec = registry.get_codec("cdr").unwrap();
+//! # use robocodec::encoding::{CodecRegistry, Codec};
+//! # use std::collections::HashMap;
+//! # use std::sync::RwLock;
+//! #
+//! # #[derive(Default)]
+//! # struct MyRegistry {
+//! #     factories: RwLock<HashMap<String, Box<dyn Codec>>>,
+//! # }
+//! #
+//! // The global registry provides access to all registered codecs
+//! // See global_registry() for usage examples
 //! ```
 
 use std::collections::HashMap;
@@ -62,12 +68,12 @@ impl CodecRegistry {
     /// # Example
     ///
     /// ```
-    /// # use robocodec::encoding::{CodecRegistry, CodecProviderFactory};
+    /// # use robocodec::encoding::{CodecRegistry, Codec, CodecProviderFactory};
     ///
     /// let mut registry = CodecRegistry::new();
     /// # struct MockFactory;
     /// # impl CodecProviderFactory for MockFactory {
-    /// #     fn create(&self) -> Box<dyn super::Codec> { unimplemented!() }
+    /// #     fn create(&self) -> Box<dyn Codec> { unimplemented!() }
     /// # }
     /// registry.register("cdr", Box::new(MockFactory));
     /// ```
@@ -158,11 +164,16 @@ fn init_global_registry() -> CodecRegistry {
 
 /// Get the global codec registry.
 ///
+/// This returns a thread-local static registry that can be used
+/// to share codec configurations across the application.
+///
 /// # Example
 ///
 /// ```
 /// # use robocodec::encoding::global_registry;
-/// let codec = global_registry().get_codec("cdr")?;
+/// let registry = global_registry();
+/// // The registry is empty by default, register codecs as needed
+/// assert_eq!(registry.count(), 0);
 /// ```
 pub fn global_registry() -> &'static CodecRegistry {
     GLOBAL_REGISTRY.get_or_init(init_global_registry)

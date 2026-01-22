@@ -1,0 +1,65 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Claude
+.claude/settings.local.json
+
+# Test artifacts
+*.log
+
+# ignore pyo3
+python/robocodec-0.1.0.data/
+
+# ignore flamegraph
+flamegraph.svg
+profiles/
+
+# robot data (but keep test fixtures)
+*.bag
+*.mcap
+!tests/fixtures/*.bag
+!tests/fixtures/*.mcap
+
+# Coverage reports
+lcov.info
+*.profraw
+*.profdata

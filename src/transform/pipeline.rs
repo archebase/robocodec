@@ -17,7 +17,7 @@ use super::{ChannelInfo, McapTransform, TransformError, TransformedChannel};
 /// # Example
 ///
 /// ```no_run
-/// use roboflow::transform::{MultiTransform, TopicRenameTransform, TypeRenameTransform};
+/// use robocodec::transform::{MultiTransform, TopicRenameTransform, TypeRenameTransform};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut pipeline = MultiTransform::new();
@@ -150,7 +150,7 @@ impl MultiTransform {
     /// # Example
     ///
     /// ```no_run
-    /// use roboflow::TransformBuilder;
+    /// use robocodec::transform::TransformBuilder;
     ///
     /// # fn main() {
     /// let pipeline = TransformBuilder::new()

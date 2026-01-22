@@ -1,0 +1,154 @@
+ROBocodeC PROJECT NOTICE
+=======================
+
+Copyright (c) 2026 ArcheBase
+
+This project is licensed under the Mulan Permissive Software License, Version 2 (Mulan PSL v2).
+You can use this software according to the terms and conditions of the Mulan PSL v2.
+You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+
+DESCRIPTION
+===========
+
+Robocodec is a high-performance robotics data format library for reading and writing MCAP
+and ROS bag files. It provides efficient I/O operations, parallel processing capabilities,
+and support for multiple message encodings (CDR, Protobuf, JSON).
+
+PROJECT STRUCTURE
+=================
+
+- src/              - Core library source code
+  - encoding/       - Message encoding/decoding (CDR, Protobuf, JSON)
+  - schema/         - Schema parsing (ROS .msg, ROS2 IDL, OMG IDL)
+  - io/             - I/O operations and format handlers
+  - core/           - Core types and error handling
+  - types/          - Arena allocation and memory management
+  - rewriter/       - Data transformation and conversion
+
+CONTRIBUTORS
+============
+
+- ArcheBase Contributors
+
+THIRD-PARTY DEPENDENCIES
+========================
+
+This project includes code from the following third-party libraries. Each dependency retains
+its original license. Please refer to each dependency's LICENSE file or documentation for
+specific licensing terms.
+
+Core Dependencies:
+  - serde (1.0) - Apache License 2.0 / MIT
+  - serde_json (1.0) - Apache License 2.0 / MIT
+  - thiserror (1.0) - MIT / Apache License 2.0
+  - anyhow (1.0) - MIT / Apache License 2.0
+
+Message Format Support:
+  - prost (0.13) - Apache License 2.0
+  - prost-reflect (0.14) - Apache License 2.0
+  - prost-types (0.13) - Apache License 2.0
+
+Parsing and Serialization:
+  - pest (2.7) - MIT / Apache License 2.0
+  - pest_derive (2.7) - MIT / Apache License 2.0
+  - regex (1.10) - MIT / Apache License 2.0
+  - hex (0.4) - MIT / Apache License 2.0
+  - toml (0.8) - MIT / Apache License 2.0
+
+File Format Support:
+  - mcap (0.24) - MIT
+  - rosbag (0.6) - BSD / MIT
+
+Low-level and System Libraries:
+  - byteorder (1.5) - MIT / Apache License 2.0
+  - bytemuck (1.15) - Zlib
+  - memmap2 (0.9) - MIT / Apache License 2.0
+  - libc (0.2) - MIT / Apache License 2.0
+  - chrono (0.4) - MIT / Apache License 2.0
+  - uuid (1.10) - MIT / Apache License 2.0
+
+Compression:
+  - zstd (0.13) - MIT
+  - lz4_flex (0.11) - MIT
+  - bzip2 (0.4) - MIT
+  - crc32fast (1.4) - MIT / Apache License 2.0
+
+Memory and Allocation:
+  - bumpalo (3.16) - MIT / Apache License 2.0
+
+Parallel Processing:
+  - rayon (1.10) - MIT / Apache License 2.0
+  - crossbeam (0.8) - MIT / Apache License 2.0
+  - crossbeam-channel (0.5) - MIT / Apache License 2.0
+  - crossbeam-queue (0.3) - MIT / Apache License 2.0
+
+System Information:
+  - num_cpus (1.16) - MIT / Apache License 2.0
+
+Logging:
+  - tracing (0.1) - MIT
+
+Optional Dependencies (Feature Gated):
+  - pyo3 (0.25) - Apache License 2.0 / MIT (Python bindings)
+  - tikv-jemallocator (0.6) - MIT (Memory allocator)
+
+MODIFICATIONS
+=============
+
+All source files in this project include copyright notices and license headers.
+Each file modified or created for this project includes the Mulan PSL v2 license header.
+
+LICENSE HEADERS
+===============
+
+Each source file (.rs, .py) in this project contains the following header:
+
+For Rust files:
+  // Copyright (c) 2026 ArcheBase
+  // Robocodec is licensed under Mulan PSL v2.
+  // You can use this software according to the terms and conditions of the Mulan PSL v2.
+  // You may obtain a copy of Mulan PSL v2 at:
+  //     http://license.coscl.org.cn/MulanPSL2
+  // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+  // EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+  // MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+
+For Python files:
+  # Copyright (c) 2026 ArcheBase
+  # Robocodec is licensed under Mulan PSL v2.
+  # You can use this software according to the terms and conditions of the Mulan PSL v2.
+  # You may obtain a copy of Mulan PSL v2 at:
+  #     http://license.coscl.org.cn/MulanPSL2
+  # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+  # EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+  # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+
+SOURCE CODE ACCESS
+==================
+
+The complete source code for this project is available at:
+  https://github.com/archebase/robocodec
+
+Building from Source:
+  1. Clone the repository:
+     git clone https://github.com/archebase/robocodec.git
+  2. Build Rust library:
+     cargo build --release
+  3. Build Python package:
+     maturin develop
+
+For more detailed build instructions, see README.md.
+
+ATTRIBUTION
+===========
+
+This project was originally developed as part of the Roboflow robotics platform.
+
+LEGAL DISCLAIMER
+================
+
+THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+
+For the complete license text, see the LICENSE file in the root directory.
