@@ -139,6 +139,7 @@ jobs:
 
       - name: Run Python tests with coverage
         run: |
+          source .venv/bin/activate
           pytest tests/python/ --cov=robocodec --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload Python coverage to Codecov
