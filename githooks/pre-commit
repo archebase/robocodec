@@ -1,0 +1,17 @@
+#!/bin/bash
+# Pre-commit hook to format Rust code before committing
+
+set -e
+
+echo "Running cargo fmt..."
+make fmt > /dev/null 2>&1 || cargo fmt
+
+# Check if there are any formatting changes
+if ! git diff --exit-code --quiet; then
+    echo "Code was formatted. Please review the changes and commit again."
+    git diff --stat
+    exit 1
+fi
+
+echo "No formatting changes needed."
+exit 0
