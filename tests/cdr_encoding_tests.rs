@@ -93,7 +93,7 @@ fn test_cdr_encoder_write_i32() {
 #[test]
 fn test_cdr_encoder_write_f64() {
     let mut encoder = CdrEncoder::new();
-    let _ = encoder.float64(3.14159);
+    let _ = encoder.float64(std::f64::consts::PI);
 
     let data = encoder.finish();
 
@@ -104,7 +104,7 @@ fn test_cdr_encoder_write_f64() {
     cursor.align(8).expect("align");
 
     let value = cursor.read_f64().expect("read f64");
-    assert!((value - 3.14159).abs() < 0.00001);
+    assert!((value - std::f64::consts::PI).abs() < 0.00001);
 }
 
 #[test]
@@ -128,8 +128,8 @@ fn test_cdr_encoder_write_string() {
     let _ = cursor.read_u32().expect("read length");
 
     let mut bytes = [0u8; 5];
-    for i in 0..5 {
-        bytes[i] = cursor.read_u8().expect("read byte");
+    for byte in bytes.iter_mut() {
+        *byte = cursor.read_u8().expect("read byte");
     }
     let _null = cursor.read_u8().expect("read null");
 
@@ -230,7 +230,7 @@ fn test_cdr_alignment_u8_then_f64() {
     let mut encoder = CdrEncoder::new();
     let _ = encoder.uint8(1); // bool-like
                               // Padding to 8-byte alignment happens automatically in float64()
-    let _ = encoder.float64(2.71828);
+    let _ = encoder.float64(std::f64::consts::E);
     let data = encoder.finish();
 
     // Verify size: 4 (header) + 1 (u8) + 7 (padding) + 8 (f64) = 20
@@ -244,7 +244,7 @@ fn test_cdr_alignment_u8_then_f64() {
 
     cursor.align(8).expect("align to 8");
     let f = cursor.read_f64().expect("read f64");
-    assert!((f - 2.71828).abs() < 0.0001);
+    assert!((f - std::f64::consts::E).abs() < 0.0001);
 }
 
 // ============================================================================

@@ -94,8 +94,8 @@ fn test_cdr_round_trip_preserves_header() {
     // Read frame_id string
     let frame_id_len = cursor.read_u32().expect("read frame_id length") as usize;
     let mut frame_id_bytes = vec![0u8; frame_id_len - 1];
-    for i in 0..frame_id_len - 1 {
-        frame_id_bytes[i] = cursor.read_u8().expect("read frame_id byte");
+    for byte in frame_id_bytes.iter_mut() {
+        *byte = cursor.read_u8().expect("read frame_id byte");
     }
     let _null = cursor.read_u8().expect("read null");
     let frame_id = std::str::from_utf8(&frame_id_bytes).expect("valid UTF-8");
