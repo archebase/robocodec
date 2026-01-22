@@ -155,3 +155,32 @@ jobs:
           files: ./coverage.xml
           flags: python
           name: codecov-python-${{ matrix.os }}-py${{ matrix.python-version }}
+
+  python-examples:
+    name: Python Examples (API Compatibility)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Create virtual environment
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
+      - name: Install maturin
+        run: pip install maturin[patchelf]
+
+      - name: Build and install Python package
+        run: maturin develop --features python
+
+      - name: Test Python examples for API compatibility
+        run: make test-examples

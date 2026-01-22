@@ -1,4 +1,4 @@
-.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python examples examples-verify coverage coverage-rust coverage-python fmt fmt-python lint lint-python check check-license clean help
+.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python test-examples examples examples-verify coverage coverage-rust coverage-python fmt fmt-python lint lint-python check check-license clean help
 
 # Default target
 all: build
@@ -50,6 +50,45 @@ test-python: ## Run Python tests (builds extension first)
 	@echo "Running Python tests..."
 	pytest tests/python/ -v
 	@echo "✓ Python tests passed"
+
+test-examples: ## Run Python examples to verify API compatibility (builds extension first)
+	@echo "Building Python extension..."
+	maturin develop --features python
+	@echo ""
+	@echo "Testing Python examples for API compatibility..."
+	@echo ""
+	@$(MAKE) -s test-examples-run
+	@echo ""
+	@echo "✓ All examples verified - API is compatible"
+
+test-examples-run:
+	@# Test 1: Import verification (checks all required classes exist)
+	@echo "1. Verifying API imports..."
+	@.venv/bin/python3 -c "import robocodec; required=['RoboReader','RoboWriter','RoboRewriter','TransformBuilder','RobocodecError','ChannelInfo','RewriteStats']; missing=[n for n in required if not hasattr(robocodec, n)]; import sys; sys.exit(1) if missing else print('   ✓ All required classes available')" || { echo "   ✗ Import verification failed"; exit 1; }
+	@# Test 2: Verify examples can be imported (syntax check)
+	@echo "2. Verifying example scripts syntax..."
+	@for script in examples/python/*.py; do \
+		if [ "$$(basename $$script)" != "_example_utils.py" ]; then \
+			printf "   Checking $$(basename $$script)... "; \
+			if .venv/bin/python3 -m py_compile "$$script" 2>/dev/null; then \
+				echo "✓"; \
+			else \
+				echo "✗"; \
+				exit 1; \
+			fi; \
+		fi; \
+	done
+	@# Test 3: Run examples with test fixtures (actual execution)
+	@echo "3. Running examples with test data..."
+	@TEST_FILE=$$(ls tests/fixtures/*.mcap 2>/dev/null | head -1); \
+	if [ -z "$$TEST_FILE" ]; then \
+		echo "   ⚠ No test fixtures found, skipping execution tests"; \
+	else \
+		echo "   Using: $$TEST_FILE"; \
+		.venv/bin/python3 examples/python/inspect_mcap.py "$$TEST_FILE" > /dev/null && echo "   ✓ inspect_mcap.py" || { echo "   ✗ inspect_mcap.py failed"; exit 1; }; \
+		.venv/bin/python3 examples/python/mcap_stats.py "$$TEST_FILE" > /dev/null && echo "   ✓ mcap_stats.py" || { echo "   ✗ mcap_stats.py failed"; exit 1; }; \
+		.venv/bin/python3 examples/python/filter_topics.py "$$TEST_FILE" --list > /dev/null && echo "   ✓ filter_topics.py" || { echo "   ✗ filter_topics.py failed"; exit 1; }; \
+	fi
 
 # ============================================================================
 # Examples
