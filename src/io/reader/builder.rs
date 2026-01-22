@@ -45,7 +45,7 @@ impl Default for ReaderConfig {
 /// # Example
 ///
 /// ```rust,no_run
-/// use roboflow::io::{ReaderBuilder, ReadStrategy};
+/// use robocodec::io::{ReaderBuilder, ReadStrategy};
 ///
 /// // Simple usage with auto-detection
 /// let reader = ReaderBuilder::new()
@@ -82,7 +82,7 @@ impl ReaderBuilder {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use roboflow::io::ReaderBuilder;
+    /// use robocodec::io::ReaderBuilder;
     ///
     /// let builder = ReaderBuilder::new()
     ///     .path("data.mcap");
@@ -98,7 +98,7 @@ impl ReaderBuilder {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use roboflow::io::{ReaderBuilder, ReadStrategy};
+    /// use robocodec::io::{ReaderBuilder, ReadStrategy};
     ///
     /// let builder = ReaderBuilder::new()
     ///     .path("data.mcap")
@@ -117,7 +117,7 @@ impl ReaderBuilder {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use roboflow::io::{ReaderBuilder, ReadStrategy};
+    /// use robocodec::io::{ReaderBuilder, ReadStrategy};
     ///
     /// let builder = ReaderBuilder::new()
     ///     .path("data.mcap")

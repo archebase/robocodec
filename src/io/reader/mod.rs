@@ -18,7 +18,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use roboflow::io::{ReaderBuilder, ReadStrategy};
+//! use robocodec::io::{ReaderBuilder, ReadStrategy};
 //!
 //! // Auto-detect strategy
 //! let reader = ReaderBuilder::new()
@@ -68,7 +68,7 @@ impl RoboReader {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use roboflow::io::RoboReader;
+    /// use robocodec::io::RoboReader;
     ///
     /// let reader = RoboReader::open("data.mcap")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -90,7 +90,7 @@ impl RoboReader {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use roboflow::io::{RoboReader, ReadStrategy};
+    /// use robocodec::io::{RoboReader, ReadStrategy};
     ///
     /// let reader = RoboReader::open_with_strategy(
     ///     "data.mcap",

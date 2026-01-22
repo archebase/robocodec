@@ -34,5 +34,5 @@ pub use filter::{ChannelFilter, TopicFilter};
 // Unified reader/writer with auto-detection
 pub mod reader;
 pub mod writer;
-pub use reader::RoboReader;
+pub use reader::{ReadStrategy, ReaderBuilder, RoboReader};
 pub use writer::RoboWriter;

@@ -288,15 +288,7 @@ fn test_round_trip_single_message() {
 
 #[test]
 fn test_round_trip_message_data_preserved() {
-    // Use a cross-platform temp path
-    let mut path = std::env::temp_dir();
-    path.push("claude");
-    path.push("test_round_trip_data.bag");
-
-    // Ensure parent directory exists
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
-    }
+    let (path, _guard) = temp_bag_path("test_round_trip_data");
 
     // Create test data with known byte patterns
     let test_data_1 = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];

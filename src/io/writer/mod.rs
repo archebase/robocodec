@@ -34,7 +34,7 @@ impl RoboWriter {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use roboflow::io::RoboWriter;
+    /// use robocodec::io::RoboWriter;
     ///
     /// let writer = RoboWriter::create("output.mcap")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())

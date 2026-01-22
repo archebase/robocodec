@@ -640,7 +640,7 @@ impl TypeFormat {
 /// # Example
 ///
 /// ```no_run
-/// use roboflow::transform::TypeRenameTransform;
+/// use robocodec::transform::TypeRenameTransform;
 ///
 /// # fn main() {
 /// let mut rename = TypeRenameTransform::new();
@@ -1007,7 +1007,7 @@ impl McapTransform for TypeRenameTransform {
 ///
 /// ```no_run
 /// # fn main() {
-/// use roboflow::transform::TopicAwareTypeRenameTransform;
+/// use robocodec::transform::TopicAwareTypeRenameTransform;
 ///
 /// let mut transform = TopicAwareTypeRenameTransform::new();
 /// transform.add_mapping("/lowdim/joint", "nmx.msg.LowdimData", "nmx.msg.JointStates");

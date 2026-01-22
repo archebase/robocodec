@@ -12,7 +12,7 @@
 //!
 //! ```no_run
 //! # fn main() {
-//! use roboflow::transform::{TopicRenameTransform, MultiTransform};
+//! use robocodec::transform::{TopicRenameTransform, MultiTransform};
 //!
 //! let mut topic_rename = TopicRenameTransform::new();
 //! topic_rename.add_mapping("/old_topic", "/new_topic");
@@ -190,7 +190,7 @@ impl From<TransformError> for crate::CodecError {
 /// # Example
 ///
 /// ```no_run
-/// # use roboflow::transform::{McapTransform, TransformError, ChannelInfo};
+/// # use robocodec::transform::{McapTransform, TransformError, ChannelInfo};
 /// # use std::any::Any;
 /// struct MyTransform;
 ///
@@ -363,7 +363,7 @@ impl TransformBuilder {
     ///
     /// ```no_run
     /// # fn main() {
-    /// use roboflow::transform::TransformBuilder;
+    /// use robocodec::transform::TransformBuilder;
     ///
     /// let pipeline = TransformBuilder::new()
     ///     .with_topic_type_rename(
