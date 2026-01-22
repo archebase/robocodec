@@ -22,7 +22,7 @@
 //!
 //! ```rust,no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use robocodec::RoboReader;
+//! use robocodec::{FormatReader, RoboReader};
 //!
 //! // Format auto-detected, parallel mode used when available
 //! let reader = RoboReader::open("file.mcap")?;
@@ -35,7 +35,7 @@
 //!
 //! ```rust,no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use robocodec::RoboWriter;
+//! use robocodec::{FormatWriter, RoboWriter};
 //!
 //! // Format detected from extension (.mcap or .bag)
 //! let mut writer = RoboWriter::create("output.mcap")?;
