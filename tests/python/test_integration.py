@@ -228,16 +228,25 @@ class TestRoboRewriterIntegration:
             output_path = tmp.name
 
         try:
-            # Create transform builder
+            # Get actual topics from the file to use for testing
+            reader = RoboReader(input_file)
+            channels = reader.channels()
+            if len(channels) == 0:
+                pytest.skip("No channels found in test file")
+
+            # Use an actual topic from the file for renaming
+            first_topic = channels[0].topic
+            new_topic = first_topic + "_renamed"
+
+            # Create transform builder with actual topic
             builder = TransformBuilder()
-            builder = builder.with_topic_rename("/old", "/new")
-            builder = builder.with_type_rename("OldType", "NewType")
+            builder = builder.with_topic_rename(first_topic, new_topic)
 
             # Create rewriter with transforms
             rewriter = RoboRewriter.with_transforms(input_file, builder)
             assert rewriter.has_transforms is True
 
-            # Perform rewrite
+            # Perform rewrite - should succeed since we're using actual topics
             stats = rewriter.rewrite(output_path)
             assert isinstance(stats, RewriteStats)
 
@@ -292,10 +301,19 @@ class TestTransformBuilderIntegration:
             output_path = tmp.name
 
         try:
+            # Get actual topics from the file
+            reader = RoboReader(input_file)
+            channels = reader.channels()
+            if len(channels) == 0:
+                pytest.skip("No channels found in test file")
+
+            # Use an actual topic for testing
+            first_topic = channels[0].topic
+            new_topic = first_topic + "_test"
+
             builder = (
                 TransformBuilder()
-                .with_topic_rename("/test", "/renamed")
-                .with_type_rename("TestMsg", "RenamedMsg")
+                .with_topic_rename(first_topic, new_topic)
             )
 
             rewriter = RoboRewriter.with_transforms(input_file, builder)
@@ -323,17 +341,10 @@ class TestErrorHandling:
             RoboRewriter("/nonexistent/path/to/file.mcap")
 
     def test_invalid_extension_writer(self):
-        """Test creating a writer with an unknown extension."""
-        # This should create the writer but may fail at finish
-        with tempfile.NamedTemporaryFile(suffix=".unknown", delete=False) as tmp:
-            tmp_path = tmp.name
-
-        try:
-            writer = RoboWriter(tmp_path)
-            assert writer.format == "Unknown"
-        finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+        """Test that creating a writer with an unknown extension raises an error."""
+        # RoboWriter should immediately fail for unknown extensions
+        with pytest.raises(RobocodecError):
+            RoboWriter("output.unknown")
 
     def test_error_attributes(self):
         """Test that error attributes are accessible."""

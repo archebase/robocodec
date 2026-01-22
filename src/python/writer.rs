@@ -30,6 +30,7 @@ use super::error::to_py_result;
 pub struct PyRoboWriter {
     inner: IoRoboWriter,
     format: FileFormat,
+    path_str: String,
 }
 
 #[pymethods]
@@ -62,7 +63,11 @@ impl PyRoboWriter {
             FileFormat::Unknown
         };
         let inner = to_py_result(IoRoboWriter::create(path))?;
-        Ok(Self { inner, format })
+        Ok(Self {
+            inner,
+            format,
+            path_str: path.to_string(),
+        })
     }
 
     /// Add a channel to the file.
@@ -159,7 +164,7 @@ impl PyRoboWriter {
     ///     Path to the output file
     #[getter]
     fn path(&self) -> String {
-        self.inner.path().to_string()
+        self.path_str.clone()
     }
 
     /// Get detected file format.

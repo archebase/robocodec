@@ -4,30 +4,55 @@
 
 //! Error conversion between Rust and Python.
 
-use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use std::fmt;
 
 use crate::CodecError;
 
-// Create the custom exception type.
-// Note: With abi3 feature, we cannot directly extend PyException.
-// Instead, we create a standalone exception that inherits from Exception.
-pyo3::create_exception!(robocodec, RobocodecError, PyException);
-
 /// Python exception for robocodec errors with structured data.
 ///
-/// This struct provides structured error information that can be accessed
-/// from Python. The actual exception type is `RobocodecError` (created above).
+/// This exception wraps the Rust `CodecError` type and provides
+/// structured error information to Python users.
+#[pyclass(name = "RobocodecError")]
 pub struct PyRobocodecError {
     /// Error kind/category (e.g., "ParseError", "InvalidSchema")
+    #[pyo3(get)]
     pub kind: String,
 
     /// Context information (e.g., schema name, codec name)
+    #[pyo3(get, set)]
     pub context: Option<String>,
 
     /// Human-readable error message
+    #[pyo3(get)]
     pub message: String,
+}
+
+#[pymethods]
+impl PyRobocodecError {
+    #[new]
+    fn new(kind: String, context: Option<String>, message: String) -> Self {
+        Self {
+            kind,
+            context,
+            message,
+        }
+    }
+
+    fn __str__(&self) -> String {
+        if let Some(ctx) = &self.context {
+            format!("{}: {}", ctx, self.message)
+        } else {
+            self.message.clone()
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RobocodecError(kind={}, message={})",
+            self.kind, self.message
+        )
+    }
 }
 
 impl fmt::Display for PyRobocodecError {
@@ -132,11 +157,11 @@ impl From<CodecError> for PyRobocodecError {
     }
 }
 
-/// Convert a CodecError directly to a PyErr.
+/// Convert a CodecError directly to a PyErr that preserves attributes.
 impl From<CodecError> for PyErr {
     fn from(err: CodecError) -> Self {
         let py_err = PyRobocodecError::from(err);
-        PyErr::new::<RobocodecError, _>(py_err.to_string())
+        PyErr::new::<PyRobocodecError, _>((py_err.kind, py_err.context, py_err.message))
     }
 }
 
