@@ -114,7 +114,10 @@ fn test_two_pass_reader_channels() {
     for (id, channel) in channels.iter() {
         assert!(*id < u16::MAX, "channel ID should be valid");
         assert!(!channel.topic.is_empty(), "channel should have a topic");
-        assert!(!channel.message_type.is_empty(), "channel should have a message type");
+        assert!(
+            !channel.message_type.is_empty(),
+            "channel should have a message type"
+        );
     }
 }
 
@@ -165,8 +168,7 @@ fn test_two_pass_reader_message_count() {
 
     let reader = TwoPassMcapReader::open(&path).unwrap();
     // Message count is estimated from chunks during discovery
-    let count = reader.message_count();
-    assert!(count >= 0, "message count should be non-negative");
+    let _count = reader.message_count();
 }
 
 #[test]
@@ -201,10 +203,9 @@ fn test_two_pass_reader_chunk_count() {
     }
 
     let reader = TwoPassMcapReader::open(&path).unwrap();
-    let chunk_count = reader.chunk_count();
+    let _chunk_count = reader.chunk_count();
 
     // Should have discovered at least one chunk
-    assert!(chunk_count >= 0, "chunk count should be non-negative");
 }
 
 #[test]
@@ -262,9 +263,7 @@ fn test_two_pass_reader_handles_various_fixtures() {
             continue;
         }
 
-        let reader = TwoPassMcapReader::open(&path);
-        if reader.is_ok() {
-            let reader = reader.unwrap();
+        if let Ok(reader) = TwoPassMcapReader::open(&path) {
             // Verify basic properties
             assert!(!reader.path().is_empty());
             assert!(reader.file_size() > 0);
@@ -287,7 +286,6 @@ fn test_two_pass_reader_chunk_indexing() {
     let chunk_count = reader.chunk_count();
 
     // Chunks were indexed during the discovery pass
-    assert!(chunk_count >= 0, "chunk count should be non-negative");
 
     // If we have chunks, verify we can get file info
     if chunk_count > 0 {
