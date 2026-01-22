@@ -125,22 +125,28 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install Rust dependencies
-        run: cargo fetch
+      - name: Create virtual environment (Unix)
+        if: runner.os != 'macOS'
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
+      - name: Create virtual environment (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
 
       - name: Install maturin and pytest
         run: pip install maturin[patchelf] pytest pytest-cov
 
-      - name: Build Python extension
-        run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          maturin develop --features python --release
+      - name: Build and install Python package
+        run: maturin develop --release --features python
 
       - name: Run Python tests with coverage
-        run: |
-          source .venv/bin/activate
-          pytest tests/python/ --cov=robocodec --cov-report=xml --cov-report=term-missing -v
+        run: pytest tests/python/ --cov=robocodec --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload Python coverage to Codecov
         uses: codecov/codecov-action@v5
