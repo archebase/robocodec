@@ -103,3 +103,7 @@ pub trait Decoder: Send + Sync {
     /// Decode data into a DecodedMessage.
     fn decode(&self, data: &[u8], schema: &str, type_name: Option<&str>) -> Result<DecodedMessage>;
 }
+
+// Python bindings (optional feature)
+#[cfg(feature = "python")]
+pub mod python;

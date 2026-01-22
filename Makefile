@@ -1,4 +1,4 @@
-.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python coverage coverage-rust clippy fmt lint check check-license clean help
+.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python coverage coverage-rust coverage-python fmt fmt-python lint lint-python check check-license clean help
 
 # Default target
 all: build
@@ -48,17 +48,18 @@ test-python: ## Run Python tests (builds extension first)
 	@echo "Building Python extension..."
 	maturin develop --features python
 	@echo "Running Python tests..."
-	pytest python/ -v
+	pytest tests/python/ -v
 	@echo "✓ Python tests passed"
 
 # ============================================================================
 # Coverage
 # ============================================================================
 
-coverage: coverage-rust ## Run Rust tests with coverage (requires cargo-llvm-cov)
+coverage: coverage-rust coverage-python ## Run all tests with coverage
 	@echo ""
 	@echo "✓ Coverage reports generated"
 	@echo "  Rust:   target/llvm-cov/html/index.html"
+	@echo "  Python: tests/python/htmlcov/index.html"
 
 coverage-rust: ## Run Rust tests with coverage (requires cargo-llvm-cov)
 	@echo "Running Rust tests with coverage..."
@@ -68,19 +69,47 @@ coverage-rust: ## Run Rust tests with coverage (requires cargo-llvm-cov)
 	@echo ""
 	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html"
 
+coverage-python: ## Run Python tests with coverage (requires pytest-cov)
+	@echo "Building Python extension..."
+	maturin develop --features python
+	@echo "Running Python tests with coverage..."
+	pytest tests/python/ --cov=robocodec --cov-report=html --cov-report=term-missing -v
+	@echo ""
+	@echo "✓ Python coverage report: tests/python/htmlcov/index.html"
+
 # ============================================================================
 # Code quality
 # ============================================================================
 
-fmt: ## Format all code
-	@echo "Formatting code..."
+fmt: fmt-python ## Format all code (Rust + Python)
+	@echo "Formatting Rust code..."
 	cargo fmt
 	@echo "✓ Code formatted"
 
-lint: ## Lint all code
-	@echo "Linting with all features..."
+fmt-python: ## Format Python code (requires black)
+	@echo "Formatting Python code..."
+	@if command -v black >/dev/null 2>&1; then \
+		black python/ tests/python/; \
+	else \
+		echo "⚠ black not found. Install with: pip install black"; \
+		exit 1; \
+	fi
+	@echo "✓ Python code formatted"
+
+lint: lint-python ## Lint all code (Rust + Python)
+	@echo "Linting Rust code with all features..."
 	cargo clippy --all-targets --all-features -- -D warnings
 	@echo "✓ Linting passed"
+
+lint-python: ## Lint Python code (requires ruff)
+	@echo "Linting Python code..."
+	@if command -v ruff >/dev/null 2>&1; then \
+		ruff check python/ tests/python/; \
+	else \
+		echo "⚠ ruff not found. Install with: pip install ruff"; \
+		exit 1; \
+	fi
+	@echo "✓ Python linting passed"
 
 check: fmt lint ## Run format check and lint
 
@@ -103,6 +132,8 @@ clean: ## Clean build artifacts
 	rm -rf target/
 	rm -rf **/__pycache__/
 	rm -rf **/.pytest_cache/
+	rm -rf tests/python/htmlcov/
+	rm -rf tests/python/.coverage*
 	rm -rf *.egg-info/
 	rm -rf .pytest_cache/
 	rm -rf coverage-html/

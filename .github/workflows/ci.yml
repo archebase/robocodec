@@ -96,13 +96,62 @@ jobs:
         if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
         run: cargo install cargo-llvm-cov
 
-      - name: Generate coverage
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Generate Rust coverage
+        run: cargo llvm-cov --workspace --lcov --output-path lcov-rust.info
 
-      - name: Upload coverage to Codecov
+      - name: Upload Rust coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./lcov.info
+          files: ./lcov-rust.info
           flags: rust
-          name: codecov-umbrella
+          name: codecov-rust
+
+  python-test:
+    name: Python Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Create virtual environment (Unix)
+        if: runner.os != 'macOS'
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
+      - name: Create virtual environment (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          python -m venv .venv
+          echo "VIRTUAL_ENV=$PWD/.venv" >> $GITHUB_ENV
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
+      - name: Install maturin and pytest
+        run: pip install maturin[patchelf] pytest pytest-cov
+
+      - name: Build and install Python package
+        run: maturin develop --release --features python
+
+      - name: Run Python tests with coverage
+        run: pytest tests/python/ --cov=robocodec --cov-report=xml --cov-report=term-missing -v
+
+      - name: Upload Python coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          flags: python
+          name: codecov-python-${{ matrix.os }}-py${{ matrix.python-version }}
