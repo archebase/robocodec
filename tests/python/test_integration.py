@@ -124,10 +124,7 @@ class TestRoboWriterIntegration:
 
             # Add a channel
             channel_id = writer.add_channel(
-                "/test/topic",
-                "std_msgs/String",
-                "cdr",
-                "string data"
+                "/test/topic", "std_msgs/String", "cdr", "string data"
             )
             assert isinstance(channel_id, int)
             assert channel_id >= 0
@@ -261,9 +258,7 @@ class TestRoboRewriterIntegration:
             pytest.skip(f"Test fixture not found: {input_file}")
 
         rewriter = RoboRewriter(
-            input_file,
-            validate_schemas=True,
-            skip_decode_failures=True
+            input_file, validate_schemas=True, skip_decode_failures=True
         )
 
         assert rewriter.input_path == input_file
@@ -311,10 +306,7 @@ class TestTransformBuilderIntegration:
             first_topic = channels[0].topic
             new_topic = first_topic + "_test"
 
-            builder = (
-                TransformBuilder()
-                .with_topic_rename(first_topic, new_topic)
-            )
+            builder = TransformBuilder().with_topic_rename(first_topic, new_topic)
 
             rewriter = RoboRewriter.with_transforms(input_file, builder)
             assert rewriter.has_transforms is True
@@ -384,7 +376,9 @@ class TestChannelInfo:
 
             # Test optional attributes
             assert channel.schema is None or isinstance(channel.schema, str)
-            assert channel.schema_encoding is None or isinstance(channel.schema_encoding, str)
+            assert channel.schema_encoding is None or isinstance(
+                channel.schema_encoding, str
+            )
             assert channel.callerid is None or isinstance(channel.callerid, str)
 
     def test_channel_info_repr(self):

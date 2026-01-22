@@ -213,6 +213,15 @@ impl RoboRewriter {
     pub fn with_options<P: AsRef<Path>>(path: P, options: RewriteOptions) -> Result<Self> {
         let path_ref = path.as_ref();
         let path_buf = path_ref.to_path_buf();
+
+        // Validate that the file exists
+        if !path_ref.exists() {
+            return Err(CodecError::parse(
+                "RoboRewriter",
+                format!("File not found: {}", path_ref.display()),
+            ));
+        }
+
         match detect_format(path_ref) {
             Some("mcap") => Ok(RoboRewriter::Mcap(
                 crate::rewriter::mcap::McapRewriter::with_options(options),

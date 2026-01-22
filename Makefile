@@ -1,4 +1,4 @@
-.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python coverage coverage-rust coverage-python clippy fmt lint check check-license clean help
+.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python coverage coverage-rust coverage-python fmt fmt-python lint lint-python check check-license clean help
 
 # Default target
 all: build
@@ -81,15 +81,35 @@ coverage-python: ## Run Python tests with coverage (requires pytest-cov)
 # Code quality
 # ============================================================================
 
-fmt: ## Format all code
-	@echo "Formatting code..."
+fmt: fmt-python ## Format all code (Rust + Python)
+	@echo "Formatting Rust code..."
 	cargo fmt
 	@echo "✓ Code formatted"
 
-lint: ## Lint all code
-	@echo "Linting with all features..."
+fmt-python: ## Format Python code (requires black)
+	@echo "Formatting Python code..."
+	@if command -v black >/dev/null 2>&1; then \
+		black python/ tests/python/; \
+	else \
+		echo "⚠ black not found. Install with: pip install black"; \
+		exit 1; \
+	fi
+	@echo "✓ Python code formatted"
+
+lint: lint-python ## Lint all code (Rust + Python)
+	@echo "Linting Rust code with all features..."
 	cargo clippy --all-targets --all-features -- -D warnings
 	@echo "✓ Linting passed"
+
+lint-python: ## Lint Python code (requires ruff)
+	@echo "Linting Python code..."
+	@if command -v ruff >/dev/null 2>&1; then \
+		ruff check python/ tests/python/; \
+	else \
+		echo "⚠ ruff not found. Install with: pip install ruff"; \
+		exit 1; \
+	fi
+	@echo "✓ Python linting passed"
 
 check: fmt lint ## Run format check and lint
 

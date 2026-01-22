@@ -43,7 +43,7 @@ pub mod transform;
 pub mod writer;
 
 // Re-export key types for convenience
-pub use error::PyRobocodecError;
+pub use error::RobocodecError;
 pub use metadata::PyChannelInfo;
 pub use metadata::PyRewriteStats;
 pub use reader::PyRoboReader;
@@ -54,8 +54,8 @@ pub use writer::PyRoboWriter;
 /// Python module for robocodec robotics data library.
 #[pymodule]
 fn _robocodec(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Add custom exception class
-    m.add_class::<PyRobocodecError>()?;
+    // Add exception class (created by create_exception! macro)
+    m.add("RobocodecError", m.py().get_type::<RobocodecError>())?;
 
     // Add remaining classes
     m.add_class::<PyRoboReader>()?;
