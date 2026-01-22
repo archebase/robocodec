@@ -36,9 +36,12 @@ def format_timestamp(nanos: int) -> str:
     """Convert nanoseconds since Unix epoch to readable datetime."""
     if nanos == 0:
         return "N/A"
-    seconds = nanos / 1_000_000_000
-    dt = datetime.fromtimestamp(seconds)
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        seconds = nanos / 1_000_000_000
+        dt = datetime.fromtimestamp(seconds)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (OSError, OverflowError, ValueError):
+        return f"<invalid timestamp: {nanos} ns>"
 
 
 def format_size(bytes: int) -> str:
