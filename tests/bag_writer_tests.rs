@@ -59,26 +59,25 @@ fn temp_dir() -> PathBuf {
     ))
 }
 
-/// Create a temporary bag file path
-fn temp_bag_path(name: &str) -> PathBuf {
+/// Create a temporary bag file path and a cleanup guard for the directory.
+/// The guard ensures the temporary directory is removed when the test completes.
+fn temp_bag_path(name: &str) -> (PathBuf, CleanupGuard) {
     let dir = temp_dir();
     fs::create_dir_all(&dir).ok();
-    dir.join(format!("{}.bag", name))
+    let path = dir.join(format!("{}.bag", name));
+    let guard = CleanupGuard(dir);
+    (path, guard)
 }
 
-/// Simple cleanup guard for test temporary files
-struct CleanupGuard;
+/// Cleanup guard for test temporary files.
+/// Stores the actual path to ensure cleanup targets the correct directory.
+#[derive(Debug)]
+struct CleanupGuard(PathBuf);
 
 impl Drop for CleanupGuard {
     fn drop(&mut self) {
-        cleanup_temp_dir();
+        let _ = fs::remove_dir_all(&self.0);
     }
-}
-
-/// Clean up temporary test files
-fn cleanup_temp_dir() {
-    let dir = temp_dir();
-    let _ = fs::remove_dir_all(dir);
 }
 
 // ============================================================================
@@ -127,8 +126,7 @@ fn test_bag_message_clone() {
 
 #[test]
 fn test_writer_creates_file() {
-    let path = temp_bag_path("test_creates_file");
-    let _guard = CleanupGuard;
+    let (path, _guard) = temp_bag_path("test_creates_file");
 
     let result = BagWriter::create(&path);
 
@@ -146,8 +144,7 @@ fn test_writer_creates_file() {
 
 #[test]
 fn test_writer_creates_valid_version_header() {
-    let path = temp_bag_path("test_version_header");
-    let _guard = CleanupGuard;
+    let (path, _guard) = temp_bag_path("test_version_header");
 
     let writer = BagWriter::create(&path).unwrap();
     writer.finish().unwrap();
@@ -164,8 +161,7 @@ fn test_writer_creates_valid_version_header() {
 
 #[test]
 fn test_writer_file_header_is_4096_bytes() {
-    let path = temp_bag_path("test_header_size");
-    let _guard = CleanupGuard;
+    let (path, _guard) = temp_bag_path("test_header_size");
 
     let writer = BagWriter::create(&path).unwrap();
     writer.finish().unwrap();
@@ -181,8 +177,7 @@ fn test_writer_file_header_is_4096_bytes() {
 
 #[test]
 fn test_add_single_connection() {
-    let path = temp_bag_path("test_add_connection");
-    let _guard = CleanupGuard;
+    let (path, _guard) = temp_bag_path("test_add_connection");
 
     let mut writer = BagWriter::create(&path).unwrap();
     let result = writer.add_connection(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF);
@@ -198,8 +193,7 @@ fn test_add_single_connection() {
 
 #[test]
 fn test_add_multiple_connections() {
-    let path = temp_bag_path("test_multiple_connections");
-    let _guard = CleanupGuard;
+    let (path, _guard) = temp_bag_path("test_multiple_connections");
 
     let mut writer = BagWriter::create(&path).unwrap();
 
@@ -222,8 +216,7 @@ fn test_add_multiple_connections() {
 
 #[test]
 fn test_write_single_message() {
-    let path = temp_bag_path("test_write_single");
-    let _guard = CleanupGuard;
+    let (path, _guard) = temp_bag_path("test_write_single");
 
     let mut writer = BagWriter::create(&path).unwrap();
     writer
@@ -244,8 +237,7 @@ fn test_write_single_message() {
 
 #[test]
 fn test_write_multiple_messages_same_connection() {
-    let path = temp_bag_path("test_multiple_messages");
-    let _guard = CleanupGuard;
+    let (path, _guard) = temp_bag_path("test_multiple_messages");
 
     let mut writer = BagWriter::create(&path).unwrap();
     writer
@@ -270,8 +262,7 @@ fn test_write_multiple_messages_same_connection() {
 
 #[test]
 fn test_round_trip_single_message() {
-    let path = temp_bag_path("test_round_trip_single");
-    let _guard = CleanupGuard;
+    let (path, _guard) = temp_bag_path("test_round_trip_single");
 
     // Write a message
     let mut writer = BagWriter::create(&path).unwrap();
@@ -383,8 +374,7 @@ fn test_round_trip_message_data_preserved() {
 
 #[test]
 fn test_write_message_with_invalid_connection_id() {
-    let path = temp_bag_path("test_invalid_conn_id");
-    let _guard = CleanupGuard;
+    let (path, _guard) = temp_bag_path("test_invalid_conn_id");
 
     let mut writer = BagWriter::create(&path).unwrap();
     // Only add connection 0
