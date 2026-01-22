@@ -196,8 +196,10 @@ let transform = TransformBuilder::new()
     .with_type_rename("OldType", "NewType")
     .build();
 
-let rewriter = RoboRewriter::open("input.mcap")?;
-rewriter.set_transform(transform);
+let rewriter = RoboRewriter::with_options(
+    "input.mcap",
+    RewriteOptions::default().with_transforms(transform)
+)?;
 rewriter.rewrite("output.mcap")?;
 ```
 

@@ -117,8 +117,10 @@ let transform = TransformBuilder::new()
     .with_topic_rename("/old/topic", "/new/topic")
     .build();
 
-let rewriter = RoboRewriter::open("input.mcap")?;
-rewriter.set_transform(transform);
+let rewriter = RoboRewriter::with_options(
+    "input.mcap",
+    robocodec::RewriteOptions::default().with_transforms(transform)
+)?;
 rewriter.rewrite("output.mcap")?;
 ```
 
@@ -129,8 +131,7 @@ transform = (TransformBuilder()
     .with_topic_rename("/old/topic", "/new/topic")
     .build())
 
-rewriter = RoboRewriter("input.mcap")
-rewriter.with_transforms(transform)
+rewriter = RoboRewriter.with_transforms("input.mcap", transform)
 rewriter.rewrite("output.mcap")
 ```
 
