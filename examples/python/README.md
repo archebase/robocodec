@@ -2,13 +2,45 @@
 
 This directory contains practical examples for using the robocodec Python library to work with robotics data formats (MCAP and ROS bag files).
 
-## Prerequisites
+## Quick Start
 
-Ensure robocodec is installed in development mode:
+### 1. Install the Library
+
+From the project root, build and install in development mode:
 
 ```bash
 cd /path/to/robocodec
 make build-python-dev
+```
+
+### 2. Run an Example
+
+```bash
+# Using the virtual environment Python directly
+.venv/bin/python3 examples/python/inspect_mcap.py tests/fixtures/robocodec_test_14.mcap
+
+# Or activate the venv first
+source .venv/bin/activate
+python3 examples/python/inspect_mcap.py tests/fixtures/robocodec_test_14.mcap
+```
+
+## ⚠️ Important: Python Environment
+
+These examples require the **locally-built** robocodec package, not a system-wide installation. The examples include automatic API verification and will show a helpful error message if the wrong package is detected.
+
+**Symptoms of wrong environment:**
+```
+AttributeError: module 'robocodec' has no attribute 'RoboReader'
+```
+
+**Solution:**
+```bash
+# Always use the venv Python
+.venv/bin/python3 examples/python/inspect_mcap.py data.mcap
+
+# Or activate venv first
+source .venv/bin/activate
+python3 examples/python/inspect_mcap.py data.mcap
 ```
 
 ## Examples
@@ -244,3 +276,64 @@ stats = rewriter.rewrite("output.mcap")
 3. **Method chaining**: All `TransformBuilder` methods return `self` for fluent chaining
 4. **Structured errors**: `RobocodecError` provides `kind`, `context`, and `message` attributes
 5. **Channel IDs**: Use returned channel IDs from `add_channel()` for writing messages
+
+---
+
+## Troubleshooting
+
+### "Incompatible robocodec API detected"
+
+**Error message:**
+```
+❌ Error: Incompatible robocodec API detected
+Missing classes: RoboReader, RoboWriter, ...
+```
+
+**Cause:** You're using a system-wide `pip install` of robocodec instead of the local development build.
+
+**Fix:**
+```bash
+# Uninstall the system package (optional)
+pip uninstall robocodec
+
+# Rebuild and install in development mode
+cd /path/to/robocodec
+make build-python-dev
+
+# Run examples using the venv Python
+.venv/bin/python3 examples/python/inspect_mcap.py data.mcap
+```
+
+### "module 'robocodec' has no attribute 'RoboReader'"
+
+**Cause:** Same as above - wrong Python environment.
+
+**Fix:** Always use the virtual environment Python:
+```bash
+# Direct path (recommended)
+.venv/bin/python3 examples/python/inspect_mcap.py data.mcap
+
+# Or activate first
+source .venv/bin/activate
+python3 examples/python/inspect_mcap.py data.mcap
+```
+
+### "No module named 'robocodec'"
+
+**Cause:** The package hasn't been built/installed yet.
+
+**Fix:**
+```bash
+make build-python-dev
+```
+
+### Examples can't find test data files
+
+**Fix:** Use the test fixtures from the repository:
+```bash
+# List available test files
+ls tests/fixtures/
+
+# Run with a test file
+.venv/bin/python3 examples/python/inspect_mcap.py tests/fixtures/robocodec_test_14.mcap
+```

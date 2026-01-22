@@ -41,9 +41,10 @@ cargo build --release
 cargo test
 
 # 构建 Python 包（可选）
-pip install maturin
-maturin develop
+make build-python-dev
 ```
+
+> **注意：** Python 绑定的 PyPI 发布即将推出。目前请使用 `make build-python-dev` 从源码构建。
 
 ### 作为 Rust 依赖使用
 
@@ -102,16 +103,28 @@ let mut rewriter = RoboRewriter::open("input.mcap")?;
 rewriter.rewrite("output.mcap")?;
 ```
 
-### Python API
+### Python API（从源码构建）
+
+Python 绑定需要从源码构建：
+
+```bash
+git clone https://github.com/archebase/robocodec.git
+cd robocodec
+make build-python-dev
+```
 
 ```python
-from robocodec import McapReader
+from robocodec import RoboReader
 
 # 读取 MCAP 文件
-reader = McapReader("data.mcap")
-for message, channel in reader:
-    print(f"Topic: {channel.topic}, Data: {message}")
+reader = RoboReader("data.mcap")
+for channel in reader.channels:
+    print(f"Topic: {channel.topic}, Messages: {channel.message_count}")
 ```
+
+> **注意：** PyPI 发布即将推出。目前请使用上述说明从源码构建。
+
+详细的使用示例和 API 参考，请参阅 [examples/python/README.md](examples/python/README.md)。
 
 ## 架构
 
@@ -215,6 +228,7 @@ cargo run --example convert -- input.bag output.mcap
 ## 文档
 
 - [架构](ARCHITECTURE.md) - 高层系统设计
+- [Python 示例](examples/python/README.md) - Python API 使用示例
 
 ## 链接
 

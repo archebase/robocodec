@@ -27,6 +27,16 @@ from robocodec import (
     RobocodecError,
 )
 
+# Verify the correct API is available before running
+try:
+    from ._example_utils import verify_api
+    verify_api()
+except ImportError:
+    if not hasattr(robocodec, 'RoboReader'):
+        print("❌ Error: Incompatible robocodec API", file=sys.stderr)
+        print("   Please install using: make build-python-dev", file=sys.stderr)
+        sys.exit(1)
+
 
 def print_separator(char: str = "=") -> None:
     """Print a separator line."""

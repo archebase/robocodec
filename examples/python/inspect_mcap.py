@@ -18,6 +18,16 @@ from datetime import datetime
 import robocodec
 from robocodec import RoboReader, RobocodecError
 
+# Verify the correct API is available before running
+try:
+    from ._example_utils import verify_api
+    verify_api()
+except ImportError:
+    # Skip if utils module not available (e.g., running from different location)
+    if not hasattr(robocodec, 'RoboReader'):
+        print("❌ Error: Incompatible robocodec API", file=sys.stderr)
+        print("   Please install using: make build-python-dev", file=sys.stderr)
+        sys.exit(1)
 
 def format_timestamp(nanos: int) -> str:
     """Convert nanoseconds since Unix epoch to readable datetime."""

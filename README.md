@@ -31,10 +31,14 @@ let reader = RoboReader::open("data.mcap")?;
 println!("Found {} channels", reader.channels().len());
 ```
 
-### Python
+### Python (from source)
+
+Python bindings are available but must be built from source:
 
 ```bash
-pip install robocodec
+git clone https://github.com/archebase/robocodec.git
+cd robocodec
+make build-python-dev
 ```
 
 ```python
@@ -43,6 +47,10 @@ from robocodec import RoboReader
 reader = RoboReader("data.mcap")
 print(f"Found {len(reader.channels)} channels")
 ```
+
+> **Note:** PyPI release is coming soon. For now, build from source using the instructions above.
+
+See [examples/python/README.md](examples/python/README.md) for more Python usage examples.
 
 ## Common Tasks
 
@@ -160,11 +168,26 @@ robocodec = { version = "0.1", features = ["jemalloc"] }
 
 ### Python Users
 
+Build from source (PyPI release coming soon):
+
 ```bash
-pip install robocodec
+git clone https://github.com/archebase/robocodec.git
+cd robocodec
+make build-python-dev
 ```
 
-Or build from source:
+Then run examples:
+
+```bash
+# Using the virtual environment Python
+.venv/bin/python3 examples/python/inspect_mcap.py tests/fixtures/robocodec_test_14.mcap
+
+# Or activate venv first
+source .venv/bin/activate
+python3 examples/python/inspect_mcap.py tests/fixtures/robocodec_test_14.mcap
+```
+
+For detailed Python examples and API reference, see [examples/python/README.md](examples/python/README.md).
 
 ```bash
 git clone https://github.com/archebase/robocodec.git
@@ -198,6 +221,7 @@ make build-python-dev
 | Document | Description |
 |----------|-------------|
 | [Architecture](ARCHITECTURE.md) | High-level system design |
+| [Python Examples](examples/python/README.md) | Python API usage examples |
 | [Contributing](CONTRIBUTING.md) | Development setup and guidelines |
 
 ## License

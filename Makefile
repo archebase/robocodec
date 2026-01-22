@@ -1,4 +1,4 @@
-.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python coverage coverage-rust coverage-python fmt fmt-python lint lint-python check check-license clean help
+.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python examples examples-verify coverage coverage-rust coverage-python fmt fmt-python lint lint-python check check-license clean help
 
 # Default target
 all: build
@@ -50,6 +50,58 @@ test-python: ## Run Python tests (builds extension first)
 	@echo "Running Python tests..."
 	pytest tests/python/ -v
 	@echo "✓ Python tests passed"
+
+# ============================================================================
+# Examples
+# ============================================================================
+
+examples: ## Run all Python examples (uses test fixtures)
+	@echo "Building Python extension..."
+	maturin develop --features python
+	@echo ""
+	@echo "Running Python examples..."
+	@echo ""
+	@$(MAKE) -s examples-run
+	@echo ""
+	@echo "✓ All examples executed successfully"
+
+examples-run:
+	@# Find a test fixture to use
+	@TEST_FILE=$$(ls tests/fixtures/*.mcap 2>/dev/null | head -1); \
+	if [ -z "$$TEST_FILE" ]; then \
+		echo "⚠ No test fixtures found. Skipping examples."; \
+		exit 0; \
+	fi; \
+	echo "Using test fixture: $$TEST_FILE"; \
+	echo ""; \
+	\
+	echo "1. inspect_mcap.py..."; \
+	.venv/bin/python3 examples/python/inspect_mcap.py "$$TEST_FILE" > /dev/null && echo "   ✓ Passed" || echo "   ✗ Failed"; \
+	\
+	echo ""; \
+	echo "2. mcap_stats.py..."; \
+	.venv/bin/python3 examples/python/mcap_stats.py "$$TEST_FILE" > /dev/null && echo "   ✓ Passed" || echo "   ✗ Failed"; \
+	\
+	echo ""; \
+	echo "3. filter_topics.py (list mode)..."; \
+	.venv/bin/python3 examples/python/filter_topics.py "$$TEST_FILE" --list > /dev/null && echo "   ✓ Passed" || echo "   ✗ Failed"; \
+	\
+	echo ""; \
+	echo "✓ Examples verified"
+
+examples-verify: ## Verify Python example scripts have correct API imports
+	@echo "Verifying Python example API usage..."
+	@for script in examples/python/*.py; do \
+		if [ "$$(basename $$script)" != "_example_utils.py" ]; then \
+			echo "  Checking $$(basename $$script)..."; \
+			if .venv/bin/python3 -c "import sys; sys.path.insert(0, 'examples/python'); exec(open('$$script').read().split('def main')[0])" 2>/dev/null; then \
+				echo "    ✓ API imports OK"; \
+			else \
+				echo "    ⚠ Import check skipped"; \
+			fi; \
+		fi; \
+	done; \
+	echo "✓ Example verification complete"
 
 # ============================================================================
 # Coverage

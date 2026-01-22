@@ -26,6 +26,16 @@ from pathlib import Path
 import robocodec
 from robocodec import RoboReader, RobocodecError
 
+# Verify the correct API is available before running
+try:
+    from ._example_utils import verify_api
+    verify_api()
+except ImportError:
+    if not hasattr(robocodec, 'RoboReader'):
+        print("❌ Error: Incompatible robocodec API", file=sys.stderr)
+        print("   Please install using: make build-python-dev", file=sys.stderr)
+        sys.exit(1)
+
 
 def format_size(bytes: int) -> str:
     """Format bytes in human-readable format."""
