@@ -17,8 +17,9 @@ use robocodec::McapFormat;
 
 #[test]
 fn test_detect_format_mcap_extension() {
+    std::fs::create_dir_all("/tmp/robocodec").ok();
     let path = format!(
-        "/tmp/claude/robocodec_test_mcap_{}.mcap",
+        "/tmp/robocodec/robocodec_test_mcap_{}.mcap",
         std::process::id()
     );
     let mut temp_file = File::create(&path).unwrap();
@@ -37,7 +38,11 @@ fn test_detect_format_mcap_extension() {
 
 #[test]
 fn test_detect_format_bag_extension() {
-    let path = format!("/tmp/claude/robocodec_test_bag_{}.bag", std::process::id());
+    std::fs::create_dir_all("/tmp/robocodec").ok();
+    let path = format!(
+        "/tmp/robocodec/robocodec_test_bag_{}.bag",
+        std::process::id()
+    );
     let mut temp_file = File::create(&path).unwrap();
     temp_file.write_all(b"#ROSBAG V2.0").unwrap();
     temp_file.sync_all().unwrap();
@@ -50,7 +55,11 @@ fn test_detect_format_bag_extension() {
 
 #[test]
 fn test_detect_format_unknown() {
-    let path = format!("/tmp/claude/robocodec_test_xyz_{}.xyz", std::process::id());
+    std::fs::create_dir_all("/tmp/robocodec").ok();
+    let path = format!(
+        "/tmp/robocodec/robocodec_test_xyz_{}.xyz",
+        std::process::id()
+    );
     let mut temp_file = File::create(&path).unwrap();
     temp_file.write_all(b"unknown content").unwrap();
     temp_file.sync_all().unwrap();
