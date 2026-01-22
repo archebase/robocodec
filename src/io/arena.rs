@@ -271,17 +271,18 @@ mod tests {
     use std::io::Write;
 
     fn create_temp_file(name: &str, data: &[u8]) -> String {
-        let path = format!(
-            "/tmp/robocodec_test_arena_{}_{}.tmp",
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "robocodec_test_arena_{}_{}.tmp",
             std::process::id(),
             name
-        );
+        ));
         {
             let mut temp_file = File::create(&path).unwrap();
             temp_file.write_all(data).unwrap();
             temp_file.flush().unwrap();
         }
-        path
+        path.to_str().unwrap().to_string()
     }
 
     #[test]

@@ -280,10 +280,11 @@ mod tests {
     #[test]
     fn test_check_mcap_summary_with_file() {
         // Create a dummy MCAP-like file
-        let path = format!(
-            "/tmp/robocodec_test_builder_summary_{}.mcap",
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "robocodec_test_builder_summary_{}.mcap",
             std::process::id()
-        );
+        ));
         {
             use std::fs::File;
             let mut temp_file = File::create(&path).unwrap();
@@ -292,7 +293,7 @@ mod tests {
         }
 
         let builder = ReaderBuilder::new();
-        let result = builder.check_mcap_summary(&std::path::PathBuf::from(&path));
+        let result = builder.check_mcap_summary(&path);
         // Should succeed but return no summary (not a real MCAP file)
         assert!(result.is_ok());
         let (has_summary, has_indexes) = result.unwrap();

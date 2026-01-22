@@ -17,8 +17,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use robocodec::io::traits::FormatReader;
 use robocodec::io::formats::bag::{BagFormat, BagMessage, BagWriter};
+use robocodec::io::traits::FormatReader;
 
 // ============================================================================
 // Test Fixtures
@@ -297,8 +297,15 @@ fn test_round_trip_single_message() {
 
 #[test]
 fn test_round_trip_message_data_preserved() {
-    // Use a fixed path for easier debugging
-    let path = PathBuf::from("/tmp/claude/test_round_trip_data.bag");
+    // Use a cross-platform temp path
+    let mut path = std::env::temp_dir();
+    path.push("claude");
+    path.push("test_round_trip_data.bag");
+
+    // Ensure parent directory exists
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
 
     // Create test data with known byte patterns
     let test_data_1 = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];

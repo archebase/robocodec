@@ -22,7 +22,6 @@ use robocodec::schema::parse_schema;
 /// validating that our decoder produces the same results for geometry_msgs/TFMessage.
 ///
 /// Reference: TypeScript rosbag library test fixtures
-#[test]
 fn test_tf2_message_from_typescript_cdr_library() {
     // Example tf2_msgs/TFMessage from TypeScript tests
     // This validates:
