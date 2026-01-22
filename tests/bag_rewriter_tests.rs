@@ -143,7 +143,13 @@ fn test_rewriter_simple_bag_copy() {
     let (output_path, _guard_out) = temp_bag_path("simple_copy_output");
 
     // Create a simple test bag
-    create_test_bag(&input_path, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF).unwrap();
+    create_test_bag(
+        &input_path,
+        "/chatter",
+        "std_msgs/String",
+        STD_MSGS_STRING_DEF,
+    )
+    .unwrap();
 
     // Rewrite without transformations
     let mut rewriter = BagRewriter::new();
@@ -202,10 +208,22 @@ fn test_rewriter_multiple_channels() {
     {
         let mut writer = BagWriter::create(&input_path).unwrap();
         writer
-            .add_connection_with_callerid(0, "/chatter1", "std_msgs/String", STD_MSGS_STRING_DEF, "/node1")
+            .add_connection_with_callerid(
+                0,
+                "/chatter1",
+                "std_msgs/String",
+                STD_MSGS_STRING_DEF,
+                "/node1",
+            )
             .unwrap();
         writer
-            .add_connection_with_callerid(1, "/chatter2", "std_msgs/Int32", STD_MSGS_INT32_DEF, "/node2")
+            .add_connection_with_callerid(
+                1,
+                "/chatter2",
+                "std_msgs/Int32",
+                STD_MSGS_INT32_DEF,
+                "/node2",
+            )
             .unwrap();
 
         // Write messages to both channels
@@ -247,7 +265,13 @@ fn test_rewriter_with_topic_rename() {
     let (input_path, _guard) = temp_bag_path("topic_rename_input");
     let (output_path, _guard_out) = temp_bag_path("topic_rename_output");
 
-    create_test_bag(&input_path, "/old_topic", "std_msgs/String", STD_MSGS_STRING_DEF).unwrap();
+    create_test_bag(
+        &input_path,
+        "/old_topic",
+        "std_msgs/String",
+        STD_MSGS_STRING_DEF,
+    )
+    .unwrap();
 
     // Create transform pipeline
     let pipeline = TransformBuilder::new()
@@ -278,7 +302,13 @@ fn test_rewriter_with_type_rename() {
     let (input_path, _guard) = temp_bag_path("type_rename_input");
     let (output_path, _guard_out) = temp_bag_path("type_rename_output");
 
-    create_test_bag(&input_path, "/chatter", "old_pkg/String", STD_MSGS_STRING_DEF).unwrap();
+    create_test_bag(
+        &input_path,
+        "/chatter",
+        "old_pkg/String",
+        STD_MSGS_STRING_DEF,
+    )
+    .unwrap();
 
     // Create transform pipeline
     let pipeline = TransformBuilder::new()
@@ -309,7 +339,13 @@ fn test_rewriter_with_multiple_transforms() {
     let (input_path, _guard) = temp_bag_path("multi_transform_input");
     let (output_path, _guard_out) = temp_bag_path("multi_transform_output");
 
-    create_test_bag(&input_path, "/old_topic", "old_pkg/String", STD_MSGS_STRING_DEF).unwrap();
+    create_test_bag(
+        &input_path,
+        "/old_topic",
+        "old_pkg/String",
+        STD_MSGS_STRING_DEF,
+    )
+    .unwrap();
 
     // Create transform pipeline with multiple transforms
     let pipeline = TransformBuilder::new()
@@ -362,7 +398,13 @@ fn test_rewriter_preserves_callerid() {
     {
         let mut writer = BagWriter::create(&input_path).unwrap();
         writer
-            .add_connection_with_callerid(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF, "/test_publisher")
+            .add_connection_with_callerid(
+                0,
+                "/chatter",
+                "std_msgs/String",
+                STD_MSGS_STRING_DEF,
+                "/test_publisher",
+            )
             .unwrap();
         writer.finish().unwrap();
     }
@@ -391,7 +433,13 @@ fn test_rewriter_tracks_statistics() {
     {
         let mut writer = BagWriter::create(&input_path).unwrap();
         writer
-            .add_connection_with_callerid(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF, "/node")
+            .add_connection_with_callerid(
+                0,
+                "/chatter",
+                "std_msgs/String",
+                STD_MSGS_STRING_DEF,
+                "/node",
+            )
             .unwrap();
 
         for i in 0..5 {

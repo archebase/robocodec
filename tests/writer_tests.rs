@@ -123,7 +123,12 @@ fn test_robowriter_write_bag_messages() {
 
     // Add a channel
     let channel_id = writer
-        .add_channel("/chatter", "std_msgs/String", "cdr", Some(STD_MSGS_STRING_DEF))
+        .add_channel(
+            "/chatter",
+            "std_msgs/String",
+            "cdr",
+            Some(STD_MSGS_STRING_DEF),
+        )
         .expect("add_channel should succeed");
 
     assert_eq!(channel_id, 0, "First channel should have ID 0");
@@ -183,10 +188,19 @@ fn test_robowriter_message_count() {
 
     let mut writer = RoboWriter::create(&path).unwrap();
     writer
-        .add_channel("/chatter", "std_msgs/String", "cdr", Some(STD_MSGS_STRING_DEF))
+        .add_channel(
+            "/chatter",
+            "std_msgs/String",
+            "cdr",
+            Some(STD_MSGS_STRING_DEF),
+        )
         .unwrap();
 
-    assert_eq!(writer.message_count(), 0, "initial message count should be 0");
+    assert_eq!(
+        writer.message_count(),
+        0,
+        "initial message count should be 0"
+    );
 
     let data = b"msg1".to_vec();
     let raw_msg = robocodec::io::metadata::RawMessage {
@@ -211,15 +225,29 @@ fn test_robowriter_channel_count() {
 
     let mut writer = RoboWriter::create(&path).unwrap();
 
-    assert_eq!(writer.channel_count(), 0, "initial channel count should be 0");
+    assert_eq!(
+        writer.channel_count(),
+        0,
+        "initial channel count should be 0"
+    );
 
     writer
-        .add_channel("/chatter1", "std_msgs/String", "cdr", Some(STD_MSGS_STRING_DEF))
+        .add_channel(
+            "/chatter1",
+            "std_msgs/String",
+            "cdr",
+            Some(STD_MSGS_STRING_DEF),
+        )
         .unwrap();
     assert_eq!(writer.channel_count(), 1, "channel count should be 1");
 
     writer
-        .add_channel("/chatter2", "std_msgs/String", "cdr", Some(STD_MSGS_STRING_DEF))
+        .add_channel(
+            "/chatter2",
+            "std_msgs/String",
+            "cdr",
+            Some(STD_MSGS_STRING_DEF),
+        )
         .unwrap();
     assert_eq!(writer.channel_count(), 2, "channel count should be 2");
 }
@@ -281,10 +309,7 @@ fn test_robowriter_downcast_wrong_type() {
     // We can't test this with ParallelMcapWriter due to the generic parameter,
     // so we just verify the BagWriter downcast works
     let bag_writer = writer.downcast_ref::<BagWriter>();
-    assert!(
-        bag_writer.is_some(),
-        "BagWriter should downcast to itself"
-    );
+    assert!(bag_writer.is_some(), "BagWriter should downcast to itself");
 }
 
 // ============================================================================
