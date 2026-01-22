@@ -107,7 +107,7 @@ mod tests {
         Python::with_gil(|py| {
             let value = CodecValue::Bool(true);
             let result = codec_value_to_py(py, &value).unwrap();
-            assert_eq!(result.extract::<bool>().unwrap(), true);
+            assert!(result.extract::<bool>().unwrap());
         });
     }
 
