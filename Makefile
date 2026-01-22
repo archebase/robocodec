@@ -1,4 +1,4 @@
-.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python coverage coverage-rust clippy fmt lint check check-license clean help
+.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python coverage coverage-rust coverage-python clippy fmt lint check check-license clean help
 
 # Default target
 all: build
@@ -48,17 +48,18 @@ test-python: ## Run Python tests (builds extension first)
 	@echo "Building Python extension..."
 	maturin develop --features python
 	@echo "Running Python tests..."
-	pytest python/ -v
+	pytest tests/python/ -v
 	@echo "✓ Python tests passed"
 
 # ============================================================================
 # Coverage
 # ============================================================================
 
-coverage: coverage-rust ## Run Rust tests with coverage (requires cargo-llvm-cov)
+coverage: coverage-rust coverage-python ## Run all tests with coverage
 	@echo ""
 	@echo "✓ Coverage reports generated"
 	@echo "  Rust:   target/llvm-cov/html/index.html"
+	@echo "  Python: tests/python/htmlcov/index.html"
 
 coverage-rust: ## Run Rust tests with coverage (requires cargo-llvm-cov)
 	@echo "Running Rust tests with coverage..."
@@ -67,6 +68,14 @@ coverage-rust: ## Run Rust tests with coverage (requires cargo-llvm-cov)
 	cargo llvm-cov --workspace --lcov --output-path lcov.info
 	@echo ""
 	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html"
+
+coverage-python: ## Run Python tests with coverage (requires pytest-cov)
+	@echo "Building Python extension..."
+	maturin develop --features python
+	@echo "Running Python tests with coverage..."
+	pytest tests/python/ --cov=robocodec --cov-report=html --cov-report=term-missing -v
+	@echo ""
+	@echo "✓ Python coverage report: tests/python/htmlcov/index.html"
 
 # ============================================================================
 # Code quality
@@ -103,6 +112,8 @@ clean: ## Clean build artifacts
 	rm -rf target/
 	rm -rf **/__pycache__/
 	rm -rf **/.pytest_cache/
+	rm -rf tests/python/htmlcov/
+	rm -rf tests/python/.coverage*
 	rm -rf *.egg-info/
 	rm -rf .pytest_cache/
 	rm -rf coverage-html/
