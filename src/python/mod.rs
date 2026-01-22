@@ -54,7 +54,7 @@ pub use writer::PyRoboWriter;
 
 /// Python module for robocodec robotics data library.
 #[pymodule]
-fn robocodec(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _robocodec(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add custom exception (created by create_exception! macro)
     m.add("RobocodecError", m.py().get_type::<RobocodecError>())?;
 
