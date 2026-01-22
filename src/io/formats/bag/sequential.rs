@@ -345,6 +345,8 @@ impl Iterator for SequentialBagRawIter {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_sequential_bag_reader_compiles() {
         // Just verify the types compile correctly
@@ -365,5 +367,20 @@ mod tests {
         // Verify they are compatible (ros1 encoding with ros1msg schema)
         assert!(ros1_encoding.starts_with("ros1"));
         assert!(ros1msg_schema_encoding.starts_with("ros1"));
+    }
+
+    #[test]
+    fn test_bag_sequential_format() {
+        // Test that BagSequentialFormat can be used
+        let _format = BagSequentialFormat;
+        // Just verify it compiles
+    }
+
+    #[test]
+    fn test_sequential_bag_reader_format_trait() {
+        // Test that SequentialBagReader implements FormatReader correctly
+        // This is a compile-time check
+        fn assert_format_reader<T: FormatReader>() {}
+        assert_format_reader::<SequentialBagReader>();
     }
 }

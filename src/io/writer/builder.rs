@@ -29,7 +29,7 @@ impl Default for WriterConfig {
     fn default() -> Self {
         Self {
             path: PathBuf::new(),
-            strategy: WriteStrategy::Sequential,
+            strategy: WriteStrategy::Auto,
             compression_level: None,
             chunk_size: None,
             num_threads: None,
@@ -90,6 +90,9 @@ impl WriterBuilder {
         // Detect format from extension
         let format = crate::io::detection::detect_format(path);
 
+        // Resolve Auto strategy to concrete strategy
+        let _resolved_strategy = self.config.strategy.resolve();
+
         // For new files, we trust the extension
         let format = match format {
             Ok(crate::io::metadata::FileFormat::Unknown) => {
@@ -133,7 +136,7 @@ mod tests {
     #[test]
     fn test_builder_default() {
         let builder = WriterBuilder::new();
-        assert_eq!(builder.config.strategy, WriteStrategy::Sequential);
+        assert_eq!(builder.config.strategy, WriteStrategy::Auto);
         assert_eq!(builder.config.compression_level, None);
     }
 

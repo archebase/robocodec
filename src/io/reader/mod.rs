@@ -225,11 +225,217 @@ impl FormatReader for RoboReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::metadata::{ChannelInfo, FileFormat};
+
+    // Mock FormatReader for testing
+    struct MockReader {
+        path: String,
+        channels: std::collections::HashMap<u16, ChannelInfo>,
+        message_count: u64,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+        file_size: u64,
+    }
+
+    impl MockReader {
+        fn new(path: &str) -> Self {
+            Self {
+                path: path.to_string(),
+                channels: std::collections::HashMap::new(),
+                message_count: 0,
+                start_time: None,
+                end_time: None,
+                file_size: 0,
+            }
+        }
+    }
+
+    impl FormatReader for MockReader {
+        fn channels(&self) -> &std::collections::HashMap<u16, ChannelInfo> {
+            &self.channels
+        }
+
+        fn message_count(&self) -> u64 {
+            self.message_count
+        }
+
+        fn start_time(&self) -> Option<u64> {
+            self.start_time
+        }
+
+        fn end_time(&self) -> Option<u64> {
+            self.end_time
+        }
+
+        fn path(&self) -> &str {
+            &self.path
+        }
+
+        fn format(&self) -> FileFormat {
+            FileFormat::Unknown
+        }
+
+        fn file_size(&self) -> u64 {
+            self.file_size
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
+    }
 
     #[test]
     fn test_unified_reader_creation() {
         // This is a placeholder test - real tests would use actual files
         // The structure demonstrates the API usage
         let _builder = ReaderBuilder::new();
+    }
+
+    #[test]
+    fn test_robo_reader_strategy() {
+        let mock = MockReader::new("test.mcap");
+        let reader = RoboReader {
+            inner: Box::new(mock),
+            strategy: ReadStrategy::Sequential,
+        };
+
+        assert_eq!(reader.strategy(), &ReadStrategy::Sequential);
+    }
+
+    #[test]
+    fn test_robo_reader_downcast_ref() {
+        let mock = MockReader::new("test.mcap");
+        let reader = RoboReader {
+            inner: Box::new(mock),
+            strategy: ReadStrategy::Auto,
+        };
+
+        // Should be able to downcast to MockReader
+        let mock_ref = reader.downcast_ref::<MockReader>();
+        assert!(mock_ref.is_some());
+        assert_eq!(mock_ref.unwrap().path(), "test.mcap");
+    }
+
+    #[test]
+    fn test_robo_reader_downcast_mut() {
+        let mock = MockReader::new("test.mcap");
+        let mut reader = RoboReader {
+            inner: Box::new(mock),
+            strategy: ReadStrategy::Auto,
+        };
+
+        // Should be able to downcast mutably to MockReader
+        let mock_mut = reader.downcast_mut::<MockReader>();
+        assert!(mock_mut.is_some());
+        assert_eq!(mock_mut.unwrap().path(), "test.mcap");
+    }
+
+    #[test]
+    fn test_robo_reader_downcast_wrong_type() {
+        let mock = MockReader::new("test.mcap");
+        let mut reader = RoboReader {
+            inner: Box::new(mock),
+            strategy: ReadStrategy::Auto,
+        };
+
+        // Try to downcast to wrong type should fail
+        let wrong_ref = reader.downcast_ref::<String>();
+        assert!(wrong_ref.is_none());
+
+        let wrong_mut = reader.downcast_mut::<String>();
+        assert!(wrong_mut.is_none());
+    }
+
+    #[test]
+    fn test_robo_reader_delegates_to_inner() {
+        let mut mock = MockReader::new("test.bag");
+        mock.channels
+            .insert(0, ChannelInfo::new(0, "/test", "std_msgs/String"));
+        mock.message_count = 100;
+        mock.start_time = Some(1000);
+        mock.end_time = Some(5000);
+        mock.file_size = 10000;
+
+        let reader = RoboReader {
+            inner: Box::new(mock),
+            strategy: ReadStrategy::Auto,
+        };
+
+        // Test delegation
+        assert_eq!(reader.path(), "test.bag");
+        assert_eq!(reader.message_count(), 100);
+        assert_eq!(reader.start_time(), Some(1000));
+        assert_eq!(reader.end_time(), Some(5000));
+        assert_eq!(reader.file_size(), 10000);
+        assert_eq!(reader.format(), FileFormat::Unknown);
+        assert_eq!(reader.channels().len(), 1);
+    }
+
+    #[test]
+    fn test_robo_reader_channel_by_topic() {
+        let mut mock = MockReader::new("test.mcap");
+        mock.channels
+            .insert(0, ChannelInfo::new(0, "/chatter", "std_msgs/String"));
+        mock.channels
+            .insert(1, ChannelInfo::new(1, "/odom", "nav_msgs/Odometry"));
+
+        let reader = RoboReader {
+            inner: Box::new(mock),
+            strategy: ReadStrategy::Auto,
+        };
+
+        let chatter = reader.channel_by_topic("/chatter");
+        assert!(chatter.is_some());
+        assert_eq!(chatter.unwrap().topic, "/chatter");
+
+        let unknown = reader.channel_by_topic("/unknown");
+        assert!(unknown.is_none());
+    }
+
+    #[test]
+    fn test_robo_reader_channels_by_topic() {
+        let mut mock = MockReader::new("test.mcap");
+        mock.channels
+            .insert(0, ChannelInfo::new(0, "/chatter", "std_msgs/String"));
+        mock.channels
+            .insert(1, ChannelInfo::new(1, "/chatter", "std_msgs/String"));
+
+        let reader = RoboReader {
+            inner: Box::new(mock),
+            strategy: ReadStrategy::Auto,
+        };
+
+        let channels = reader.channels_by_topic("/chatter");
+        assert_eq!(channels.len(), 2);
+    }
+
+    #[test]
+    fn test_decode_messages_not_supported() {
+        let mock = MockReader::new("test.bag");
+        let reader = RoboReader {
+            inner: Box::new(mock),
+            strategy: ReadStrategy::Auto,
+        };
+
+        // Should return error since MockReader doesn't implement McapReader
+        let result = reader.decode_messages();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decode_messages_with_timestamp_not_supported() {
+        let mock = MockReader::new("test.bag");
+        let reader = RoboReader {
+            inner: Box::new(mock),
+            strategy: ReadStrategy::Auto,
+        };
+
+        // Should return error since MockReader doesn't implement McapReader
+        let result = reader.decode_messages_with_timestamp();
+        assert!(result.is_err());
     }
 }
