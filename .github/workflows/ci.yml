@@ -128,11 +128,14 @@ jobs:
       - name: Install Rust dependencies
         run: cargo fetch
 
-      - name: Install maturin
+      - name: Install maturin and pytest
         run: pip install maturin[patchelf] pytest pytest-cov
 
       - name: Build Python extension
-        run: maturin develop --features python --release
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          maturin develop --features python --release
 
       - name: Run Python tests with coverage
         run: |
