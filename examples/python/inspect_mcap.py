@@ -20,7 +20,7 @@ from robocodec import RoboReader, RobocodecError
 
 # Verify the correct API is available before running
 try:
-    from ._example_utils import verify_api
+    from ._example_utils import verify_api, print_robocodec_error
     verify_api()
 except ImportError:
     # Skip if utils module not available (e.g., running from different location)
@@ -28,6 +28,9 @@ except ImportError:
         print("❌ Error: Incompatible robocodec API", file=sys.stderr)
         print("   Please install using: make build-python-dev", file=sys.stderr)
         sys.exit(1)
+except Exception as e:
+    print(f"❌ Error during API verification: {e}", file=sys.stderr)
+    sys.exit(1)
 
 def format_timestamp(nanos: int) -> str:
     """Convert nanoseconds since Unix epoch to readable datetime."""
@@ -53,7 +56,7 @@ def inspect_mcap(file_path: str) -> None:
     print("=" * 60)
 
     try:
-        # RoboReader auto-detects format from file content
+        # RoboReader auto-detects format from file extension
         reader = RoboReader(file_path)
 
         # Print file overview
@@ -105,10 +108,7 @@ def inspect_mcap(file_path: str) -> None:
                 print(f"  Msg Count:     {ch.message_count:,}")
 
     except RobocodecError as e:
-        print(f"\n❌ Error: {e}")
-        print(f"   Kind: {e.kind}")
-        if e.context:
-            print(f"   Context: {e.context}")
+        print_robocodec_error(e)
         sys.exit(1)
 
 

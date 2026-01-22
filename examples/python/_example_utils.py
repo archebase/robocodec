@@ -92,11 +92,11 @@ def get_test_data_path(filename: str) -> str:
         if path.exists():
             return str(path)
 
-    print(f"⚠️  Warning: Test file '{filename}' not found", file=sys.stderr)
-    print(f"    Searched in:", file=sys.stderr)
+    print(f"❌ Error: Test file '{filename}' not found", file=sys.stderr)
+    print(f"   Searched in:", file=sys.stderr)
     for p in possible_paths:
         print(f"      - {p}", file=sys.stderr)
-    return filename  # Return original filename as fallback
+    sys.exit(1)
 
 
 def print_example_header(title: str) -> None:
@@ -112,12 +112,32 @@ def print_example_header(title: str) -> None:
     print()
 
 
-def auto_verify_at_import() -> None:
-    """Automatically verify API when this module is imported.
+def format_robocodec_error(error) -> tuple[str, str | None, str]:
+    """Extract kind, context, and message from RobocodecError.
 
-    This is called automatically on import to ensure examples fail
-    fast with a helpful message if the API is incorrect.
+    RobocodecError stores error data as a tuple (kind, context, message)
+    accessible via the args attribute, not as direct attributes.
+
+    Args:
+        error: A RobocodecError exception instance
+
+    Returns:
+        A tuple of (kind, context, message)
     """
-    # Only verify if we're being run as a script, not imported
-    if __name__ != "_example_utils":
-        verify_api()
+    kind = error.args[0] if len(error.args) > 0 else "Unknown"
+    context = error.args[1] if len(error.args) > 1 else None
+    message = error.args[2] if len(error.args) > 2 else str(error)
+    return (kind, context, message)
+
+
+def print_robocodec_error(error) -> None:
+    """Print a formatted RobocodecError to stderr.
+
+    Args:
+        error: A RobocodecError exception instance
+    """
+    kind, context, _ = format_robocodec_error(error)
+    print(f"❌ Error: {error}", file=sys.stderr)
+    print(f"   Kind: {kind}", file=sys.stderr)
+    if context:
+        print(f"   Context: {context}", file=sys.stderr)

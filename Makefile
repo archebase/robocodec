@@ -106,7 +106,8 @@ examples: ## Run all Python examples (uses test fixtures)
 
 examples-run:
 	@# Find a test fixture to use
-	@TEST_FILE=$$(ls tests/fixtures/*.mcap 2>/dev/null | head -1); \
+	@FAILED=0; \
+	TEST_FILE=$$(ls tests/fixtures/*.mcap 2>/dev/null | head -1); \
 	if [ -z "$$TEST_FILE" ]; then \
 		echo "⚠ No test fixtures found. Skipping examples."; \
 		exit 0; \
@@ -115,18 +116,23 @@ examples-run:
 	echo ""; \
 	\
 	echo "1. inspect_mcap.py..."; \
-	.venv/bin/python3 examples/python/inspect_mcap.py "$$TEST_FILE" > /dev/null && echo "   ✓ Passed" || echo "   ✗ Failed"; \
+	.venv/bin/python3 examples/python/inspect_mcap.py "$$TEST_FILE" > /dev/null && echo "   ✓ Passed" || { echo "   ✗ Failed"; FAILED=1; }; \
 	\
 	echo ""; \
 	echo "2. mcap_stats.py..."; \
-	.venv/bin/python3 examples/python/mcap_stats.py "$$TEST_FILE" > /dev/null && echo "   ✓ Passed" || echo "   ✗ Failed"; \
+	.venv/bin/python3 examples/python/mcap_stats.py "$$TEST_FILE" > /dev/null && echo "   ✓ Passed" || { echo "   ✗ Failed"; FAILED=1; }; \
 	\
 	echo ""; \
 	echo "3. filter_topics.py (list mode)..."; \
-	.venv/bin/python3 examples/python/filter_topics.py "$$TEST_FILE" --list > /dev/null && echo "   ✓ Passed" || echo "   ✗ Failed"; \
+	.venv/bin/python3 examples/python/filter_topics.py "$$TEST_FILE" --list > /dev/null && echo "   ✓ Passed" || { echo "   ✗ Failed"; FAILED=1; }; \
 	\
 	echo ""; \
-	echo "✓ Examples verified"
+	if [ "$$FAILED" -eq 1 ]; then \
+		echo "✗ Some examples failed"; \
+		exit 1; \
+	else \
+		echo "✓ All examples verified"; \
+	fi
 
 examples-verify: ## Verify Python example scripts have correct API imports
 	@echo "Verifying Python example API usage..."

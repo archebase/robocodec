@@ -28,13 +28,16 @@ from robocodec import RoboReader, RobocodecError
 
 # Verify the correct API is available before running
 try:
-    from ._example_utils import verify_api
+    from ._example_utils import verify_api, print_robocodec_error
     verify_api()
 except ImportError:
     if not hasattr(robocodec, 'RoboReader'):
         print("❌ Error: Incompatible robocodec API", file=sys.stderr)
         print("   Please install using: make build-python-dev", file=sys.stderr)
         sys.exit(1)
+except Exception as e:
+    print(f"❌ Error during API verification: {e}", file=sys.stderr)
+    sys.exit(1)
 
 
 def format_size(bytes: int) -> str:
@@ -50,9 +53,12 @@ def format_timestamp(nanos: int) -> str:
     """Convert nanoseconds since Unix epoch to readable datetime."""
     if nanos == 0:
         return "N/A"
-    seconds = nanos / 1_000_000_000
-    dt = datetime.fromtimestamp(seconds)
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        seconds = nanos / 1_000_000_000
+        dt = datetime.fromtimestamp(seconds)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (OSError, OverflowError, ValueError):
+        return f"<invalid timestamp: {nanos} ns>"
 
 
 def format_duration(nanos: int) -> str:
@@ -266,9 +272,22 @@ class StatisticsReport:
     def export_json(self, output_path: str) -> None:
         """Export statistics to a JSON file."""
         data = self.to_json()
-        with open(output_path, "w") as f:
-            json.dump(data, f, indent=2)
-        print(f"✅ Statistics exported to: {output_path}")
+        try:
+            with open(output_path, "w") as f:
+                json.dump(data, f, indent=2)
+            print(f"✅ Statistics exported to: {output_path}")
+        except PermissionError:
+            print(f"❌ Error: Permission denied writing to {output_path}", file=sys.stderr)
+            print("   Check that you have write access to the output directory.", file=sys.stderr)
+            sys.exit(1)
+        except IsADirectoryError:
+            print(f"❌ Error: {output_path} is a directory, not a file", file=sys.stderr)
+            print("   Specify a file path, not a directory.", file=sys.stderr)
+            sys.exit(1)
+        except (OSError, json.JSONDecodeError, TypeError) as e:
+            print(f"❌ Error: Failed to export statistics to {output_path}", file=sys.stderr)
+            print(f"   {type(e).__name__}: {e}", file=sys.stderr)
+            sys.exit(1)
 
 
 def main() -> None:
@@ -302,11 +321,23 @@ def main() -> None:
             export_path = sys.argv[i + 1]
             i += 2
         elif sys.argv[i] == "--topics" and i + 1 < len(sys.argv):
-            topic_limit = int(sys.argv[i + 1])
+            try:
+                topic_limit = int(sys.argv[i + 1])
+            except ValueError:
+                print(f"❌ Error: --topics requires a valid integer, got '{sys.argv[i + 1]}'", file=sys.stderr)
+                sys.exit(1)
             i += 2
         elif sys.argv[i] == "--freq" and i + 1 < len(sys.argv):
-            freq_threshold = float(sys.argv[i + 1])
+            try:
+                freq_threshold = float(sys.argv[i + 1])
+            except ValueError:
+                print(f"❌ Error: --freq requires a valid number, got '{sys.argv[i + 1]}'", file=sys.stderr)
+                sys.exit(1)
             i += 2
+        elif sys.argv[i].startswith("--"):
+            print(f"❌ Error: Unknown option: {sys.argv[i]}", file=sys.stderr)
+            print("   Use --help for usage information.", file=sys.stderr)
+            sys.exit(1)
         else:
             i += 1
 
@@ -326,10 +357,7 @@ def main() -> None:
             report.export_json(export_path)
 
     except RobocodecError as e:
-        print(f"❌ Error: {e}")
-        print(f"   Kind: {e.kind}")
-        if e.context:
-            print(f"   Context: {e.context}")
+        print_robocodec_error(e)
         sys.exit(1)
 
 

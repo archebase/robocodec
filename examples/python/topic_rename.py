@@ -29,13 +29,16 @@ from robocodec import (
 
 # Verify the correct API is available before running
 try:
-    from ._example_utils import verify_api
+    from ._example_utils import verify_api, print_robocodec_error
     verify_api()
 except ImportError:
     if not hasattr(robocodec, 'RoboReader'):
         print("❌ Error: Incompatible robocodec API", file=sys.stderr)
         print("   Please install using: make build-python-dev", file=sys.stderr)
         sys.exit(1)
+except Exception as e:
+    print(f"❌ Error during API verification: {e}", file=sys.stderr)
+    sys.exit(1)
 
 
 def print_separator(char: str = "=") -> None:
@@ -205,9 +208,26 @@ def example_custom_config(input_path: str, output_path: str, config_file: str) -
     try:
         with open(config_file, "r") as f:
             config = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"  ❌ Error loading config: {e}")
-        return
+    except FileNotFoundError:
+        print(f"  ❌ Error: Config file not found: {config_file}", file=sys.stderr)
+        print(f"     Please check the file path and try again.", file=sys.stderr)
+        raise
+    except PermissionError:
+        print(f"  ❌ Error: Permission denied reading config file: {config_file}", file=sys.stderr)
+        raise
+    except json.JSONDecodeError as e:
+        print(f"  ❌ Error: Invalid JSON in config file", file=sys.stderr)
+        print(f"     Line {e.lineno}, column {e.colno}: {e.msg}", file=sys.stderr)
+        raise
+    except UnicodeDecodeError:
+        print(f"  ❌ Error: Config file encoding issue", file=sys.stderr)
+        print(f"     The file may be binary or have invalid UTF-8", file=sys.stderr)
+        raise
+
+    # Validate config structure
+    if not isinstance(config, dict):
+        print(f"  ❌ Error: Config must be a JSON object, not {type(config).__name__}", file=sys.stderr)
+        raise ValueError("Invalid config structure")
 
     builder = TransformBuilder()
 
@@ -293,10 +313,10 @@ def main() -> None:
             print(f"❌ Error: Invalid example number: {example}")
             sys.exit(1)
     except RobocodecError as e:
-        print(f"\n❌ Transformation failed: {e}")
-        print(f"   Kind: {e.kind}")
-        if e.context:
-            print(f"   Context: {e.context}")
+        print_robocodec_error(e)
+        sys.exit(1)
+    except (ValueError, json.JSONDecodeError, PermissionError, FileNotFoundError):
+        # Config-related errors that were already printed
         sys.exit(1)
 
     print()

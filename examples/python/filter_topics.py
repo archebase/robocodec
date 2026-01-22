@@ -28,13 +28,16 @@ from robocodec import RoboReader, RoboWriter, RobocodecError
 
 # Verify the correct API is available before running
 try:
-    from ._example_utils import verify_api
+    from ._example_utils import verify_api, print_robocodec_error
     verify_api()
 except ImportError:
     if not hasattr(robocodec, 'RoboReader'):
         print("❌ Error: Incompatible robocodec API", file=sys.stderr)
         print("   Please install using: make build-python-dev", file=sys.stderr)
         sys.exit(1)
+except Exception as e:
+    print(f"❌ Error during API verification: {e}", file=sys.stderr)
+    sys.exit(1)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -131,7 +134,12 @@ def filter_topics(
     include_regex: list[str] | None = None,
     exclude_topics: list[str] | None = None,
 ) -> bool:
-    """Filter topics from input file and write to output file.
+    """List and copy topics from input file to output file.
+
+    Note: The current RoboRewriter API preserves all channels. This function
+    lists topics matching the specified criteria but the output file will
+    contain all topics from the input. Per-channel filtering is planned for
+    a future release.
 
     Args:
         input_path: Path to input file
@@ -142,7 +150,7 @@ def filter_topics(
         exclude_topics: Exact topic names to exclude
 
     Returns:
-        True if filtering succeeded, False otherwise
+        True if copying succeeded, False otherwise
     """
     reader = RoboReader(input_path)
     all_channels = reader.channels()
@@ -261,10 +269,7 @@ def main() -> None:
         sys.exit(0 if success else 1)
 
     except RobocodecError as e:
-        print(f"❌ Error: {e}")
-        print(f"   Kind: {e.kind}")
-        if e.context:
-            print(f"   Context: {e.context}")
+        print_robocodec_error(e)
         sys.exit(1)
 
 

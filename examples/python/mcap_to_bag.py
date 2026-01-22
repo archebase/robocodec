@@ -20,13 +20,16 @@ from robocodec import RoboReader, RoboRewriter, RobocodecError
 
 # Verify the correct API is available before running
 try:
-    from ._example_utils import verify_api
+    from ._example_utils import verify_api, print_robocodec_error
     verify_api()
 except ImportError:
     if not hasattr(robocodec, 'RoboReader'):
         print("❌ Error: Incompatible robocodec API", file=sys.stderr)
         print("   Please install using: make build-python-dev", file=sys.stderr)
         sys.exit(1)
+except Exception as e:
+    print(f"❌ Error during API verification: {e}", file=sys.stderr)
+    sys.exit(1)
 
 
 def detect_output_format(input_path: str, output_path: str) -> str:
@@ -57,6 +60,17 @@ def convert_file(input_path: str, output_path: str, validate: bool = True, skip_
         print(f"❌ Error: Input file not found: {input_path}")
         return False
 
+    # Verify output directory exists and is writable
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        print(f"❌ Error: Output directory does not exist: {output_dir}", file=sys.stderr)
+        print("   Create the directory first or choose a different output path.", file=sys.stderr)
+        return False
+
+    if output_dir and not os.access(output_dir, os.W_OK):
+        print(f"❌ Error: No write permission for output directory: {output_dir}", file=sys.stderr)
+        return False
+
     # Show what we're converting
     input_reader = RoboReader(input_path)
     output_format = detect_output_format(input_path, output_path)
@@ -80,7 +94,7 @@ def convert_file(input_path: str, output_path: str, validate: bool = True, skip_
     try:
         stats = rewriter.rewrite(output_path)
     except RobocodecError as e:
-        print(f"❌ Conversion failed: {e}")
+        print_robocodec_error(e)
         return False
 
     # Display results
@@ -110,8 +124,9 @@ def convert_file(input_path: str, output_path: str, validate: bool = True, skip_
         try:
             output_reader = RoboReader(output_path)
             print(f"✅ Output verified: {output_reader.format} format, {output_reader.message_count:,} messages")
-        except RobocodecError:
+        except RobocodecError as e:
             print("⚠️  Warning: Output file created but could not be verified")
+            print_robocodec_error(e)
             return False
 
     return True
@@ -132,8 +147,7 @@ def main() -> None:
         print("Options:")
         print("  --validate       Enable schema validation (default: enabled)")
         print("  --no-validate   Disable schema validation")
-        print("  --skip-failures Skip messages that fail to decode (default: enabled)")
-        print("  --fail-on-error Fail the conversion if decode fails")
+        print("  --fail-on-error  Fail the conversion if decode fails (default: skip failures)")
         sys.exit(1)
 
     # Parse arguments
