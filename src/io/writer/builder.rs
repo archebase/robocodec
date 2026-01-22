@@ -81,17 +81,17 @@ impl WriterBuilder {
 
     /// Build the writer.
     pub fn build(self) -> Result<super::RoboWriter> {
-        let path = &self.config.path;
+        let path = self.config.path.clone();
 
         if path.as_os_str().is_empty() {
             return Err(CodecError::parse("WriterBuilder", "Path is not set"));
         }
 
         // Detect format from extension
-        let format = crate::io::detection::detect_format(path);
+        let format = crate::io::detection::detect_format(&path);
 
         // Resolve Auto strategy to concrete strategy
-        let _resolved_strategy = self.config.strategy.resolve();
+        let resolved_strategy = self.config.strategy.resolve();
 
         // For new files, we trust the extension
         let format = match format {
@@ -112,13 +112,19 @@ impl WriterBuilder {
             Err(e) => return Err(e),
         };
 
+        // Update config with resolved strategy
+        let config = WriterConfig {
+            strategy: resolved_strategy,
+            ..self.config
+        };
+
         // Create the appropriate writer
         let inner = match format {
             crate::io::metadata::FileFormat::Mcap => {
-                crate::io::formats::mcap::McapFormat::create_writer(path, &self.config)?
+                crate::io::formats::mcap::McapFormat::create_writer(&path, &config)?
             }
             crate::io::metadata::FileFormat::Bag => {
-                crate::io::formats::bag::BagFormat::create_writer(path, &self.config)?
+                crate::io::formats::bag::BagFormat::create_writer(&path, &config)?
             }
             crate::io::metadata::FileFormat::Unknown => {
                 return Err(CodecError::parse("WriterBuilder", "Unknown file format"))
