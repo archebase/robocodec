@@ -35,10 +35,12 @@ fn temp_dir() -> PathBuf {
     let random = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .subsec_nanos();
+        .as_nanos();
+    let thread_id = format!("{:?}", std::thread::current().id());
     std::env::temp_dir().join(format!(
-        "robocodec_bag_rewriter_test_{}_{}",
+        "robocodec_bag_rewriter_test_{}_{}_{}",
         std::process::id(),
+        thread_id,
         random
     ))
 }

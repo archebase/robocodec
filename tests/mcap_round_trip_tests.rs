@@ -19,10 +19,12 @@ fn temp_dir() -> std::path::PathBuf {
     let random = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .subsec_nanos();
+        .as_nanos();
+    let thread_id = format!("{:?}", std::thread::current().id());
     std::env::temp_dir().join(format!(
-        "robocodec_mcap_roundtrip_{}_{}",
+        "robocodec_mcap_roundtrip_{}_{}_{}",
         std::process::id(),
+        thread_id,
         random
     ))
 }
