@@ -4,6 +4,7 @@
 
 //! Common utilities for CLI commands.
 
+use std::io::IsTerminal as _;
 use std::path::{Path, PathBuf};
 
 use robocodec::io::metadata::FileFormat;
@@ -67,7 +68,7 @@ impl CommandContext {
 
     /// Check if progress bars should be shown.
     pub fn should_show_progress(&self) -> bool {
-        self.progress && atty::is(atty::Stream::Stderr)
+        self.progress && std::io::stderr().is_terminal()
     }
 }
 
@@ -202,7 +203,7 @@ impl ProgressBar {
     /// Create a new progress bar.
     pub fn new(total: u64, prefix: impl Into<String>) -> Self {
         let prefix = prefix.into();
-        let inner = if atty::is(atty::Stream::Stderr) {
+        let inner = if std::io::stderr().is_terminal() {
             let pb = indicatif::ProgressBar::new(total);
             pb.set_style(indicatif::ProgressStyle::default_bar()
                 .template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} {msg}")
