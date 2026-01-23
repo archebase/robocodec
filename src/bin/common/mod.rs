@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_parse_time_range() {
-        let (start, end) = parse_time_range("0,1000").unwrap();
+        let (start, end) = parse_time_range("0,1").unwrap();
         assert_eq!(start, 0);
         assert_eq!(end, 1_000_000_000);
 
