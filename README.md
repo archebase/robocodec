@@ -4,7 +4,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![codecov](https://codecov.io/gh/archebase/robocodec/branch/main/graph/badge.svg)](https://codecov.io/gh/archebase/robocodec)
 
-**Robocodec** is a high-performance library for reading and writing robotics data files. It supports **MCAP** and **ROS1 bag** formats with automatic format detection and parallel processing.
+**Robocodec** is a high-performance robotics data codec library for reading, writing, and converting MCAP and ROS1 bag files. It provides a unified API across formats with automatic format detection, parallel message processing, and support for multiple message encodings (CDR, Protobuf, JSON) and schema types (ROS .msg, ROS2 IDL, OMG IDL). Includes topic transformation capabilities and native Rust and Python APIs.
 
 ## Why Robocodec?
 

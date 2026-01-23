@@ -7,7 +7,7 @@
 This file provides type hints for IDE autocomplete and type checkers.
 """
 
-from typing import Any, Optional
+from typing import Optional
 
 class RobocodecError(Exception):
     """Exception raised for robocodec errors.
@@ -17,6 +17,7 @@ class RobocodecError(Exception):
         context: Context information (e.g., schema name, codec name)
         message: Human-readable error message
     """
+
     kind: str
     context: Optional[str]
     message: str
@@ -35,6 +36,7 @@ class ChannelInfo:
         message_count: Number of messages in this channel
         callerid: Caller ID (ROS1 specific, identifies the publishing node)
     """
+
     id: int
     topic: str
     message_type: str
@@ -59,6 +61,7 @@ class RewriteStats:
         topics_renamed: Number of topics renamed (if transforms were applied)
         types_renamed: Number of types renamed (if transforms were applied)
     """
+
     message_count: int
     channel_count: int
     decode_failures: int
@@ -76,6 +79,7 @@ class RoboReader:
     RoboReader automatically detects the file format (MCAP or ROS1 bag)
     from the file extension and provides a consistent API for reading.
     """
+
     def __init__(self, path: str) -> None: ...
     @property
     def message_count(self) -> int: ...
@@ -101,6 +105,7 @@ class RoboWriter:
     RoboWriter automatically detects the output format from the file
     extension (.mcap or .bag) and provides a consistent API for writing.
     """
+
     def __init__(self, path: str) -> None: ...
     @property
     def message_count(self) -> int: ...
@@ -127,12 +132,19 @@ class TransformBuilder:
     TransformBuilder provides a fluent API for creating transformations
     that can be applied during rewrite operations.
     """
+
     def __init__(self) -> None: ...
-    def with_topic_rename(self, from: str, to: str) -> TransformBuilder: ...
-    def with_topic_rename_wildcard(self, pattern: str, target: str) -> TransformBuilder: ...
-    def with_type_rename(self, from: str, to: str) -> TransformBuilder: ...
-    def with_type_rename_wildcard(self, pattern: str, target: str) -> TransformBuilder: ...
-    def with_topic_type_rename(self, topic: str, source_type: str, target_type: str) -> TransformBuilder: ...
+    def with_topic_rename(self, from_: str, to: str) -> TransformBuilder: ...
+    def with_topic_rename_wildcard(
+        self, pattern: str, target: str
+    ) -> TransformBuilder: ...
+    def with_type_rename(self, from_: str, to: str) -> TransformBuilder: ...
+    def with_type_rename_wildcard(
+        self, pattern: str, target: str
+    ) -> TransformBuilder: ...
+    def with_topic_type_rename(
+        self, topic: str, source_type: str, target_type: str
+    ) -> TransformBuilder: ...
     def __repr__(self) -> str: ...
     def __str__(self) -> str: ...
 
@@ -142,6 +154,7 @@ class RoboRewriter:
     RoboRewriter reads a robotics data file, applies optional transformations
     (topic/type renaming), and writes to an output file.
     """
+
     def __init__(
         self,
         input_path: str,
