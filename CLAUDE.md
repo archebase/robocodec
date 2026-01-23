@@ -33,7 +33,7 @@ Robocodec is a **format-centric** robotics data codec library with a layered arc
 ```
 ┌─────────────────────────────────────────────┐
 │  User Layer (lib.rs re-exports)              │
-│  - McapReader, BagWriter, RoboRewriter       │
+│  - RoboReader, RoboWriter, RoboRewriter      │
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
