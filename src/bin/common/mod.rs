@@ -287,10 +287,10 @@ mod tests {
 
     #[test]
     fn test_format_duration() {
-        assert_eq!(format_duration(500), "500ms");
-        assert_eq!(format_duration(1_500), "1.500s");
-        assert_eq!(format_duration(90_000), "1m 30s");
-        assert_eq!(format_duration(3_600_000_000), "1h 0m");
+        assert_eq!(format_duration(500_000_000), "500ms");
+        assert_eq!(format_duration(1_500_000_000), "1.500s");
+        assert_eq!(format_duration(90_000_000_000), "1m 30s");
+        assert_eq!(format_duration(3_600_000_000_000), "1h 0m");
     }
 
     #[test]
