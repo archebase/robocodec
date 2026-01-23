@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use clap::Subcommand;
 
 use crate::common::Result;
-use robocodec::{FormatReader, FormatWriter, RoboReader, RoboRewriter, RoboWriter};
+use robocodec::RoboRewriter;
 
 /// Convert between formats or apply transformations.
 #[derive(Subcommand, Clone, Debug)]
@@ -72,30 +72,11 @@ fn cmd_bag_to_mcap(input: PathBuf, output: PathBuf) -> Result<()> {
     println!("  Input:  {}", input.display());
     println!("  Output: {}", output.display());
 
-    let reader = RoboReader::open(&input)?;
-    println!("  Channels: {}", reader.channels().len());
-    println!("  Messages: {}", reader.message_count());
+    let mut rewriter = RoboRewriter::open(&input)?;
+    let stats = rewriter.rewrite(&output)?;
 
-    let mut writer = RoboWriter::create(&output)?;
-
-    // Add all channels
-    for (&_ch_id, channel) in reader.channels() {
-        writer.add_channel(
-            &channel.topic,
-            &channel.message_type,
-            &channel.encoding,
-            channel.schema.as_deref(),
-        )?;
-        println!(
-            "  Added channel: {} ({})",
-            channel.topic, channel.message_type
-        );
-    }
-
-    // Note: Full message copying would require format-specific iteration
-    println!("  (Full message conversion not yet implemented)");
-    writer.finish()?;
-
+    println!("  Messages written: {}", stats.message_count);
+    println!("  Channels: {}", stats.channel_count);
     println!("  Conversion complete!");
     Ok(())
 }
@@ -106,29 +87,11 @@ fn cmd_mcap_to_bag(input: PathBuf, output: PathBuf) -> Result<()> {
     println!("  Input:  {}", input.display());
     println!("  Output: {}", output.display());
 
-    let reader = RoboReader::open(&input)?;
-    println!("  Channels: {}", reader.channels().len());
-    println!("  Messages: {}", reader.message_count());
+    let mut rewriter = RoboRewriter::open(&input)?;
+    let stats = rewriter.rewrite(&output)?;
 
-    let mut writer = RoboWriter::create(&output)?;
-
-    // Add all channels
-    for (_ch_id, channel) in reader.channels() {
-        writer.add_channel(
-            &channel.topic,
-            &channel.message_type,
-            &channel.encoding,
-            channel.schema.as_deref(),
-        )?;
-        println!(
-            "  Added channel: {} ({})",
-            channel.topic, channel.message_type
-        );
-    }
-
-    println!("  (Full message conversion not yet implemented)");
-    writer.finish()?;
-
+    println!("  Messages written: {}", stats.message_count);
+    println!("  Channels: {}", stats.channel_count);
     println!("  Conversion complete!");
     Ok(())
 }
