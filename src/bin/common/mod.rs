@@ -4,6 +4,8 @@
 
 //! Common utilities for CLI commands.
 
+#![allow(dead_code)]
+
 use std::io::IsTerminal as _;
 use std::path::{Path, PathBuf};
 

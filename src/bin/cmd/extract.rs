@@ -376,7 +376,7 @@ fn cmd_create_fixture(
     let fixture_name = name.unwrap_or_else(|| "fixture".to_string());
 
     // Create one fixture per topic
-    for (_topic_id, channel) in reader.channels() {
+    for channel in reader.channels().values() {
         let safe_name = channel
             .topic
             .trim_start_matches('/')

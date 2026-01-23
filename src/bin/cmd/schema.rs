@@ -151,7 +151,7 @@ fn cmd_list(input: PathBuf, group_by_type: bool, standard_only: bool, json: bool
             }
             type_map
                 .entry(channel.message_type.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(channel.topic.clone());
         }
 
@@ -453,8 +453,8 @@ fn compute_diff(s1: &str, s2: &str) -> String {
     let max_len = lines1.len().max(lines2.len());
 
     for i in 0..max_len {
-        let line1 = lines1.get(i).map(|s| *s).unwrap_or("");
-        let line2 = lines2.get(i).map(|s| *s).unwrap_or("");
+        let line1 = lines1.get(i).copied().unwrap_or("");
+        let line2 = lines2.get(i).copied().unwrap_or("");
 
         if line1 != line2 {
             if !line1.is_empty() {
