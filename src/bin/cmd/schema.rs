@@ -284,18 +284,11 @@ fn cmd_validate(input: PathBuf, json: bool) -> Result<()> {
     let mut err_count = 0;
 
     for channel in reader.channels().values() {
-        let result = if channel.schema.is_none() {
-            ValidationResult {
-                topic: channel.topic.clone(),
-                message_type: channel.message_type.clone(),
-                status: "warning".to_string(),
-                message: "no schema available".to_string(),
-            }
-        } else {
+        let result = if let Some(schema) = &channel.schema {
             // Try to parse the schema
             match robocodec::schema::parser::parse_schema_with_encoding_str(
                 &channel.message_type,
-                channel.schema.as_ref().unwrap(),
+                schema,
                 channel.schema_encoding.as_deref().unwrap_or("ros2msg"),
             ) {
                 Ok(_) => {
@@ -316,6 +309,13 @@ fn cmd_validate(input: PathBuf, json: bool) -> Result<()> {
                         message: e.to_string(),
                     }
                 }
+            }
+        } else {
+            ValidationResult {
+                topic: channel.topic.clone(),
+                message_type: channel.message_type.clone(),
+                status: "warning".to_string(),
+                message: "no schema available".to_string(),
             }
         };
         results.push(result);
