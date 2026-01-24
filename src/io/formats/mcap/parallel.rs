@@ -33,54 +33,6 @@ use crate::io::traits::{
 };
 use crate::{CodecError, Result};
 
-/// MCAP format type.
-///
-/// This type provides factory methods for creating MCAP readers and writers.
-/// Default behavior is parallel reading for optimal performance.
-pub struct McapFormat;
-
-impl McapFormat {
-    /// Create an MCAP reader with parallel reading support.
-    ///
-    /// The reader uses memory-mapping and processes chunks in parallel
-    /// using the Rayon thread pool.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<ParallelMcapReader> {
-        ParallelMcapReader::open(path)
-    }
-
-    /// Create an MCAP writer with the given configuration.
-    ///
-    /// Returns a boxed FormatWriter trait object for unified writer API.
-    pub fn create_writer<P: AsRef<Path>>(
-        path: P,
-        _config: &crate::io::writer::WriterConfig,
-    ) -> Result<Box<dyn crate::io::traits::FormatWriter>> {
-        // For now, we create a simple writer
-        // TODO: Use config options for compression, chunk size, etc.
-        use crate::io::formats::mcap::writer::ParallelMcapWriter;
-        let writer = ParallelMcapWriter::create_with_buffer(path, 64 * 1024)?;
-        Ok(Box::new(writer))
-    }
-
-    /// Check if an MCAP file has a summary with chunk indexes.
-    ///
-    /// Returns (has_summary, has_chunk_indexes).
-    pub fn check_summary<P: AsRef<Path>>(path: P) -> Result<(bool, bool)> {
-        let file = File::open(path.as_ref())
-            .map_err(|e| CodecError::encode("McapFormat", format!("Failed to open file: {e}")))?;
-
-        let mmap = unsafe { memmap2::Mmap::map(&file) }
-            .map_err(|e| CodecError::encode("McapFormat", format!("Failed to mmap file: {e}")))?;
-
-        // Try to read summary from footer
-        match ParallelMcapReader::read_summary_from_footer(&mmap) {
-            Ok(Some((_, _, chunk_indexes))) => Ok((true, !chunk_indexes.is_empty())),
-            Ok(None) => Ok((false, false)),
-            Err(_) => Ok((false, false)),
-        }
-    }
-}
-
 /// Parallel MCAP reader with memory-mapped file access.
 ///
 /// This reader parses the MCAP file metadata (channels, schemas, chunk indexes)
@@ -962,11 +914,6 @@ mod tests {
         data_end.extend_from_slice(&4u64.to_le_bytes()); // Record length
         data_end.extend_from_slice(&0u32.to_le_bytes()); // CRC
         data_end
-    }
-
-    #[test]
-    fn test_mcap_format() {
-        let _ = McapFormat;
     }
 
     #[test]
