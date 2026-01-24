@@ -19,7 +19,44 @@ use tracing::warn;
 
 use crate::core::{CodecError, DecodedMessage, Result};
 use crate::encoding::{CdrDecoder, JsonDecoder, ProtobufDecoder};
-use crate::io::formats::mcap::ParallelMcapReader;
+use crate::io::formats::mcap::parallel::ParallelMcapReader;
+use crate::io::traits::FormatReader;
+use crate::io::writer::WriterConfig;
+use crate::io::FormatWriter;
+
+/// MCAP format type.
+///
+/// This type provides factory methods for creating MCAP readers and writers.
+pub struct McapFormat;
+
+impl McapFormat {
+    /// Create an MCAP reader with decoding support.
+    ///
+    /// The reader uses memory-mapping and processes chunks in parallel
+    /// using the Rayon thread pool.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<McapReader> {
+        McapReader::open(path)
+    }
+
+    /// Create an MCAP writer with the given configuration.
+    ///
+    /// Returns a boxed FormatWriter trait object for unified writer API.
+    pub fn create_writer<P: AsRef<Path>>(
+        path: P,
+        _config: &WriterConfig,
+    ) -> Result<Box<dyn FormatWriter>> {
+        use crate::io::formats::mcap::writer::ParallelMcapWriter;
+        let writer = ParallelMcapWriter::create_with_buffer(path, 64 * 1024)?;
+        Ok(Box::new(writer))
+    }
+
+    /// Check if an MCAP file has a summary with chunk indexes.
+    ///
+    /// Returns (has_summary, has_chunk_indexes).
+    pub fn check_summary<P: AsRef<Path>>(path: P) -> Result<(bool, bool)> {
+        ParallelMcapReader::check_summary(path)
+    }
+}
 
 /// Information about a channel in an MCAP file.
 #[derive(Debug, Clone)]
@@ -218,8 +255,6 @@ impl McapReader {
         Ok(())
     }
 }
-
-use crate::io::traits::FormatReader;
 
 impl FormatReader for McapReader {
     fn channels(&self) -> &HashMap<u16, crate::io::metadata::ChannelInfo> {

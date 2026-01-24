@@ -145,6 +145,26 @@ impl ParallelMcapReader {
         &self.chunk_indexes
     }
 
+    /// Check if an MCAP file has a summary with chunk indexes.
+    ///
+    /// Returns (has_summary, has_chunk_indexes).
+    pub fn check_summary<P: AsRef<Path>>(path: P) -> Result<(bool, bool)> {
+        let file = File::open(path.as_ref()).map_err(|e| {
+            CodecError::encode("ParallelMcapReader", format!("Failed to open file: {e}"))
+        })?;
+
+        let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
+            CodecError::encode("ParallelMcapReader", format!("Failed to mmap file: {e}"))
+        })?;
+
+        // Try to read summary from footer
+        match Self::read_summary_from_footer(&mmap) {
+            Ok(Some((_, _, chunk_indexes))) => Ok((true, !chunk_indexes.is_empty())),
+            Ok(None) => Ok((false, false)),
+            Err(_) => Ok((false, false)),
+        }
+    }
+
     /// Read metadata (channels, message count, timestamps, chunk indexes) from an MCAP file.
     fn read_metadata(data: &[u8]) -> Result<McapMetadata> {
         let mut cursor = Cursor::new(data);
