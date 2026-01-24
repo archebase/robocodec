@@ -207,8 +207,13 @@ pub fn parse_with_version(
     definition: &str,
     ros_version: RosVersion,
 ) -> CoreResult<MessageSchema> {
-    // Preprocess to convert indented format to standard MSG format
-    let definition = preprocess_indented_schema(definition);
+    // Only preprocess if the schema doesn't already contain === separators
+    // Schemas with === are already in the standard MSG format
+    let definition = if definition.contains("===") {
+        definition.to_string()
+    } else {
+        preprocess_indented_schema(definition)
+    };
 
     let pairs = MsgParser::parse(Rule::schema, &definition)
         .map_err(|e| CodecError::parse("msg schema", format!("{e}")))?;
