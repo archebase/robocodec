@@ -4,13 +4,12 @@
 
 //! Extract command - extract subsets of data from files.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::Subcommand;
 
-use crate::common::{open_reader, parse_time_range, ProgressBar, Result};
-use robocodec::{FormatReader, FormatWriter};
+use crate::common::{open_reader, parse_time_range, Progress, Result};
+use robocodec::{FormatReader, RoboRewriter};
 
 /// Extract subsets of data from files.
 #[derive(Subcommand, Clone, Debug)]
@@ -150,49 +149,50 @@ fn cmd_extract_messages(
     count: Option<usize>,
     show_progress: bool,
 ) -> Result<()> {
-    use robocodec::RoboWriter;
-
     println!("Extracting messages:");
     println!("  Input:  {}", input.display());
     println!("  Output: {}", output.display());
 
     let reader = open_reader(&input)?;
     let total = reader.message_count();
+    let channel_count = reader.channels().len() as u64;
 
     let limit = count.unwrap_or(total as usize);
     println!("  Limit: {} messages", limit);
 
-    let mut writer = RoboWriter::create(&output)?;
-
-    // Add all channels
-    let mut channel_map: HashMap<u16, u16> = HashMap::new();
-    for (&ch_id, channel) in reader.channels() {
-        let new_id = writer.add_channel(
-            &channel.topic,
-            &channel.message_type,
-            &channel.encoding,
-            channel.schema.as_deref(),
-        )?;
-        channel_map.insert(ch_id, new_id);
+    // Use rewriter for full file copy with limit support
+    // For partial extraction, we need format-specific iteration which is not yet exposed
+    if limit < total as usize {
+        return Err(anyhow::anyhow!(
+            "Partial message extraction (count < total) requires format-specific iteration. \
+             Use the convert command for full file copying."
+        ));
     }
 
-    let pb = if show_progress {
-        Some(ProgressBar::new(
-            limit.min(total as usize) as u64,
-            "Extracting",
-        ))
+    // Full file copy using rewriter
+    let mut progress = if show_progress {
+        Some(Progress::new(channel_count, "Copying channels"))
     } else {
         None
     };
 
-    // Extract messages (simplified - would use format-specific iteration)
-    let extracted = limit.min(total as usize);
+    let mut rewriter = RoboRewriter::open(&input)?;
 
-    if let Some(pb) = pb {
-        pb.finish_with_message(format!("Extracted {} messages", extracted));
+    // Simulate channel progress during rewrite
+    if let Some(ref mut pb) = progress {
+        for i in 0..channel_count {
+            pb.set(i + 1);
+        }
     }
 
-    println!("  Written: {} messages", extracted);
+    let stats = rewriter.rewrite(&output)?;
+
+    if let Some(pb) = progress {
+        pb.finish(format!("{} messages", stats.message_count));
+    } else {
+        println!("  Written: {} messages", stats.message_count);
+    }
+
     Ok(())
 }
 
@@ -203,8 +203,6 @@ fn cmd_extract_topics(
     topics: String,
     show_progress: bool,
 ) -> Result<()> {
-    use robocodec::RoboWriter;
-
     let topics_list: Vec<String> = topics.split(',').map(|s| s.trim().to_string()).collect();
 
     println!("Extracting topics:");
@@ -214,56 +212,52 @@ fn cmd_extract_topics(
 
     let reader = open_reader(&input)?;
 
-    // Find matching channel IDs
-    let mut channel_map: HashMap<u16, u16> = HashMap::new();
-    let mut total_messages = 0u64;
+    // Find matching channels and count messages
+    let mut matching_channels: Vec<u16> = Vec::new();
 
-    for (&_ch_id, channel) in reader.channels() {
+    for (ch_id, channel) in reader.channels() {
         for topic in &topics_list {
             if channel.topic == *topic || channel.topic.contains(topic) {
-                total_messages += channel.message_count;
+                matching_channels.push(*ch_id);
                 break;
             }
         }
     }
 
-    if channel_map.is_empty() {
-        println!("  No matching topics found");
-        return Ok(());
+    if matching_channels.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No matching topics found for: {:?}. Verify topic names exist in the input file.",
+            topics_list
+        ));
     }
 
-    let mut writer = RoboWriter::create(&output)?;
-
-    let pb = if show_progress {
-        Some(ProgressBar::new(total_messages, "Extracting"))
+    let mut progress = if show_progress {
+        Some(Progress::new(
+            matching_channels.len() as u64,
+            "Processing channels",
+        ))
     } else {
         None
     };
 
-    // Add matching channels and copy messages
-    let mut written = 0u64;
-    for (&ch_id, channel) in reader.channels() {
-        for topic in &topics_list {
-            if channel.topic == *topic || channel.topic.contains(topic) {
-                let new_id = writer.add_channel(
-                    &channel.topic,
-                    &channel.message_type,
-                    &channel.encoding,
-                    channel.schema.as_deref(),
-                )?;
-                channel_map.insert(ch_id, new_id);
-                written += channel.message_count;
-                break;
-            }
+    // Simulate processing each channel
+    for (i, &ch_id) in matching_channels.iter().enumerate() {
+        if let Some(ref mut pb) = progress {
+            pb.set((i + 1) as u64);
         }
+        // In a full implementation, this would iterate through messages
+        let _ = ch_id; // Channel would be processed here
     }
 
-    if let Some(pb) = pb {
-        pb.finish_with_message(format!("Extracted {} messages", written));
+    if let Some(pb) = progress {
+        pb.finish(format!("{} channels", matching_channels.len()));
     }
 
-    println!("  Written: {} messages", written);
-    Ok(())
+    // Topic extraction requires format-specific iteration which is not yet exposed
+    Err(anyhow::anyhow!(
+        "Topic-specific extraction requires format-specific message iteration. \
+         This feature is not yet implemented. Use the convert command for full file copying."
+    ))
 }
 
 /// Extract N messages per topic.
@@ -271,42 +265,46 @@ fn cmd_extract_per_topic(
     input: PathBuf,
     output: PathBuf,
     count: usize,
-    _show_progress: bool,
+    show_progress: bool,
 ) -> Result<()> {
-    use robocodec::RoboWriter;
-
     println!("Extracting per topic:");
     println!("  Input:  {}", input.display());
     println!("  Output: {}", output.display());
     println!("  Messages per topic: {}", count);
 
-    let reader = open_reader(&input)?;
-    let mut writer = RoboWriter::create(&output)?;
-
-    // Add all channels
-    let mut channel_map: HashMap<u16, u16> = HashMap::new();
-    for (&ch_id, channel) in reader.channels() {
-        let new_id = writer.add_channel(
-            &channel.topic,
-            &channel.message_type,
-            &channel.encoding,
-            channel.schema.as_deref(),
-        )?;
-        channel_map.insert(ch_id, new_id);
+    if count != 1 {
+        return Err(anyhow::anyhow!(
+            "Per-topic extraction with count > 1 requires format-specific iteration. \
+             This feature is not yet implemented."
+        ));
     }
 
-    // Track messages per topic
-    let _messages_per_topic: HashMap<String, usize> = HashMap::new();
-    let written = 0usize;
+    let reader = open_reader(&input)?;
+    let channel_count = reader.channels().len() as u64;
 
-    // Extract up to count messages per topic
-    // (simplified - would use format-specific iteration)
+    let mut progress = if show_progress {
+        Some(Progress::new(channel_count, "Scanning channels"))
+    } else {
+        None
+    };
 
-    println!(
-        "  Written: {} messages (up to {} per topic)",
-        written, count
-    );
-    Ok(())
+    // Simulate scanning each channel
+    for (i, channel) in reader.channels().values().enumerate() {
+        if let Some(ref mut pb) = progress {
+            pb.set((i + 1) as u64);
+        }
+        let _ = channel.topic; // Topic would be processed here
+    }
+
+    if let Some(pb) = progress {
+        pb.finish(format!("{} channels scanned", channel_count));
+    }
+
+    // Per-topic extraction requires format-specific iteration
+    Err(anyhow::anyhow!(
+        "Per-topic extraction requires format-specific message iteration. \
+         This feature is not yet implemented. Use the convert command for full file copying."
+    ))
 }
 
 /// Extract messages within time range.
@@ -316,8 +314,6 @@ fn cmd_extract_time_range(
     range: String,
     show_progress: bool,
 ) -> Result<()> {
-    use robocodec::RoboWriter;
-
     let (start_ns, end_ns) = parse_time_range(&range)?;
 
     println!("Extracting by time range:");
@@ -326,36 +322,42 @@ fn cmd_extract_time_range(
     println!("  Start: {}", start_ns);
     println!("  End:   {}", end_ns);
 
-    let reader = open_reader(&input)?;
-    let mut writer = RoboWriter::create(&output)?;
+    // Check if the full file is within range (full file copy)
+    if start_ns == 0 && end_ns == u64::MAX {
+        let reader = open_reader(&input)?;
+        let channel_count = reader.channels().len() as u64;
 
-    // Add all channels
-    let mut channel_map: HashMap<u16, u16> = HashMap::new();
-    for (&ch_id, channel) in reader.channels() {
-        let new_id = writer.add_channel(
-            &channel.topic,
-            &channel.message_type,
-            &channel.encoding,
-            channel.schema.as_deref(),
-        )?;
-        channel_map.insert(ch_id, new_id);
+        let mut progress = if show_progress {
+            Some(Progress::new(channel_count, "Copying channels"))
+        } else {
+            None
+        };
+
+        let mut rewriter = RoboRewriter::open(&input)?;
+
+        // Simulate channel progress during rewrite
+        if let Some(ref mut pb) = progress {
+            for i in 0..channel_count {
+                pb.set(i + 1);
+            }
+        }
+
+        let stats = rewriter.rewrite(&output)?;
+
+        if let Some(pb) = progress {
+            pb.finish(format!("{} messages", stats.message_count));
+        } else {
+            println!("  Written: {} messages", stats.message_count);
+        }
+
+        return Ok(());
     }
 
-    let pb = if show_progress {
-        Some(ProgressBar::new(reader.message_count(), "Extracting"))
-    } else {
-        None
-    };
-
-    // Extract messages in time range
-    let written = 0u64;
-
-    if let Some(pb) = pb {
-        pb.finish_with_message(format!("Extracted {} messages", written));
-    }
-
-    println!("  Written: {} messages", written);
-    Ok(())
+    // Time range filtering requires format-specific iteration
+    Err(anyhow::anyhow!(
+        "Time range filtering requires format-specific message iteration. \
+         This feature is not yet implemented. Use the convert command for full file copying."
+    ))
 }
 
 /// Create minimal fixture files.
@@ -373,23 +375,16 @@ fn cmd_create_fixture(
 
     std::fs::create_dir_all(&fixture_dir)?;
 
-    let fixture_name = name.unwrap_or_else(|| "fixture".to_string());
+    let _fixture_name = name.unwrap_or_else(|| "fixture".to_string());
 
-    // Create one fixture per topic
+    println!("  Available topics:");
     for channel in reader.channels().values() {
-        let safe_name = channel
-            .topic
-            .trim_start_matches('/')
-            .replace('/', "_")
-            .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
-
-        let output_path = fixture_dir.join(format!("{}_{}.mcap", fixture_name, safe_name));
-        println!("  Creating: {}", output_path.display());
-
-        // Create fixture with one message from this topic
-        // (simplified - would use format-specific iteration)
+        println!("    - {} ({})", channel.topic, channel.message_type);
     }
 
-    println!("  Fixtures created in: {}", fixture_dir.display());
-    Ok(())
+    // Fixture creation requires format-specific iteration to extract one message per topic
+    Err(anyhow::anyhow!(
+        "Fixture creation requires format-specific message iteration. \
+         This feature is not yet implemented. Use the convert command for full file copying."
+    ))
 }

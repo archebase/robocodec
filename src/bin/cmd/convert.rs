@@ -55,8 +55,8 @@ pub enum ConvertCmd {
 impl ConvertCmd {
     pub fn run(self) -> Result<()> {
         match self {
-            ConvertCmd::ToMcap { input, output } => cmd_bag_to_mcap(input, output),
-            ConvertCmd::ToBag { input, output } => cmd_mcap_to_bag(input, output),
+            ConvertCmd::ToMcap { input, output } => cmd_convert(input, output, "BAG", "MCAP"),
+            ConvertCmd::ToBag { input, output } => cmd_convert(input, output, "MCAP", "BAG"),
             ConvertCmd::Normalize {
                 input,
                 output,
@@ -66,24 +66,9 @@ impl ConvertCmd {
     }
 }
 
-/// Convert BAG to MCAP.
-fn cmd_bag_to_mcap(input: PathBuf, output: PathBuf) -> Result<()> {
-    println!("Converting BAG to MCAP:");
-    println!("  Input:  {}", input.display());
-    println!("  Output: {}", output.display());
-
-    let mut rewriter = RoboRewriter::open(&input)?;
-    let stats = rewriter.rewrite(&output)?;
-
-    println!("  Messages written: {}", stats.message_count);
-    println!("  Channels: {}", stats.channel_count);
-    println!("  Conversion complete!");
-    Ok(())
-}
-
-/// Convert MCAP to BAG.
-fn cmd_mcap_to_bag(input: PathBuf, output: PathBuf) -> Result<()> {
-    println!("Converting MCAP to BAG:");
+/// Convert between formats (unified implementation).
+fn cmd_convert(input: PathBuf, output: PathBuf, src_format: &str, dst_format: &str) -> Result<()> {
+    println!("Converting {} to {}:", src_format, dst_format);
     println!("  Input:  {}", input.display());
     println!("  Output: {}", output.display());
 
@@ -102,20 +87,44 @@ fn cmd_normalize(input: PathBuf, output: PathBuf, renames: Option<Vec<String>>) 
     println!("  Input:  {}", input.display());
     println!("  Output: {}", output.display());
 
-    let mut rewriter = RoboRewriter::open(&input)?;
-
     // Apply topic renames if provided
     if let Some(renames) = renames {
         println!("  Applying topic renames:");
-        for rename in renames {
+        for rename in &renames {
             let parts: Vec<&str> = rename.splitn(2, '=').collect();
-            if parts.len() == 2 {
-                println!("    {} -> {}", parts[0], parts[1]);
-                // TODO: Apply the rename transformation
+            if parts.len() != 2 {
+                return Err(anyhow::anyhow!(
+                    "Invalid rename format '{}'. Expected: oldname=newname",
+                    rename
+                ));
             }
+            let old_name = parts[0];
+            let new_name = parts[1];
+            if old_name.is_empty() || new_name.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Invalid rename format '{}': both old and new names must be non-empty",
+                    rename
+                ));
+            }
+            println!("    {} -> {}", old_name, new_name);
         }
+
+        // Topic renaming is not yet implemented in the CLI
+        return Err(anyhow::anyhow!(
+            "Topic renaming transformations are not yet implemented in the CLI. \
+             You can use the library API directly:\n\
+             \n\
+             use robocodec::{{RoboRewriter, RewriteOptions, transform::TransformBuilder}};\n\
+             let pipeline = TransformBuilder::new()\n\
+                 .with_topic_rename(\"/old\", \"/new\")\n\
+                 .build();\n\
+             let options = RewriteOptions::default().with_transforms(pipeline);\n\
+             let mut rewriter = RoboRewriter::with_options(&input, options)?;\n\
+             rewriter.rewrite(&output)?;\n"
+        ));
     }
 
+    let mut rewriter = RoboRewriter::open(&input)?;
     let stats = rewriter.rewrite(&output)?;
 
     println!("  Messages rewritten: {}", stats.message_count);
