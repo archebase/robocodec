@@ -209,7 +209,10 @@ pub fn parse_with_version(
 ) -> CoreResult<MessageSchema> {
     // Only preprocess if the schema doesn't already contain === separators
     // Schemas with === are already in the standard MSG format
-    let definition = if definition.contains("===") {
+    let definition = if definition
+        .lines()
+        .any(|line| line.trim().starts_with("==="))
+    {
         definition.to_string()
     } else {
         preprocess_indented_schema(definition)
