@@ -259,10 +259,8 @@ fn cmd_extract_time_range(
     println!("  Start: {}", start_ns);
     println!("  End:   {}", end_ns);
 
-    // Check if the full file is within range
+    // Check if the full file is within range (full file copy)
     if start_ns == 0 && end_ns == u64::MAX {
-        let _ = (start_ns, end_ns); // Full file copy
-                                    // Full file copy
         let mut rewriter = RoboRewriter::open(&input)?;
         let stats = rewriter.rewrite(&output)?;
         println!("  Written: {} messages", stats.message_count);
