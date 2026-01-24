@@ -39,8 +39,8 @@ pub mod reader;
 pub mod writer;
 
 // Re-exports
-pub use parallel::{ChunkIndex, McapFormat, ParallelMcapReader};
-pub use reader::{ChannelInfo, McapReader, RawMessage, TimestampedDecodedMessage};
+pub use parallel::{ChunkIndex, ParallelMcapReader};
+pub use reader::{ChannelInfo, McapFormat, McapReader, RawMessage, TimestampedDecodedMessage};
 pub use sequential::{SequentialMcapReader, SequentialRawIter};
 pub use two_pass::TwoPassMcapReader;
 pub use writer::ParallelMcapWriter;
