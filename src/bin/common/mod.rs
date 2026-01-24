@@ -4,7 +4,6 @@
 
 //! Common utilities for CLI commands.
 
-use std::io::IsTerminal as _;
 use std::path::Path;
 
 use robocodec::RoboReader;
@@ -49,11 +48,20 @@ pub fn format_timestamp(nanos: u64) -> String {
 /// - Unix timestamp in seconds: "1234567890"
 /// - Unix timestamp in nanoseconds: "1234567890000000000"
 /// - ISO 8601: "2023-01-01T00:00:00Z"
+///
+/// # Notes
+///
+/// - Numeric timestamps smaller than ~year 3000 are treated as seconds
+/// - Numeric timestamps larger than ~year 3000 are treated as nanoseconds
+/// - ISO 8601 timestamps outside chrono's range (year > 262000000+) will error
 pub fn parse_timestamp(s: &str) -> CliResult<u64> {
+    // Approximate seconds from epoch to year 3000
+    const SECONDS_THRESHOLD: u64 = 32_503_680_000;
+
     // Try as nanoseconds first
     if let Ok(n) = s.parse::<u64>() {
         // If it's reasonably small (< year 3000), treat as seconds
-        return Ok(if n < 32503680000 {
+        return Ok(if n < SECONDS_THRESHOLD {
             n * 1_000_000_000
         } else {
             n
@@ -62,7 +70,10 @@ pub fn parse_timestamp(s: &str) -> CliResult<u64> {
 
     // Try ISO 8601
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
-        return Ok(dt.timestamp_nanos_opt().unwrap_or(0) as u64);
+        let nanos = dt
+            .timestamp_nanos_opt()
+            .ok_or_else(|| anyhow::anyhow!("Timestamp out of range (year > ~262000000): {s}"))?;
+        return Ok(nanos as u64);
     }
 
     Err(anyhow::anyhow!("Invalid timestamp: {s}"))
@@ -95,38 +106,6 @@ pub fn parse_time_range(s: &str) -> CliResult<(u64, u64)> {
     }
 
     Ok((start_ns, end_ns))
-}
-
-/// Progress bar wrapper for consistent progress reporting.
-pub struct ProgressBar {
-    inner: Option<indicatif::ProgressBar>,
-}
-
-impl ProgressBar {
-    /// Create a new progress bar.
-    pub fn new(total: u64, prefix: impl Into<String>) -> Self {
-        let prefix = prefix.into();
-        let inner = if std::io::stderr().is_terminal() {
-            let pb = indicatif::ProgressBar::new(total);
-            pb.set_style(indicatif::ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} {msg}")
-                .unwrap()
-                .progress_chars("=>-"));
-            pb.set_prefix(prefix);
-            Some(pb)
-        } else {
-            None
-        };
-
-        Self { inner }
-    }
-
-    /// Finish the progress bar with a message.
-    pub fn finish_with_message(&self, msg: String) {
-        if let Some(pb) = &self.inner {
-            pb.finish_with_message(msg);
-        }
-    }
 }
 
 /// Open a file with automatic format detection.

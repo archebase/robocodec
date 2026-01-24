@@ -347,7 +347,14 @@ fn cmd_validate(input: PathBuf, json: bool) -> Result<()> {
     })
 }
 
-fn cmd_diff(file1: PathBuf, file2: PathBuf, msg_type: Option<String>, _json: bool) -> Result<()> {
+fn cmd_diff(file1: PathBuf, file2: PathBuf, msg_type: Option<String>, json: bool) -> Result<()> {
+    if json {
+        return Err(anyhow::anyhow!(
+            "JSON output is not yet implemented for the diff command. \
+             Use the default text output instead."
+        ));
+    }
+
     let reader1 = open_reader(&file1)?;
     let reader2 = open_reader(&file2)?;
 
@@ -401,37 +408,37 @@ fn cmd_diff(file1: PathBuf, file2: PathBuf, msg_type: Option<String>, _json: boo
 
     let mut differences: Vec<SchemaDiff> = Vec::new();
 
-    for msg_type in all_types {
-        let schema1 = schemas1.get(&msg_type);
-        let schema2 = schemas2.get(&msg_type);
+    for type_name in all_types {
+        let schema1 = schemas1.get(&type_name);
+        let schema2 = schemas2.get(&type_name);
 
         match (schema1, schema2) {
             (None, Some(_)) => {
-                println!("+ {} (only in file 2)", msg_type);
+                println!("+ {} (only in file 2)", type_name);
                 differences.push(SchemaDiff {
-                    message_type: msg_type.clone(),
+                    message_type: type_name.clone(),
                     status: "added".to_string(),
                     diff: String::new(),
                 });
             }
             (Some(_), None) => {
-                println!("- {} (only in file 1)", msg_type);
+                println!("- {} (only in file 1)", type_name);
                 differences.push(SchemaDiff {
-                    message_type: msg_type.clone(),
+                    message_type: type_name.clone(),
                     status: "removed".to_string(),
                     diff: String::new(),
                 });
             }
             (Some(s1), Some(s2)) if s1 != s2 => {
-                println!("! {} (modified)", msg_type);
+                println!("! {} (modified)", type_name);
                 differences.push(SchemaDiff {
-                    message_type: msg_type.clone(),
+                    message_type: type_name.clone(),
                     status: "modified".to_string(),
                     diff: compute_diff(s1, s2),
                 });
             }
             _ => {
-                println!("  {} (same)", msg_type);
+                println!("  {} (same)", type_name);
             }
         }
     }

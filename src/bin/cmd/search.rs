@@ -360,7 +360,14 @@ fn cmd_search_types(input: PathBuf, pattern: String, json: bool) -> Result<()> {
 }
 
 /// Show fields for a topic.
-fn cmd_show_fields(input: PathBuf, topic: String, _json: bool) -> Result<()> {
+fn cmd_show_fields(input: PathBuf, topic: String, json: bool) -> Result<()> {
+    if json {
+        return Err(anyhow::anyhow!(
+            "JSON output is not yet implemented for the fields command. \
+             Use the default text output instead."
+        ));
+    }
+
     let reader = open_reader(&input)?;
 
     // Find the channel
@@ -417,7 +424,7 @@ fn cmd_show_fields(input: PathBuf, topic: String, _json: bool) -> Result<()> {
 }
 
 /// Search for field values.
-fn cmd_search_values(input: PathBuf, topic: String, field: String, _limit: usize) -> Result<()> {
+fn cmd_search_values(input: PathBuf, topic: String, field: String, limit: usize) -> Result<()> {
     let reader = open_reader(&input)?;
 
     println!("Searching for field '{}' in topic '{}'", field, topic);
@@ -437,6 +444,9 @@ fn cmd_search_values(input: PathBuf, topic: String, field: String, _limit: usize
     // Note: Actual implementation would decode messages and search for field values
     // For now, this is a placeholder showing the structure
 
+    if limit != 10 {
+        println!("Note: Custom limit not yet supported, using default behavior");
+    }
     println!("Note: Message decoding requires format-specific reader");
     println!(
         "Channel: {} ({})",
