@@ -80,6 +80,7 @@ pub mod io;
 
 // Re-export key I/O types
 pub use io::metadata::{ChannelInfo, FileFormat, FileInfo, MessageMetadata};
+pub use io::reader::{DecodedMessageIter, DecodedMessageStream};
 pub use io::traits::{FormatReader, FormatWriter};
 pub use io::{MmapArena, MmapArenaRef, RoboReader, RoboWriter};
 

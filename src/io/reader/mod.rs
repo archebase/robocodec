@@ -39,9 +39,76 @@ pub mod strategy;
 pub use builder::{ReaderBuilder, ReaderConfig};
 pub use strategy::{AutoStrategy, ParallelStrategy, ReadStrategy, SequentialStrategy};
 
+use crate::core::DecodedMessage;
+use crate::io::metadata::ChannelInfo;
 use crate::io::traits::FormatReader;
-use crate::Result;
+use crate::{CodecError, Result};
 use std::path::Path;
+
+/// Unified decoded message iterator that works for both BAG and MCAP formats.
+///
+/// This enum wraps format-specific iterators to provide a consistent API.
+pub enum DecodedMessageIter<'a> {
+    /// MCAP format decoded message iterator
+    Mcap(
+        crate::io::formats::mcap::reader::DecodedMessageIter<'a>,
+        std::collections::HashMap<u16, ChannelInfo>,
+    ),
+    /// BAG format decoded message iterator
+    Bag(crate::io::formats::bag::BagDecodedMessageIter<'a>),
+}
+
+impl<'a> DecodedMessageIter<'a> {
+    /// Get the channels for this iterator.
+    pub fn channels(&self) -> &std::collections::HashMap<u16, ChannelInfo> {
+        match self {
+            Self::Mcap(_, channels) => channels,
+            Self::Bag(iter) => iter.channels(),
+        }
+    }
+
+    /// Create a proper streaming iterator over decoded messages.
+    pub fn stream(&self) -> Result<DecodedMessageStream<'a>> {
+        match self {
+            Self::Mcap(iter, _) => Ok(DecodedMessageStream::Mcap(iter.stream()?)),
+            Self::Bag(iter) => Ok(DecodedMessageStream::Bag(iter.stream()?)),
+        }
+    }
+}
+
+/// Streaming iterator over decoded messages (unified for BAG and MCAP).
+pub enum DecodedMessageStream<'a> {
+    /// MCAP format decoded message stream
+    Mcap(crate::io::formats::mcap::reader::DecodedMessageStream<'a>),
+    /// BAG format decoded message stream
+    Bag(crate::io::formats::bag::BagDecodedMessageStream<'a>),
+}
+
+impl<'a> Iterator for DecodedMessageStream<'a> {
+    type Item = std::result::Result<(DecodedMessage, ChannelInfo), CodecError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Mcap(ref mut stream) => stream.next().map(|result| {
+                result.map(|(msg, ch)| {
+                    let ch = ChannelInfo {
+                        id: ch.id,
+                        topic: ch.topic,
+                        message_type: ch.message_type,
+                        encoding: ch.encoding,
+                        schema: ch.schema,
+                        schema_data: ch.schema_data,
+                        schema_encoding: ch.schema_encoding,
+                        message_count: ch.message_count,
+                        callerid: ch.callerid,
+                    };
+                    (msg, ch)
+                })
+            }),
+            Self::Bag(ref mut stream) => stream.next(),
+        }
+    }
+}
 
 /// Unified reader that delegates to the optimal strategy.
 ///
@@ -133,21 +200,61 @@ impl RoboReader {
 
     /// Decode messages from the reader.
     ///
-    /// This method requires the inner reader to support message decoding
-    /// (e.g., McapReader). Returns an error if the inner reader doesn't
-    /// support this operation.
+    /// This method works with both MCAP and BAG formats, automatically
+    /// detecting the format and returning the appropriate iterator.
     ///
     /// # Returns
     ///
-    /// An iterator yielding `(DecodedMessage, ChannelInfo)` tuples.
-    pub fn decode_messages(
-        &self,
-    ) -> Result<crate::io::formats::mcap::reader::DecodedMessageIter<'_>> {
+    /// A unified iterator yielding `(DecodedMessage, ChannelInfo)` tuples.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use robocodec::io::RoboReader;
+    /// # fn test() -> Result<(), Box<dyn std::error::Error>> {
+    /// let reader = RoboReader::open("data.mcap")?;
+    /// let decoded_iter = reader.decode_messages()?;
+    /// let mut stream = decoded_iter.stream()?;
+    ///
+    /// while let Some(result) = stream.next() {
+    ///     let (message, channel_info) = result?;
+    ///     println!("Topic: {}", channel_info.topic);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn decode_messages(&self) -> Result<DecodedMessageIter<'_>> {
+        use crate::io::formats::bag::ParallelBagReader;
         use crate::io::formats::mcap::reader::McapReader;
 
-        // Try to downcast to McapReader (which has decode_messages)
+        // Try MCAP first
         if let Some(mcap) = self.downcast_ref::<McapReader>() {
-            return mcap.decode_messages();
+            let mcap_iter = mcap.decode_messages()?;
+            // Convert MCAP's ChannelInfo to unified ChannelInfo
+            let mcap_channels = mcap_iter.channels();
+            let mut channels = std::collections::HashMap::new();
+            for (&id, ch) in mcap_channels {
+                channels.insert(
+                    id,
+                    ChannelInfo {
+                        id: ch.id,
+                        topic: ch.topic.clone(),
+                        message_type: ch.message_type.clone(),
+                        encoding: ch.encoding.clone(),
+                        schema: ch.schema.clone(),
+                        schema_data: ch.schema_data.clone(),
+                        schema_encoding: ch.schema_encoding.clone(),
+                        message_count: ch.message_count,
+                        callerid: ch.callerid.clone(),
+                    },
+                );
+            }
+            return Ok(DecodedMessageIter::Mcap(mcap_iter, channels));
+        }
+
+        // Try BAG
+        if let Some(bag) = self.downcast_ref::<ParallelBagReader>() {
+            return Ok(DecodedMessageIter::Bag(bag.decode_messages()?));
         }
 
         Err(crate::CodecError::parse(

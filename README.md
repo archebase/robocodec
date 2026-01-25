@@ -101,6 +101,23 @@ channel_id = writer.add_channel("/topic", "MessageType", "cdr")
 writer.finish()
 ```
 
+### Decode messages from a file
+
+```rust
+use robocodec::RoboReader;
+
+// Works for both BAG and MCAP formats
+let reader = RoboReader::open("file.bag")?;  // or .mcap
+let decoded_iter = reader.decode_messages()?;
+let mut stream = decoded_iter.stream()?;
+
+while let Some(result) = stream.next() {
+    let (message, channel) = result?;
+    println!("Topic: {}", channel.topic);
+    println!("Data: {:?}", message);
+}
+```
+
 ### Convert between formats
 
 ```rust
