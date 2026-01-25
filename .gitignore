@@ -60,6 +60,7 @@ profiles/
 !tests/fixtures/*.mcap
 
 # Coverage reports
+coverage/
 lcov.info
 *.profraw
 *.profdata
