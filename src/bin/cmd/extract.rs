@@ -709,10 +709,10 @@ mod tests {
         let temp_dir = std::env::temp_dir().join("robocodec_fixture_test");
         let result = cmd_create_fixture(path, Some(temp_dir.clone()), Some("test".to_string()));
 
+        assert!(result.is_err(), "fixture creation not yet implemented");
+
         // Clean up temp dir
         let _ = std::fs::remove_dir_all(temp_dir);
-
-        assert!(result.is_err(), "fixture creation not yet implemented");
     }
 
     // ========================================================================

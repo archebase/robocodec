@@ -959,7 +959,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hex_pacing_uppercase() {
+    fn test_hex_parsing_uppercase() {
         let pattern = "1A FF 00";
         let result: std::result::Result<Vec<u8>, _> = pattern
             .split_whitespace()
@@ -994,8 +994,8 @@ mod tests {
         std::fs::write(&temp_file, b"Hello\nWorld\r\n\tTest").ok();
 
         let result = cmd_search_string(temp_file.clone(), "\n".to_string(), 10, false);
-        let _ = std::fs::remove_file(temp_file);
         assert!(result.is_ok());
+        let _ = std::fs::remove_file(temp_file);
     }
 
     // ========================================================================
