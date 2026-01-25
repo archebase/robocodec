@@ -388,3 +388,391 @@ fn cmd_create_fixture(
          This feature is not yet implemented. Use the convert command for full file copying."
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to get fixture path
+    fn fixture_path(name: &str) -> PathBuf {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(manifest_dir)
+            .join("tests")
+            .join("fixtures")
+            .join(name)
+    }
+
+    /// Helper to get a temporary output path
+    fn temp_output() -> PathBuf {
+        std::env::temp_dir().join(format!("robocodec_test_{}.mcap", std::process::id()))
+    }
+
+    // ========================================================================
+    // ExtractCmd::run() Tests
+    // ========================================================================
+
+    #[test]
+    fn test_extract_cmd_messages_nonexistent_file() {
+        let cmd = ExtractCmd::Messages {
+            input: PathBuf::from("/nonexistent/file.mcap"),
+            output: temp_output(),
+            count: None,
+            progress: false,
+        };
+        let result = cmd.run();
+        assert!(result.is_err(), "should fail for nonexistent input file");
+        // Error message may vary, just check it fails
+        let _ = result.unwrap_err();
+    }
+
+    #[test]
+    fn test_extract_cmd_topics_nonexistent_file() {
+        let cmd = ExtractCmd::Topics {
+            input: PathBuf::from("/nonexistent/file.mcap"),
+            output: temp_output(),
+            topics: "tf".to_string(),
+            progress: false,
+        };
+        let result = cmd.run();
+        assert!(result.is_err(), "should fail for nonexistent input file");
+    }
+
+    #[test]
+    fn test_extract_cmd_per_topic_nonexistent_file() {
+        let cmd = ExtractCmd::PerTopic {
+            input: PathBuf::from("/nonexistent/file.mcap"),
+            output: temp_output(),
+            count: 1,
+            progress: false,
+        };
+        let result = cmd.run();
+        assert!(result.is_err(), "should fail for nonexistent input file");
+    }
+
+    #[test]
+    fn test_extract_cmd_time_range_nonexistent_file() {
+        let cmd = ExtractCmd::TimeRange {
+            input: PathBuf::from("/nonexistent/file.mcap"),
+            output: temp_output(),
+            range: "0,MAX".to_string(),
+            progress: false,
+        };
+        let result = cmd.run();
+        assert!(result.is_err(), "should fail for nonexistent input file");
+    }
+
+    #[test]
+    fn test_extract_cmd_fixture_nonexistent_file() {
+        let cmd = ExtractCmd::Fixture {
+            input: PathBuf::from("/nonexistent/file.mcap"),
+            output_dir: None,
+            name: None,
+        };
+        let result = cmd.run();
+        assert!(result.is_err(), "should fail for nonexistent input file");
+    }
+
+    // ========================================================================
+    // Messages Command Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cmd_extract_messages_partial_extraction_error() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return; // Skip if fixture not available
+        }
+
+        // Partial extraction (count < total) should error
+        let result = cmd_extract_messages(path.clone(), temp_output(), Some(1), false);
+        assert!(result.is_err(), "partial extraction should fail");
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Partial message extraction"));
+    }
+
+    #[test]
+    fn test_cmd_extract_messages_invalid_range() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Can't test full extraction without a valid output
+        // but we can verify the function attempts to open the file
+        let result = cmd_extract_messages(
+            path,
+            PathBuf::from("/nonexistent/output/dir/file.mcap"),
+            None,
+            false,
+        );
+        assert!(result.is_err(), "should fail for invalid output path");
+    }
+
+    // ========================================================================
+    // Topics Command Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cmd_extract_topics_no_matching_topics() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Use a topic pattern that won't match
+        let result = cmd_extract_topics(
+            path,
+            temp_output(),
+            "definitely_nonexistent_topic_xyz".to_string(),
+            false,
+        );
+        assert!(result.is_err(), "should fail when no topics match");
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No matching topics"));
+    }
+
+    #[test]
+    fn test_cmd_extract_topics_not_implemented() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Even with matching topics, should return not implemented error
+        // First we need to find a real topic name
+        let Ok(reader) =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| open_reader(&path)))
+        else {
+            return;
+        };
+
+        let Ok(reader) = reader else { return };
+
+        let Some(topic) = reader.channels().values().next().map(|ch| ch.topic.clone()) else {
+            return;
+        };
+
+        let result = cmd_extract_topics(path, temp_output(), topic, false);
+        assert!(result.is_err(), "topic extraction not yet implemented");
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not yet implemented"));
+    }
+
+    #[test]
+    fn test_cmd_extract_topics_multiple_topics() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Test with comma-separated topics
+        let result = cmd_extract_topics(
+            path,
+            temp_output(),
+            "topic1,topic2,topic3".to_string(),
+            false,
+        );
+        // Should fail because these topics don't exist
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cmd_extract_topics_whitespace_handling() {
+        // Test that topics string is trimmed properly
+        let topics_str = " topic1 , topic2 , topic3 ";
+        let parsed: Vec<String> = topics_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect();
+        assert_eq!(parsed, vec!["topic1", "topic2", "topic3"]);
+    }
+
+    // ========================================================================
+    // PerTopic Command Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cmd_extract_per_topic_count_not_one() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // count != 1 should fail
+        let result = cmd_extract_per_topic(path, temp_output(), 2, false);
+        assert!(result.is_err(), "count > 1 should fail");
+        assert!(result.unwrap_err().to_string().contains("count > 1"));
+    }
+
+    #[test]
+    fn test_cmd_extract_per_topic_not_implemented() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Even with count=1, should return not implemented
+        let result = cmd_extract_per_topic(path, temp_output(), 1, false);
+        assert!(result.is_err(), "per-topic extraction not yet implemented");
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not yet implemented"));
+    }
+
+    // ========================================================================
+    // TimeRange Command Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cmd_extract_time_range_invalid_range() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Invalid range format
+        let result = cmd_extract_time_range(
+            path,
+            temp_output(),
+            "invalid-range-format".to_string(),
+            false,
+        );
+        assert!(result.is_err(), "invalid range format should fail");
+    }
+
+    #[test]
+    fn test_cmd_extract_time_range_not_implemented() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Valid range that's not "0,MAX" should fail with not implemented
+        let result = cmd_extract_time_range(path, temp_output(), "1000,2000".to_string(), false);
+        assert!(result.is_err(), "time range filtering not yet implemented");
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not yet implemented"));
+    }
+
+    #[test]
+    fn test_cmd_extract_time_range_invalid_output() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Even with 0,MAX range, invalid output should fail
+        let result = cmd_extract_time_range(
+            path,
+            PathBuf::from("/nonexistent/output/dir/file.mcap"),
+            "0,MAX".to_string(),
+            false,
+        );
+        assert!(result.is_err(), "invalid output path should fail");
+    }
+
+    // ========================================================================
+    // Fixture Command Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cmd_create_fixture_not_implemented() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_create_fixture(path, None, None);
+        assert!(result.is_err(), "fixture creation not yet implemented");
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not yet implemented"));
+    }
+
+    #[test]
+    fn test_cmd_create_fixture_with_custom_dir() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let temp_dir = std::env::temp_dir().join("robocodec_fixture_test");
+        let result = cmd_create_fixture(path, Some(temp_dir.clone()), Some("test".to_string()));
+
+        assert!(result.is_err(), "fixture creation not yet implemented");
+
+        // Clean up temp dir
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    // ========================================================================
+    // ExtractCmd Enum Tests
+    // ========================================================================
+
+    #[test]
+    fn test_extract_cmd_clone() {
+        let cmd = ExtractCmd::Messages {
+            input: PathBuf::from("test.mcap"),
+            output: PathBuf::from("out.mcap"),
+            count: Some(10),
+            progress: true,
+        };
+        let cloned = cmd.clone();
+        match (cmd, cloned) {
+            (ExtractCmd::Messages { input: i1, .. }, ExtractCmd::Messages { input: i2, .. }) => {
+                assert_eq!(i1, i2);
+            }
+            _ => panic!("cloned commands should match"),
+        }
+    }
+
+    #[test]
+    fn test_extract_cmd_debug() {
+        let cmd = ExtractCmd::Topics {
+            input: PathBuf::from("test.mcap"),
+            output: PathBuf::from("out.mcap"),
+            topics: "tf".to_string(),
+            progress: false,
+        };
+        let debug_str = format!("{:?}", cmd);
+        assert!(debug_str.contains("Topics"));
+    }
+
+    // ========================================================================
+    // Progress Bar Tests
+    // ========================================================================
+
+    #[test]
+    fn test_extract_with_progress_disabled() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Test with progress=false
+        let result = cmd_extract_per_topic(path, temp_output(), 1, false);
+        assert!(result.is_err()); // Not implemented, but should get past progress creation
+    }
+
+    #[test]
+    fn test_extract_with_progress_enabled() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Test with progress=true
+        let result = cmd_extract_per_topic(path, temp_output(), 1, true);
+        assert!(result.is_err()); // Not implemented, but should get past progress creation
+    }
+}

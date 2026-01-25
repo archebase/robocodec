@@ -226,4 +226,322 @@ mod tests {
             }
         });
     }
+
+    // ========================================================================
+    // Timestamp and Duration Tests
+    // ========================================================================
+
+    #[test]
+    fn test_convert_timestamp() {
+        Python::with_gil(|py| {
+            let value = CodecValue::Timestamp(1234567890);
+            let result = codec_value_to_py(py, &value).unwrap();
+            assert_eq!(result.extract::<u64>().unwrap(), 1234567890);
+        });
+    }
+
+    #[test]
+    fn test_convert_timestamp_zero() {
+        Python::with_gil(|py| {
+            let value = CodecValue::Timestamp(0);
+            let result = codec_value_to_py(py, &value).unwrap();
+            assert_eq!(result.extract::<u64>().unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn test_convert_duration_positive() {
+        Python::with_gil(|py| {
+            let value = CodecValue::Duration(1000000); // 1ms in nanoseconds
+            let result = codec_value_to_py(py, &value).unwrap();
+            assert_eq!(result.extract::<i64>().unwrap(), 1000000);
+        });
+    }
+
+    #[test]
+    fn test_convert_duration_negative() {
+        Python::with_gil(|py| {
+            let value = CodecValue::Duration(-1000000); // -1ms in nanoseconds
+            let result = codec_value_to_py(py, &value).unwrap();
+            assert_eq!(result.extract::<i64>().unwrap(), -1000000);
+        });
+    }
+
+    #[test]
+    fn test_convert_duration_zero() {
+        Python::with_gil(|py| {
+            let value = CodecValue::Duration(0);
+            let result = codec_value_to_py(py, &value).unwrap();
+            assert_eq!(result.extract::<i64>().unwrap(), 0);
+        });
+    }
+
+    // ========================================================================
+    // Empty Collection Tests
+    // ========================================================================
+
+    #[test]
+    fn test_convert_empty_array() {
+        Python::with_gil(|py| {
+            let value = CodecValue::Array(vec![]);
+            let result = codec_value_to_py(py, &value).unwrap();
+            let list = result.downcast::<PyList>().unwrap();
+            assert_eq!(list.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_convert_empty_struct() {
+        Python::with_gil(|py| {
+            let fields = HashMap::new();
+            let value = CodecValue::Struct(fields);
+            let result = codec_value_to_py(py, &value).unwrap();
+            let dict = result.downcast::<PyDict>().unwrap();
+            assert_eq!(dict.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_convert_empty_decoded_message() {
+        Python::with_gil(|py| {
+            let msg = HashMap::new();
+            let result = decoded_message_to_py(py, &msg).unwrap();
+            assert_eq!(result.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_convert_empty_string() {
+        Python::with_gil(|py| {
+            let value = CodecValue::String("".to_string());
+            let result = codec_value_to_py(py, &value).unwrap();
+            assert_eq!(result.extract::<String>().unwrap(), "");
+        });
+    }
+
+    #[test]
+    fn test_convert_empty_bytes() {
+        Python::with_gil(|py| {
+            let data: Vec<u8> = vec![];
+            let value = CodecValue::Bytes(data);
+            let result = codec_value_to_py(py, &value).unwrap();
+            assert_eq!(result.extract::<Vec<u8>>().unwrap(), Vec::<u8>::new());
+        });
+    }
+
+    // ========================================================================
+    // Nested Structure Tests
+    // ========================================================================
+
+    #[test]
+    fn test_convert_nested_array() {
+        Python::with_gil(|py| {
+            let value = CodecValue::Array(vec![
+                CodecValue::Array(vec![CodecValue::Int32(1), CodecValue::Int32(2)]),
+                CodecValue::Array(vec![CodecValue::Int32(3), CodecValue::Int32(4)]),
+            ]);
+            let result = codec_value_to_py(py, &value).unwrap();
+            let list = result.downcast::<PyList>().unwrap();
+            assert_eq!(list.len(), 2);
+        });
+    }
+
+    #[test]
+    fn test_convert_nested_struct() {
+        Python::with_gil(|py| {
+            let mut inner_fields = HashMap::new();
+            inner_fields.insert("x".to_string(), CodecValue::Float64(1.0));
+            inner_fields.insert("y".to_string(), CodecValue::Float64(2.0));
+
+            let mut outer_fields = HashMap::new();
+            outer_fields.insert("point".to_string(), CodecValue::Struct(inner_fields));
+            outer_fields.insert("label".to_string(), CodecValue::String("test".to_string()));
+
+            let value = CodecValue::Struct(outer_fields);
+            let result = codec_value_to_py(py, &value).unwrap();
+            let dict = result.downcast::<PyDict>().unwrap();
+            assert_eq!(dict.len(), 2);
+        });
+    }
+
+    #[test]
+    fn test_convert_array_of_structs() {
+        Python::with_gil(|py| {
+            let mut fields1 = HashMap::new();
+            fields1.insert("id".to_string(), CodecValue::Int32(1));
+
+            let mut fields2 = HashMap::new();
+            fields2.insert("id".to_string(), CodecValue::Int32(2));
+
+            let value = CodecValue::Array(vec![
+                CodecValue::Struct(fields1),
+                CodecValue::Struct(fields2),
+            ]);
+            let result = codec_value_to_py(py, &value).unwrap();
+            let list = result.downcast::<PyList>().unwrap();
+            assert_eq!(list.len(), 2);
+        });
+    }
+
+    // ========================================================================
+    // Edge Case Tests
+    // ========================================================================
+
+    #[test]
+    fn test_convert_bool_false() {
+        Python::with_gil(|py| {
+            let value = CodecValue::Bool(false);
+            let result = codec_value_to_py(py, &value).unwrap();
+            assert!(!result.extract::<bool>().unwrap());
+        });
+    }
+
+    #[test]
+    fn test_convert_integer_boundary_values() {
+        Python::with_gil(|py| {
+            // Test i8 boundaries
+            let result = codec_value_to_py(py, &CodecValue::Int8(i8::MIN)).unwrap();
+            assert_eq!(result.extract::<i64>().unwrap(), i8::MIN as i64);
+
+            let result = codec_value_to_py(py, &CodecValue::Int8(i8::MAX)).unwrap();
+            assert_eq!(result.extract::<i64>().unwrap(), i8::MAX as i64);
+
+            // Test i64 boundaries
+            let result = codec_value_to_py(py, &CodecValue::Int64(i64::MAX)).unwrap();
+            assert!(result.extract::<i64>().is_ok());
+        });
+    }
+
+    #[test]
+    fn test_convert_unsigned_integer_max() {
+        Python::with_gil(|py| {
+            let result = codec_value_to_py(py, &CodecValue::UInt64(u64::MAX)).unwrap();
+            assert!(result.extract::<u64>().is_ok());
+        });
+    }
+
+    #[test]
+    fn test_convert_float_special_values() {
+        Python::with_gil(|py| {
+            // Test infinity
+            let result = codec_value_to_py(py, &CodecValue::Float64(f64::INFINITY)).unwrap();
+            assert!(result.extract::<f64>().unwrap().is_infinite());
+
+            // Test negative infinity
+            let result = codec_value_to_py(py, &CodecValue::Float64(f64::NEG_INFINITY)).unwrap();
+            assert!(result.extract::<f64>().unwrap().is_infinite());
+
+            // Test NaN
+            let result = codec_value_to_py(py, &CodecValue::Float64(f64::NAN)).unwrap();
+            assert!(result.extract::<f64>().unwrap().is_nan());
+        });
+    }
+
+    #[test]
+    fn test_convert_string_with_unicode() {
+        Python::with_gil(|py| {
+            let value = CodecValue::String("Hello 世界 🌍".to_string());
+            let result = codec_value_to_py(py, &value).unwrap();
+            assert_eq!(result.extract::<String>().unwrap(), "Hello 世界 🌍");
+        });
+    }
+
+    #[test]
+    fn test_convert_string_with_special_chars() {
+        Python::with_gil(|py| {
+            let value = CodecValue::String("line1\nline2\ttab\r\0null".to_string());
+            let result = codec_value_to_py(py, &value).unwrap();
+            assert!(result.extract::<String>().is_ok());
+        });
+    }
+
+    // ========================================================================
+    // DecodedMessage Edge Cases
+    // ========================================================================
+
+    #[test]
+    fn test_convert_decoded_message_with_null_value() {
+        Python::with_gil(|py| {
+            let mut msg = HashMap::new();
+            msg.insert("field1".to_string(), CodecValue::Int32(123));
+            msg.insert("field2".to_string(), CodecValue::Null);
+
+            let result = decoded_message_to_py(py, &msg).unwrap();
+            assert_eq!(result.len(), 2);
+
+            // Check that null field is None
+            for (key, val) in result.iter() {
+                let key_str: String = key.extract().unwrap();
+                if key_str == "field2" {
+                    assert!(val.is_none());
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn test_convert_decoded_message_with_array() {
+        Python::with_gil(|py| {
+            let mut msg = HashMap::new();
+            msg.insert(
+                "items".to_string(),
+                CodecValue::Array(vec![CodecValue::Int32(1), CodecValue::Int32(2)]),
+            );
+
+            let result = decoded_message_to_py(py, &msg).unwrap();
+            assert_eq!(result.len(), 1);
+
+            for (_key, val) in result.iter() {
+                let list = val.downcast::<PyList>();
+                assert!(list.is_ok());
+                if let Ok(lst) = list {
+                    assert_eq!(lst.len(), 2);
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn test_convert_decoded_message_with_nested_message() {
+        Python::with_gil(|py| {
+            let mut inner = HashMap::new();
+            inner.insert("x".to_string(), CodecValue::Float64(1.0));
+
+            let mut outer = HashMap::new();
+            outer.insert("inner".to_string(), CodecValue::Struct(inner));
+
+            let result = decoded_message_to_py(py, &outer).unwrap();
+            assert_eq!(result.len(), 1);
+        });
+    }
+
+    // ========================================================================
+    // Type Trait Tests
+    // ========================================================================
+
+    #[test]
+    fn test_codec_value_display() {
+        // Test that CodecValue has a reasonable Debug representation
+        let value = CodecValue::Int32(42);
+        let _ = format!("{:?}", value);
+    }
+
+    #[test]
+    fn test_python_any_conversion() {
+        Python::with_gil(|py| {
+            // Test various conversions to PyAny
+            let tests: Vec<CodecValue> = vec![
+                CodecValue::Bool(true),
+                CodecValue::Int32(42),
+                CodecValue::Float64(2.5),
+                CodecValue::String("test".to_string()),
+                CodecValue::Null,
+            ];
+
+            for value in tests {
+                let result = codec_value_to_py(py, &value);
+                assert!(result.is_ok(), "conversion should succeed for {:?}", value);
+            }
+        });
+    }
 }

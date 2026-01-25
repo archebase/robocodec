@@ -530,3 +530,433 @@ struct SchemaDiff {
     status: String,
     diff: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to get fixture path
+    fn fixture_path(name: &str) -> PathBuf {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(manifest_dir)
+            .join("tests")
+            .join("fixtures")
+            .join(name)
+    }
+
+    // ========================================================================
+    // SchemaCmd::run() Tests
+    // ========================================================================
+
+    #[test]
+    fn test_schema_cmd_list_nonexistent_file() {
+        let cmd = SchemaCmd::List {
+            input: PathBuf::from("/nonexistent/file.mcap"),
+            group_by_type: false,
+            standard_only: false,
+            json: false,
+        };
+        let result = cmd.run();
+        assert!(result.is_err(), "should fail for nonexistent file");
+    }
+
+    #[test]
+    fn test_schema_cmd_show_nonexistent_file() {
+        let cmd = SchemaCmd::Show {
+            input: PathBuf::from("/nonexistent/file.mcap"),
+            topic_or_type: "Point".to_string(),
+            full: false,
+            json: false,
+        };
+        let result = cmd.run();
+        assert!(result.is_err(), "should fail for nonexistent file");
+    }
+
+    #[test]
+    fn test_schema_cmd_validate_nonexistent_file() {
+        let cmd = SchemaCmd::Validate {
+            input: PathBuf::from("/nonexistent/file.mcap"),
+            json: false,
+        };
+        let result = cmd.run();
+        assert!(result.is_err(), "should fail for nonexistent file");
+    }
+
+    #[test]
+    fn test_schema_cmd_diff_nonexistent_file() {
+        let cmd = SchemaCmd::Diff {
+            file1: PathBuf::from("/nonexistent/file1.mcap"),
+            file2: PathBuf::from("/nonexistent/file2.mcap"),
+            msg_type: None,
+            json: false,
+        };
+        let result = cmd.run();
+        assert!(result.is_err(), "should fail for nonexistent files");
+    }
+
+    // ========================================================================
+    // List Command Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cmd_list_with_valid_file() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_list(path.clone(), false, false, false);
+        assert!(result.is_ok(), "list command should succeed");
+    }
+
+    #[test]
+    fn test_cmd_list_grouped_by_type() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_list(path.clone(), true, false, false);
+        assert!(result.is_ok(), "grouped list should succeed");
+    }
+
+    #[test]
+    fn test_cmd_list_standard_only() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_list(path.clone(), false, true, false);
+        assert!(result.is_ok(), "standard_only filter should succeed");
+    }
+
+    #[test]
+    fn test_cmd_list_json_output() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_list(path.clone(), false, false, true);
+        assert!(result.is_ok(), "json output should succeed");
+    }
+
+    #[test]
+    fn test_cmd_list_all_options() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_list(path.clone(), true, true, true);
+        assert!(result.is_ok(), "all options combined should succeed");
+    }
+
+    // ========================================================================
+    // Show Command Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cmd_show_with_valid_file() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_show(path.clone(), "Point".to_string(), false, false);
+        assert!(result.is_ok(), "show command should succeed");
+    }
+
+    #[test]
+    fn test_cmd_show_full_schema() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_show(path.clone(), "Point".to_string(), true, false);
+        assert!(result.is_ok(), "show with full flag should succeed");
+    }
+
+    #[test]
+    fn test_cmd_show_json_output() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_show(path.clone(), "Point".to_string(), false, true);
+        assert!(result.is_ok(), "show with json should succeed");
+    }
+
+    #[test]
+    fn test_cmd_show_empty_pattern() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Empty pattern - may or may not match anything
+        let result = cmd_show(path.clone(), "".to_string(), false, false);
+        assert!(result.is_ok(), "empty pattern should not crash");
+    }
+
+    // ========================================================================
+    // Validate Command Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cmd_validate_with_valid_file() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Note: validation may fail for schemas, but the command should run
+        let result = cmd_validate(path.clone(), false);
+        // The result could be Ok or Err depending on schema validity
+        // We just check it doesn't panic
+        let _ = result;
+    }
+
+    #[test]
+    fn test_cmd_validate_json_output() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_validate(path.clone(), true);
+        let _ = result; // Just check it doesn't panic
+    }
+
+    // ========================================================================
+    // Diff Command Tests
+    // ========================================================================
+
+    #[test]
+    fn test_cmd_diff_json_not_implemented() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_diff(path.clone(), path.clone(), None, true);
+        assert!(
+            result.is_err(),
+            "json output should fail with not implemented"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not yet implemented"));
+    }
+
+    #[test]
+    fn test_cmd_diff_same_file() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        // Diff a file with itself - should have no differences
+        let result = cmd_diff(path.clone(), path.clone(), None, false);
+        assert!(result.is_ok(), "diff same file should succeed");
+    }
+
+    #[test]
+    fn test_cmd_diff_with_msg_type_filter() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let result = cmd_diff(path.clone(), path.clone(), Some("Point".to_string()), false);
+        assert!(result.is_ok(), "diff with msg_type filter should succeed");
+    }
+
+    // ========================================================================
+    // SchemaCmd Enum Tests
+    // ========================================================================
+
+    #[test]
+    fn test_schema_cmd_clone() {
+        let cmd = SchemaCmd::List {
+            input: PathBuf::from("test.mcap"),
+            group_by_type: true,
+            standard_only: false,
+            json: false,
+        };
+        let cloned = cmd.clone();
+        match (cmd, cloned) {
+            (SchemaCmd::List { input: i1, .. }, SchemaCmd::List { input: i2, .. }) => {
+                assert_eq!(i1, i2);
+            }
+            _ => panic!("cloned commands should match"),
+        }
+    }
+
+    #[test]
+    fn test_schema_cmd_debug() {
+        let cmd = SchemaCmd::Show {
+            input: PathBuf::from("test.mcap"),
+            topic_or_type: "Point".to_string(),
+            full: true,
+            json: false,
+        };
+        let debug_str = format!("{:?}", cmd);
+        assert!(debug_str.contains("Show"));
+    }
+
+    // ========================================================================
+    // Standard Prefix Tests
+    // ========================================================================
+
+    #[test]
+    fn test_standard_prefixes_match() {
+        // Test that standard prefix matching works correctly
+        const STANDARD_PREFIXES: &[&str] = &[
+            "sensor_msgs/",
+            "std_msgs/",
+            "geometry_msgs/",
+            "nav_msgs/",
+            "tf2_msgs/",
+            "trajectory_msgs/",
+            "visualization_msgs/",
+            "diagnostic_msgs/",
+            "actionlib_msgs/",
+        ];
+
+        let test_type = "sensor_msgs/msg/Point";
+
+        let is_standard = STANDARD_PREFIXES.iter().any(|p: &&str| {
+            test_type.starts_with(p) || test_type.starts_with(&p.replace('/', "/msg/"))
+        });
+
+        assert!(
+            is_standard,
+            "sensor_msgs types should be recognized as standard"
+        );
+    }
+
+    #[test]
+    fn test_standard_prefixes_non_standard() {
+        // Test that custom types are not matched
+        const STANDARD_PREFIXES: &[&str] = &["sensor_msgs/", "std_msgs/", "geometry_msgs/"];
+
+        let test_type = "custom_msgs/CustomType";
+
+        let is_standard = STANDARD_PREFIXES.iter().any(|p: &&str| {
+            test_type.starts_with(p) || test_type.starts_with(&p.replace('/', "/msg/"))
+        });
+
+        assert!(
+            !is_standard,
+            "custom types should not be recognized as standard"
+        );
+    }
+
+    // ========================================================================
+    // Diff Computation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_compute_diff_identical() {
+        let s1 = "line1\nline2\nline3";
+        let s2 = "line1\nline2\nline3";
+        let diff = compute_diff(s1, s2);
+        assert!(diff.is_empty(), "identical schemas should have no diff");
+    }
+
+    #[test]
+    fn test_compute_diff_different() {
+        let s1 = "line1\nline2\nline3";
+        let s2 = "line1\nlineX\nline3";
+        let diff = compute_diff(s1, s2);
+        assert!(!diff.is_empty(), "different schemas should have diff");
+        assert!(diff.contains("line2"), "diff should show removed line");
+        assert!(diff.contains("lineX"), "diff should show added line");
+    }
+
+    #[test]
+    fn test_compute_diff_different_lengths() {
+        let s1 = "line1\nline2";
+        let s2 = "line1\nline2\nline3";
+        let diff = compute_diff(s1, s2);
+        assert!(!diff.is_empty(), "different lengths should produce diff");
+    }
+
+    #[test]
+    fn test_compute_diff_empty() {
+        let diff = compute_diff("", "");
+        assert!(diff.is_empty(), "empty schemas should have no diff");
+    }
+
+    // ========================================================================
+    // Output Tests
+    // ========================================================================
+
+    #[test]
+    fn test_type_info_serialization() {
+        let info = TypeInfo {
+            message_type: "test/Msg".to_string(),
+            topics: vec!["/topic1".to_string(), "/topic2".to_string()],
+        };
+
+        let json = serde_json::to_string(&info);
+        assert!(json.is_ok(), "TypeInfo should be serializable");
+        assert!(json.unwrap().contains("test/Msg"));
+    }
+
+    #[test]
+    fn test_schema_item_serialization() {
+        let item = SchemaItem {
+            topic: "/test".to_string(),
+            message_type: "test/Msg".to_string(),
+            encoding: "cdr".to_string(),
+        };
+
+        let json = serde_json::to_string(&item);
+        assert!(json.is_ok(), "SchemaItem should be serializable");
+    }
+
+    #[test]
+    fn test_schema_detail_serialization() {
+        let detail = SchemaDetail {
+            topic: "/test".to_string(),
+            message_type: "test/Msg".to_string(),
+            encoding: "cdr".to_string(),
+            schema_encoding: Some("ros2msg".to_string()),
+            schema: Some("string data".to_string()),
+        };
+
+        let json = serde_json::to_string(&detail);
+        assert!(json.is_ok(), "SchemaDetail should be serializable");
+    }
+
+    #[test]
+    fn test_validation_result_serialization() {
+        let result = ValidationResult {
+            topic: "/test".to_string(),
+            message_type: "test/Msg".to_string(),
+            status: "ok".to_string(),
+            message: String::new(),
+        };
+
+        let json = serde_json::to_string(&result);
+        assert!(json.is_ok(), "ValidationResult should be serializable");
+    }
+
+    #[test]
+    fn test_schema_diff_serialization() {
+        let diff = SchemaDiff {
+            message_type: "test/Msg".to_string(),
+            status: "modified".to_string(),
+            diff: "- old line\n+ new line\n".to_string(),
+        };
+
+        let json = serde_json::to_string(&diff);
+        assert!(json.is_ok(), "SchemaDiff should be serializable");
+    }
+}
