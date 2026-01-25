@@ -31,9 +31,6 @@ pub mod sequential;
 // Two-pass reader for files without summary
 pub mod two_pass;
 
-// Raw reader implementation
-pub mod reader_raw;
-
 // High-level API (auto-decoding reader + custom writer)
 pub mod reader;
 pub mod writer;
