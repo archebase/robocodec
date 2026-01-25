@@ -26,24 +26,21 @@ fn test_unified_decode_messages_for_bag() {
     let decoded_iter = reader.decode_messages();
 
     // Verify we got the unified iterator
-    match decoded_iter {
-        Ok(_) => {
-            // Successfully created a decoded message iterator
-            // Now try to get the stream
-            let stream = decoded_iter.unwrap().stream();
-            assert!(stream.is_ok(), "Should be able to create stream");
+    let decoded_iter = match decoded_iter {
+        Ok(iter) => iter,
+        Err(e) => panic!("Failed to create decode_messages iterator: {:?}", e),
+    };
 
-            let mut stream = stream.unwrap();
+    // Now try to get the stream
+    let stream = decoded_iter.stream();
+    assert!(stream.is_ok(), "Should be able to create stream");
 
-            // Try to read one message (if file has messages)
-            if let Some(result) = stream.next() {
-                let (message, channel) = result.expect("Failed to decode first message");
-                println!("Successfully decoded message from topic: {}", channel.topic);
-                println!("Message fields: {:?}", message.keys());
-            }
-        }
-        Err(e) => {
-            panic!("Failed to create decode_messages iterator: {:?}", e);
-        }
+    let mut stream = stream.unwrap();
+
+    // Try to read one message (if file has messages)
+    if let Some(result) = stream.next() {
+        let (message, channel) = result.expect("Failed to decode first message");
+        println!("Successfully decoded message from topic: {}", channel.topic);
+        println!("Message fields: {:?}", message.keys());
     }
 }

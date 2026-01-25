@@ -50,7 +50,10 @@ use std::path::Path;
 /// This enum wraps format-specific iterators to provide a consistent API.
 pub enum DecodedMessageIter<'a> {
     /// MCAP format decoded message iterator
-    Mcap(crate::io::formats::mcap::reader::DecodedMessageIter<'a>),
+    Mcap(
+        crate::io::formats::mcap::reader::DecodedMessageIter<'a>,
+        std::collections::HashMap<u16, ChannelInfo>,
+    ),
     /// BAG format decoded message iterator
     Bag(crate::io::formats::bag::BagDecodedMessageIter<'a>),
 }
@@ -59,33 +62,7 @@ impl<'a> DecodedMessageIter<'a> {
     /// Get the channels for this iterator.
     pub fn channels(&self) -> &std::collections::HashMap<u16, ChannelInfo> {
         match self {
-            Self::Mcap(iter) => {
-                // Convert MCAP's ChannelInfo to our unified ChannelInfo
-                static EMPTY_CHANNELS: std::sync::OnceLock<
-                    std::collections::HashMap<u16, ChannelInfo>,
-                > = std::sync::OnceLock::new();
-                EMPTY_CHANNELS.get_or_init(|| {
-                    let mcap_channels = iter.channels();
-                    let mut channels = std::collections::HashMap::new();
-                    for (&id, ch) in mcap_channels {
-                        channels.insert(
-                            id,
-                            ChannelInfo {
-                                id: ch.id,
-                                topic: ch.topic.clone(),
-                                message_type: ch.message_type.clone(),
-                                encoding: ch.encoding.clone(),
-                                schema: ch.schema.clone(),
-                                schema_data: ch.schema_data.clone(),
-                                schema_encoding: ch.schema_encoding.clone(),
-                                message_count: ch.message_count,
-                                callerid: ch.callerid.clone(),
-                            },
-                        );
-                    }
-                    channels
-                })
-            }
+            Self::Mcap(_, channels) => channels,
             Self::Bag(iter) => iter.channels(),
         }
     }
@@ -93,7 +70,7 @@ impl<'a> DecodedMessageIter<'a> {
     /// Create a proper streaming iterator over decoded messages.
     pub fn stream(&self) -> Result<DecodedMessageStream<'a>> {
         match self {
-            Self::Mcap(iter) => Ok(DecodedMessageStream::Mcap(iter.stream()?)),
+            Self::Mcap(iter, _) => Ok(DecodedMessageStream::Mcap(iter.stream()?)),
             Self::Bag(iter) => Ok(DecodedMessageStream::Bag(iter.stream()?)),
         }
     }
@@ -252,7 +229,27 @@ impl RoboReader {
 
         // Try MCAP first
         if let Some(mcap) = self.downcast_ref::<McapReader>() {
-            return Ok(DecodedMessageIter::Mcap(mcap.decode_messages()?));
+            let mcap_iter = mcap.decode_messages()?;
+            // Convert MCAP's ChannelInfo to unified ChannelInfo
+            let mcap_channels = mcap_iter.channels();
+            let mut channels = std::collections::HashMap::new();
+            for (&id, ch) in mcap_channels {
+                channels.insert(
+                    id,
+                    ChannelInfo {
+                        id: ch.id,
+                        topic: ch.topic.clone(),
+                        message_type: ch.message_type.clone(),
+                        encoding: ch.encoding.clone(),
+                        schema: ch.schema.clone(),
+                        schema_data: ch.schema_data.clone(),
+                        schema_encoding: ch.schema_encoding.clone(),
+                        message_count: ch.message_count,
+                        callerid: ch.callerid.clone(),
+                    },
+                );
+            }
+            return Ok(DecodedMessageIter::Mcap(mcap_iter, channels));
         }
 
         // Try BAG
