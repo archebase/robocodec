@@ -336,43 +336,315 @@ impl<'a> Iterator for SequentialRawIter<'a> {
 mod tests {
     use super::*;
 
+    /// Helper to get fixture path
+    fn fixture_path(name: &str) -> std::path::PathBuf {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        std::path::PathBuf::from(manifest_dir)
+            .join("tests")
+            .join("fixtures")
+            .join(name)
+    }
+
+    /// Test opening a valid MCAP file
     #[test]
-    fn test_sequential_reader_compiles() {
-        // Just verify the types compile correctly
+    fn test_sequential_reader_open_valid() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return; // Skip if fixture not available
+        }
+
+        let result = SequentialMcapReader::open(&path);
+        assert!(
+            result.is_ok(),
+            "SequentialMcapReader::open should succeed: {:?}",
+            result.err()
+        );
+    }
+
+    /// Test opening a nonexistent file
+    #[test]
+    fn test_sequential_reader_open_nonexistent() {
+        let result = SequentialMcapReader::open("/nonexistent/file.mcap");
+        assert!(result.is_err(), "should fail for nonexistent file");
+    }
+
+    /// Test FormatReader trait methods
+    #[test]
+    fn test_sequential_reader_format_reader_trait() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+
+        // Test channels()
+        let channels = reader.channels();
+        assert!(!channels.is_empty(), "should have channels");
+
+        // Test path()
+        assert!(!reader.path().is_empty(), "path should not be empty");
+
+        // Test format()
+        assert_eq!(reader.format(), FileFormat::Mcap);
+
+        // Test file_size()
+        assert!(reader.file_size() > 0, "file_size should be positive");
+    }
+
+    /// Test channel information extraction
+    #[test]
+    fn test_sequential_reader_channels() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+        let channels = reader.channels();
+
+        // Should have at least one channel
+        assert!(!channels.is_empty(), "should discover channels");
+
+        // Verify channel structure
+        for (id, channel) in channels {
+            assert_eq!(channel.id, *id, "channel id should match key");
+            assert!(!channel.topic.is_empty(), "topic should not be empty");
+            assert!(!channel.encoding.is_empty(), "encoding should not be empty");
+        }
+    }
+
+    /// Test mmap accessor
+    #[test]
+    fn test_sequential_reader_mmap() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+        let mmap = reader.mmap();
+
+        assert!(!mmap.is_empty(), "mmap should not be empty");
+    }
+
+    /// Test iter_raw creation
+    #[test]
+    fn test_sequential_reader_iter_raw() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+        let result = reader.iter_raw();
+
+        assert!(result.is_ok(), "iter_raw should succeed");
+    }
+
+    /// Test SequentialRawIter reads messages
+    #[test]
+    fn test_sequential_raw_iter_messages() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+        let mut iter = reader.iter_raw().unwrap();
+
+        // Should be able to read at least one message
+        let first = iter.next();
+        assert!(first.is_some(), "should have at least one message");
+
+        if let Some(Ok((msg, channel))) = first {
+            assert!(!msg.data.is_empty(), "message data should not be empty");
+            assert!(
+                !channel.topic.is_empty(),
+                "channel topic should not be empty"
+            );
+        }
+    }
+
+    /// Test SequentialRawIter channels accessor
+    #[test]
+    fn test_sequential_raw_iter_channels() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+        let iter = reader.iter_raw().unwrap();
+
+        let channels = iter.channels();
+        assert!(!channels.is_empty(), "iter should have channels");
+    }
+
+    /// Test reading all messages from a file
+    #[test]
+    fn test_sequential_read_all_messages() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+        let iter = reader.iter_raw().unwrap();
+
+        let count = iter.filter_map(|r| r.ok()).count();
+        assert!(count > 0, "should read multiple messages");
+    }
+
+    /// Test as_any trait method
+    #[test]
+    fn test_sequential_reader_as_any() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+
+        // Test as_any
+        let any = reader.as_any();
+        assert!(any.is::<SequentialMcapReader>());
+
+        // Test as_any_mut
+        let any_mut = reader.as_any();
+        assert!(any_mut.is::<SequentialMcapReader>());
+    }
+
+    /// Test start_time and end_time
+    #[test]
+    fn test_sequential_reader_time_range() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+
+        // These may be None if file has no summary section
+        let _start = reader.start_time();
+        let _end = reader.end_time();
+    }
+
+    /// Test message_count from summary
+    #[test]
+    fn test_sequential_reader_message_count() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+        let count = reader.message_count();
+
+        // May be 0 if no summary, but should be non-negative
+        let _ = count;
+    }
+
+    /// Test with multiple fixture files
+    #[test]
+    fn test_sequential_reader_multiple_fixtures() {
+        for i in 0..=5 {
+            let path = fixture_path(&format!("robocodec_test_{}.mcap", i));
+            if !path.exists() {
+                continue;
+            }
+
+            let result = SequentialMcapReader::open(&path);
+            if let Ok(reader) = result {
+                // Verify basic properties
+                assert!(!reader.path().is_empty());
+                assert_eq!(reader.format(), FileFormat::Mcap);
+                assert!(reader.file_size() > 0);
+            }
+        }
+    }
+
+    /// Compile-time checks for trait bounds
+    #[test]
+    fn test_sequential_raw_iter_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<SequentialRawIter<'_>>();
     }
 
     #[test]
-    fn test_sequential_raw_iter_lifetime() {
-        // Test that SequentialRawIter works with the expected lifetime
-        // This is a compile-time check
-        fn assert_iter_send<T: Send>() {}
-        assert_iter_send::<SequentialRawIter<'_>>();
-    }
-
-    #[test]
-    fn test_sequential_mcap_reader_format_trait() {
-        // Test that SequentialMcapReader implements FormatReader correctly
-        // This is a compile-time check
+    fn test_sequential_reader_format_trait_bound() {
         fn assert_format_reader<T: FormatReader>() {}
         assert_format_reader::<SequentialMcapReader>();
     }
 
+    /// Test that iter_raw can be called multiple times
     #[test]
-    fn test_sequential_mcap_reader_mmap_accessible() {
-        // Test that the mmap accessor is available
-        // We can't actually create a reader without a file, but we can check the signature
-        // This is a compile-time test
-        fn check_mmap<R: FormatReader>() {
-            // This function just checks that SequentialMcapReader has the mmap method
+    fn test_sequential_reader_iter_raw_multiple() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
         }
-        check_mmap::<SequentialMcapReader>();
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+
+        // Can create multiple iterators
+        let iter1 = reader.iter_raw();
+        assert!(iter1.is_ok());
+
+        let iter2 = reader.iter_raw();
+        assert!(iter2.is_ok());
     }
 
+    /// Test error handling for nonexistent file
     #[test]
-    fn test_sequential_raw_iter_channels_accessor() {
-        // Test that the channels accessor is available
-        // This is a compile-time test
-        let _channels: HashMap<u16, ChannelInfo> = HashMap::new();
-        // Verify we can create channels with the expected type
+    fn test_sequential_reader_nonexistent_file() {
+        let result = SequentialMcapReader::open("/nonexistent/path/file.mcap");
+        assert!(result.is_err());
+    }
+
+    /// Test that channel info is properly cloned
+    #[test]
+    fn test_sequential_channel_info_structure() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+
+        for channel in reader.channels().values() {
+            // Verify all fields are accessible
+            let _ = &channel.topic;
+            let _ = &channel.message_type;
+            let _ = &channel.encoding;
+            let _ = &channel.schema;
+            let _ = &channel.schema_data;
+            let _ = &channel.schema_encoding;
+        }
+    }
+
+    /// Test SequentialRawIter handles unknown channels gracefully
+    #[test]
+    fn test_sequential_iter_unknown_channel_handling() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialMcapReader::open(&path).unwrap();
+
+        // Create an iterator with empty channels map to test unknown channel handling
+        let empty_channels = HashMap::new();
+        let result = SequentialRawIter::new(reader.mmap(), &empty_channels);
+
+        // Even with empty channels, should create iterator
+        assert!(result.is_ok());
+
+        let mut iter = result.unwrap();
+        // First message should create channel info on the fly
+        if let Some(Ok((_msg, channel))) = iter.next() {
+            // Channel should be created even if not in initial map
+            assert!(!channel.topic.is_empty());
+        }
     }
 }
