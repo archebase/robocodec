@@ -624,9 +624,10 @@ impl<'a> Iterator for BagDecodedMessageStream<'a> {
                 Err(e) => return Some(Err(e)),
             };
 
-            // Use decode_ros1 which handles the ROS1-specific CDR format
-            // (no CDR header, little-endian)
-            match self.decoder.decode_ros1(
+            // Use decode_headerless for ROS1 bag messages
+            // The BAG parser extracts just the CDR message data (without wrapper headers),
+            // so we need to decode from byte 0, not skip 16 bytes like decode_ros1 does.
+            match self.decoder.decode_headerless(
                 &parsed_schema,
                 &raw_msg.data,
                 Some(&channel_info.message_type),
