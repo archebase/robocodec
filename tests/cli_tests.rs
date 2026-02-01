@@ -73,7 +73,7 @@ fn test_cli_help() {
     let output = run_ok(&["--help"]);
     assert!(output.contains("Robotics data format toolkit"));
     assert!(output.contains("Inspect"));
-    assert!(output.contains("Convert"));
+    assert!(output.contains("Rewrite"));
     assert!(output.contains("Extract"));
     assert!(output.contains("Search"));
     assert!(output.contains("Schema"));
@@ -236,43 +236,46 @@ fn test_inspect_stats() {
 }
 
 // ============================================================================
-// Convert Command Tests
+// Rewrite Command Tests
 // ============================================================================
 
 #[test]
-fn test_convert_help() {
-    let output = run_ok(&["convert", "--help"]);
-    assert!(output.contains("Convert between formats"));
-    assert!(output.contains("to-mcap") || output.contains("to-bag"));
+fn test_rewrite_help() {
+    let output = run_ok(&["rewrite", "--help"]);
+    assert!(output.contains("Rewrite a file"));
+    assert!(output.contains("INPUT") && output.contains("OUTPUT"));
 }
 
 #[test]
-fn test_convert_bag_to_mcap() {
+fn test_rewrite_cross_format_not_supported() {
     let input = fixture_path("robocodec_test_15.bag");
     if !input.exists() {
         return;
     }
 
-    let output_path = std::env::temp_dir().join("test_cli_convert.mcap");
+    let output_path = std::env::temp_dir().join("test_cli_rewrite.mcap");
     let _guard = TempGuard(output_path.clone());
 
     let input_str = input.to_string_lossy().to_string();
     let output_str = output_path.to_string_lossy().to_string();
 
-    let _output = run_ok(&["convert", "to-mcap", &input_str, &output_str]);
+    // Cross-format rewrite should fail with helpful error message
+    let stderr = run_err(&["rewrite", &input_str, &output_str]);
 
-    // Should create output file
-    assert!(output_path.exists(), "Output file should be created");
+    // Should explain that cross-format rewrite is not supported
+    assert!(stderr.contains("not supported") || stderr.contains("Error"));
+    assert!(stderr.contains("MCAP") || stderr.contains("conversion"));
+
+    // Output file should NOT be created
+    assert!(
+        !output_path.exists(),
+        "Output file should NOT be created for cross-format rewrite"
+    );
 }
 
 #[test]
-fn test_convert_nonexistent_input() {
-    let stderr = run_err(&[
-        "convert",
-        "to-mcap",
-        "/nonexistent/input.bag",
-        "/tmp/output.mcap",
-    ]);
+fn test_rewrite_nonexistent_input() {
+    let stderr = run_err(&["rewrite", "/nonexistent/input.bag", "/tmp/output.bag"]);
     assert!(stderr.contains("Error"));
 }
 

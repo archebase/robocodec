@@ -191,10 +191,18 @@ impl<'a> CdrCursor<'a> {
     ///
     /// This matches the TypeScript implementation: `(offset - origin) % size`
     ///
+    /// Note: For ROS1 data (is_ros1 = true), alignment is skipped because
+    /// ROS1 serialization is packed (no padding between fields).
+    ///
     /// # Arguments
     ///
     /// * `size` - The alignment boundary (e.g., 4 for 4-byte alignment)
     pub fn align(&mut self, size: usize) -> CoreResult<()> {
+        // ROS1 serialization is packed - no alignment padding
+        if self.is_ros1 {
+            return Ok(());
+        }
+
         let alignment = (self.offset - self.origin) % size;
         if alignment > 0 {
             let padding = size - alignment;

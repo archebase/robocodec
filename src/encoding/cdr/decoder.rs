@@ -413,7 +413,11 @@ impl CdrDecoder {
         for op in &plan.ops {
             match op {
                 DecodeOp::Align { alignment } => {
-                    cursor.align(*alignment as usize)?;
+                    // ROS1 serialization is packed (no alignment padding between fields)
+                    // Only apply alignment for CDR (ROS2) data
+                    if !cursor.is_ros1() {
+                        cursor.align(*alignment as usize)?;
+                    }
                 }
 
                 DecodeOp::ReadPrimitive {
@@ -630,11 +634,14 @@ impl CdrDecoder {
     /// Read a ROS time value (sec:int32, nsec:uint32).
     ///
     /// Returns the time as nanoseconds since Unix epoch.
-    /// For time fields, we need to align to 4 bytes, read sec as int32,
+    /// For time fields, we need to align to 4 bytes (CDR only), read sec as int32,
     /// then read nsec as uint32.
     fn read_time(&self, cursor: &mut CdrCursor) -> CoreResult<CodecValue> {
-        // Align to 4 bytes (time fields are 4-byte aligned)
-        cursor.align(4)?;
+        // Align to 4 bytes (time fields are 4-byte aligned) - CDR only
+        // ROS1 serialization is packed (no alignment)
+        if !cursor.is_ros1() {
+            cursor.align(4)?;
+        }
 
         // Read sec (int32)
         let sec = cursor.read_i32()? as i64;
@@ -654,8 +661,11 @@ impl CdrDecoder {
     /// For duration fields, the sec field is signed, so we need to handle
     /// negative durations properly.
     fn read_duration(&self, cursor: &mut CdrCursor) -> CoreResult<CodecValue> {
-        // Align to 4 bytes (duration fields are 4-byte aligned)
-        cursor.align(4)?;
+        // Align to 4 bytes (duration fields are 4-byte aligned) - CDR only
+        // ROS1 serialization is packed (no alignment)
+        if !cursor.is_ros1() {
+            cursor.align(4)?;
+        }
 
         // Read sec (int32, can be negative)
         let sec = cursor.read_i32()? as i64;
