@@ -624,10 +624,10 @@ impl<'a> Iterator for BagDecodedMessageStream<'a> {
                 Err(e) => return Some(Err(e)),
             };
 
-            // Use decode_headerless for ROS1 bag messages
+            // Use decode_headerless_ros1 for ROS1 bag messages
             // The BAG parser extracts just the CDR message data (without wrapper headers),
-            // so we need to decode from byte 0, not skip 16 bytes like decode_ros1 does.
-            match self.decoder.decode_headerless(
+            // so we need to decode from byte 0 with ROS1 alignment rules.
+            match self.decoder.decode_headerless_ros1(
                 &parsed_schema,
                 &raw_msg.data,
                 Some(&channel_info.message_type),

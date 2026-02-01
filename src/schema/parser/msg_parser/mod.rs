@@ -275,9 +275,9 @@ pub fn parse_with_version(
     // ROS2 Header has: stamp, frame_id (no seq)
     if ros_version == RosVersion::Ros1 {
         add_seq_field_to_header_types(&mut schema);
-        // Remove Header fields from top-level messages for ROS1 bags
-        // because the Header data is already in the ROS1 record header
-        remove_header_fields_from_ros1_messages(&mut schema);
+        // NOTE: We do NOT remove header fields from ROS1 messages.
+        // The Header data IS serialized in the message bytes.
+        // The timestamp in the BAG record header is separate metadata.
     }
 
     Ok(schema)
@@ -376,64 +376,16 @@ fn add_seq_field_to_header_types(schema: &mut MessageSchema) {
         if let Some(header_type) = schema.types.get_mut(variant_name) {
             let has_seq = header_type.fields.iter().any(|f| f.name == "seq");
             if !has_seq {
-                // Insert seq field after stamp field (at index 1)
+                // Insert seq field at the beginning (index 0)
                 // ROS1 Header order: seq, stamp, frame_id
-                // But we insert at index 1 because stamp is at index 0
                 let seq_field = Field {
                     name: "seq".to_string(),
                     type_name: FieldType::Primitive(PrimitiveType::UInt32),
                 };
 
-                // Find stamp field index, insert seq after it
-                let stamp_idx = header_type
-                    .fields
-                    .iter()
-                    .position(|f| f.name == "stamp")
-                    .unwrap_or(0);
-
-                header_type.fields.insert(stamp_idx + 1, seq_field);
+                // Insert seq at the beginning (before stamp)
+                header_type.fields.insert(0, seq_field);
                 header_type.max_alignment = header_type.max_alignment.max(4);
-            }
-        }
-    }
-}
-
-/// Remove Header fields from top-level messages for ROS1 bags.
-///
-/// In ROS1 bags, the Header field is often not serialized because the
-/// timestamp is already in the record header. This function removes
-/// the Header field ONLY from the top-level message type (schema.name),
-/// not from nested dependency types.
-///
-/// For example, if decoding `tf2_msgs/TFMessage` which contains an array
-/// of `geometry_msgs/TransformStamped`, only TFMessage's header field is
-/// removed (if it has one). The TransformStamped nested type keeps its
-/// header field because that data IS present in the message bytes.
-fn remove_header_fields_from_ros1_messages(schema: &mut MessageSchema) {
-    // Only modify the top-level message type (the one that matches schema.name)
-    // Do NOT modify nested dependency types like geometry_msgs/TransformStamped
-    let top_level_name = &schema.name;
-
-    // Skip if the top-level type doesn't exist or is a Header type itself
-    if top_level_name.ends_with("/Header") || top_level_name == "Header" {
-        return;
-    }
-
-    // Check if the top-level type has a header field as its first field
-    if let Some(msg_type) = schema.types.get_mut(top_level_name) {
-        // Skip if this looks like a Header type (has frame_id but not seq)
-        if msg_type.fields.iter().any(|f| f.name == "frame_id")
-            && !msg_type.fields.iter().any(|f| f.name == "seq")
-        {
-            return;
-        }
-
-        // Remove the first field if it's named "header" and contains "Header" in type
-        if !msg_type.fields.is_empty() && msg_type.fields[0].name == "header" {
-            if let FieldType::Nested(nested_type) = &msg_type.fields[0].type_name {
-                if nested_type.contains("Header") {
-                    msg_type.fields.remove(0);
-                }
             }
         }
     }
