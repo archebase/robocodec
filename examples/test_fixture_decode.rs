@@ -15,14 +15,13 @@ fn main() {
     let raw_iter = reader.iter_raw().expect("Failed to get raw iterator");
 
     // Print first few messages with raw data
-    let mut count = 0;
-    for result in raw_iter {
-        if count >= 5 {
+    for (idx, result) in raw_iter.enumerate() {
+        if idx >= 5 {
             break;
         }
         match result {
             Ok((msg, channel)) => {
-                println!("\n=== Message {} ===", count + 1);
+                println!("\n=== Message {} ===", idx + 1);
                 println!("Topic: {}", channel.topic);
                 println!("Type: {}", channel.message_type);
                 println!("Data length: {} bytes", msg.data.len());
@@ -64,10 +63,9 @@ fn main() {
                 }
             }
             Err(e) => {
-                println!("\n=== Message {} (ERROR) ===", count + 1);
+                println!("\n=== Message {} (ERROR) ===", idx + 1);
                 println!("Error: {:?}", e);
             }
         }
-        count += 1;
     }
 }
