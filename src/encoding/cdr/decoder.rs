@@ -94,6 +94,34 @@ impl CdrDecoder {
         self.execute_plan(&plan, &mut cursor, schema)
     }
 
+    /// Decode CDR data with ROS1 alignment rules (no headers, ROS1 primitive array layout).
+    ///
+    /// Use this for ROS1 BAG files where the message parser has already extracted
+    /// just the CDR message data without any wrapper headers.
+    ///
+    /// # Arguments
+    ///
+    /// * `schema` - The parsed message schema
+    /// * `data` - The CDR-encoded message data (no headers)
+    /// * `type_name` - The type name to decode (optional, uses schema name if None)
+    pub fn decode_headerless_ros1(
+        &self,
+        schema: &MessageSchema,
+        data: &[u8],
+        type_name: Option<&str>,
+    ) -> CoreResult<DecodedMessage> {
+        let type_name = type_name.unwrap_or(&schema.name);
+
+        // Get or generate decode plan
+        let plan = self.get_or_generate_plan(schema, type_name)?;
+
+        // Create cursor for headerless ROS1 data (no headers, ROS1 alignment)
+        let mut cursor = CdrCursor::new_headerless_ros1(data, true);
+
+        // Execute the decode plan with the cursor
+        self.execute_plan(&plan, &mut cursor, schema)
+    }
+
     /// Decode CDR data with ROS1 bag format handling.
     ///
     /// ROS1 bags have a 12-byte record header followed by CDR data.

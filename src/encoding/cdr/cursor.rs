@@ -112,6 +112,27 @@ impl<'a> CdrCursor<'a> {
         }
     }
 
+    /// Create a new CDR cursor for headerless ROS1 bag data.
+    ///
+    /// For ROS1 bag messages where the parser has already extracted
+    /// just the CDR message data (without wrapper headers). Uses ROS1
+    /// alignment rules (primitive arrays stored contiguously).
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The CDR-encoded binary data WITHOUT any headers
+    /// * `little_endian` - Whether the data uses little endian encoding
+    pub fn new_headerless_ros1(data: &'a [u8], little_endian: bool) -> Self {
+        Self {
+            data,
+            offset: 0,
+            origin: 0,
+            origin_stack: Vec::new(),
+            little_endian,
+            is_ros1: true,
+        }
+    }
+
     /// Create a new CDR cursor for ROS1 bag data.
     ///
     /// ROS1 bags have data that includes a CDR header, but the header
