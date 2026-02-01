@@ -44,10 +44,10 @@ impl RewriteCmd {
             .to_lowercase();
 
         // Check if formats differ
-        let is_cross_format = match (input_ext.as_str(), output_ext.as_str()) {
-            ("bag", "mcap") | ("mcap", "bag") => true,
-            _ => false,
-        };
+        let is_cross_format = matches!(
+            (input_ext.as_str(), output_ext.as_str()),
+            ("bag", "mcap") | ("mcap", "bag")
+        );
 
         if is_cross_format {
             return Err(anyhow::anyhow!(
