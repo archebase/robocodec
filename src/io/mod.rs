@@ -12,6 +12,10 @@ pub mod detection;
 pub mod formats;
 pub mod metadata;
 
+// S3 streaming support (requires `s3` feature)
+#[cfg(feature = "s3")]
+pub mod s3;
+
 // Re-exports
 pub use arena::{MmapArena, MmapArenaRef};
 pub use detection::{detect_format, is_bag_file, is_mcap_file, FormatDetector};

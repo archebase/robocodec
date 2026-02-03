@@ -1,0 +1,553 @@
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
+//! Streaming MCAP parser for S3.
+//!
+//! This module provides a zero-copy streaming parser that can parse MCAP records
+//! from byte chunks as they arrive from S3, without requiring the entire file
+//! to be available locally.
+
+use std::collections::HashMap;
+
+use crate::io::formats::mcap::constants::*;
+use crate::io::metadata::ChannelInfo;
+use crate::io::s3::error::FatalError;
+
+/// MCAP record header as parsed from the stream.
+#[derive(Debug, Clone, PartialEq)]
+pub struct McapRecordHeader {
+    /// Record opcode
+    pub opcode: u8,
+    /// Record body length
+    pub length: u64,
+}
+
+/// Parsed MCAP record with header and body.
+#[derive(Debug, Clone)]
+pub struct McapRecord {
+    /// Record header
+    pub header: McapRecordHeader,
+    /// Record body data
+    pub body: Vec<u8>,
+}
+
+/// Schema information from MCAP Schema record.
+#[derive(Debug, Clone)]
+pub struct SchemaInfo {
+    /// Schema ID
+    pub id: u16,
+    /// Schema name (e.g., "sensor_msgs/msg/Image")
+    pub name: String,
+    /// Schema encoding (e.g., "ros2msg", "protobuf")
+    pub encoding: String,
+    /// Schema data
+    pub data: Vec<u8>,
+}
+
+/// Channel information from MCAP Channel record.
+#[derive(Debug, Clone)]
+pub struct ChannelRecordInfo {
+    /// Channel ID
+    pub id: u16,
+    /// Topic name
+    pub topic: String,
+    /// Message encoding (e.g., "cdr", "protobuf", "json")
+    pub message_encoding: String,
+    /// Schema ID (0 if none)
+    pub schema_id: u16,
+}
+
+/// Message data from MCAP Message record.
+#[derive(Debug, Clone)]
+pub struct MessageRecord {
+    /// Channel ID
+    pub channel_id: u16,
+    /// Log timestamp (nanoseconds)
+    pub log_time: u64,
+    /// Publish timestamp (nanoseconds)
+    pub publish_time: u64,
+    /// Message data
+    pub data: Vec<u8>,
+    /// Sequence number
+    pub sequence: u64,
+}
+
+/// Streaming MCAP parser.
+///
+/// This parser maintains state across chunks and can parse MCAP records
+/// incrementally as data arrives.
+pub struct StreamingMcapParser {
+    /// Discovered schemas indexed by schema ID
+    schemas: HashMap<u16, SchemaInfo>,
+    /// Discovered channels indexed by channel ID
+    channels: HashMap<u16, ChannelRecordInfo>,
+    /// Buffered partial record data from previous chunk
+    buffer: Vec<u8>,
+    /// Current parse state
+    state: ParserState,
+    /// Expected bytes remaining for current record
+    remaining: u64,
+    /// Current record opcode being parsed
+    current_opcode: u8,
+    /// Total messages parsed
+    message_count: u64,
+    /// Position within the buffer
+    buffer_pos: usize,
+}
+
+impl StreamingMcapParser {
+    /// Create a new streaming MCAP parser.
+    pub fn new() -> Self {
+        Self {
+            schemas: HashMap::new(),
+            channels: HashMap::new(),
+            buffer: Vec::new(),
+            state: ParserState::NeedMagic,
+            remaining: 0,
+            current_opcode: 0,
+            message_count: 0,
+            buffer_pos: 0,
+        }
+    }
+
+    /// Parse MCAP data from a chunk of bytes.
+    ///
+    /// Returns any complete records found in this chunk.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - A chunk of bytes from the MCAP file
+    ///
+    /// # Returns
+    ///
+    /// A vector of parsed message records. Schema and Channel records
+    /// are stored internally and accessible via `channels()`.
+    pub fn parse_chunk(&mut self, data: &[u8]) -> Result<Vec<MessageRecord>, FatalError> {
+        // Append new data to buffer
+        self.buffer.extend_from_slice(data);
+        let mut messages = Vec::new();
+
+        // Process all complete records from the buffer
+        loop {
+            let processed = self.process_one_record(&mut messages)?;
+            if !processed {
+                break;
+            }
+        }
+
+        // Compact buffer if we've consumed a lot of data
+        if self.buffer_pos > 1024 * 1024 {
+            let remaining = self.buffer.len() - self.buffer_pos;
+            self.buffer.copy_within(self.buffer_pos.., 0);
+            self.buffer.truncate(remaining);
+            self.buffer_pos = 0;
+        }
+
+        self.message_count += messages.len() as u64;
+        Ok(messages)
+    }
+
+    /// Process one record from the buffer.
+    /// Returns true if a record was processed, false if we need more data.
+    fn process_one_record(
+        &mut self,
+        messages: &mut Vec<MessageRecord>,
+    ) -> Result<bool, FatalError> {
+        let available = self.buffer.len() - self.buffer_pos;
+
+        match self.state {
+            ParserState::NeedMagic => {
+                if available < MCAP_MAGIC.len() {
+                    return Ok(false);
+                }
+
+                // Verify magic
+                let magic_slice = &self.buffer[self.buffer_pos..self.buffer_pos + MCAP_MAGIC.len()];
+                if magic_slice != MCAP_MAGIC {
+                    return Err(FatalError::invalid_format(
+                        "MCAP magic",
+                        magic_slice.to_vec(),
+                    ));
+                }
+
+                self.buffer_pos += MCAP_MAGIC.len();
+                self.state = ParserState::NeedRecordHeader;
+                Ok(true)
+            }
+            ParserState::NeedRecordHeader => {
+                // MCAP record header: opcode (1 byte) + length (8 bytes LE) = 9 bytes
+                let header_bytes = 9;
+                if available < header_bytes {
+                    return Ok(false);
+                }
+
+                let slice = &self.buffer[self.buffer_pos..];
+
+                // Read opcode
+                self.current_opcode = slice[0];
+
+                // Read length (little-endian u64 at offset 1)
+                self.remaining = u64::from_le_bytes(slice[1..9].try_into().unwrap_or([0u8; 8]));
+
+                // Validate record length
+                if self.remaining > 100 * 1024 * 1024 {
+                    return Err(FatalError::invalid_format(
+                        "MCAP record length > 100MB",
+                        vec![],
+                    ));
+                }
+
+                self.buffer_pos += header_bytes;
+                self.state = ParserState::NeedRecordBody;
+                Ok(true)
+            }
+            ParserState::NeedRecordBody => {
+                let available = (self.buffer.len() - self.buffer_pos) as u64;
+
+                if available < self.remaining {
+                    return Ok(false); // Need more data
+                }
+
+                // We have the full record body
+                let start = self.buffer_pos;
+                let end = start + self.remaining as usize;
+                let body = self.buffer[start..end].to_vec();
+                self.buffer_pos = end;
+
+                // Process the record
+                self.process_record(self.current_opcode, &body, messages)?;
+
+                // Reset for next record
+                self.state = ParserState::NeedRecordHeader;
+                self.remaining = 0;
+                Ok(true)
+            }
+        }
+    }
+
+    /// Process a complete MCAP record.
+    fn process_record(
+        &mut self,
+        opcode: u8,
+        body: &[u8],
+        messages: &mut Vec<MessageRecord>,
+    ) -> Result<(), FatalError> {
+        match opcode {
+            OP_HEADER => {
+                // Header record - just verify it's valid
+                if body.len() < 4 {
+                    return Err(FatalError::invalid_format("MCAP Header record", vec![]));
+                }
+                // No metadata to extract from Header
+            }
+            OP_SCHEMA => {
+                // Schema record - extract schema info
+                let schema = self.parse_schema(body)?;
+                self.schemas.insert(schema.id, schema);
+            }
+            OP_CHANNEL => {
+                // Channel record - extract channel info
+                let channel = self.parse_channel(body)?;
+                self.channels.insert(channel.id, channel);
+            }
+            OP_MESSAGE => {
+                // Message record - extract message
+                let msg = self.parse_message(body)?;
+                messages.push(msg);
+            }
+            OP_FOOTER | OP_DATA_END | OP_CHUNK | OP_CHUNK_INDEX | OP_MESSAGE_INDEX
+            | OP_ATTACHMENT | OP_ATTACHMENT_INDEX | OP_STATISTICS | OP_METADATA
+            | OP_METADATA_INDEX | OP_SUMMARY_OFFSET => {
+                // Ignore these records for streaming
+            }
+            _ => {
+                // Unknown opcode - skip
+                tracing::warn!(
+                    context = "StreamingMcapParser",
+                    opcode,
+                    "Unknown MCAP opcode"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Parse a Schema record.
+    fn parse_schema(&self, body: &[u8]) -> Result<SchemaInfo, FatalError> {
+        if body.len() < 6 {
+            return Err(FatalError::invalid_format("MCAP Schema record", vec![]));
+        }
+
+        let id = u16::from_le_bytes(body[0..2].try_into().unwrap());
+        let name_len = u16::from_le_bytes(body[2..4].try_into().unwrap()) as usize;
+
+        if body.len() < 4 + name_len {
+            return Err(FatalError::invalid_format("MCAP Schema name", vec![]));
+        }
+
+        let name = String::from_utf8(body[4..4 + name_len].to_vec())
+            .map_err(|_| FatalError::invalid_format("MCAP Schema name (invalid UTF-8)", vec![]))?;
+
+        let offset = 4 + name_len;
+        if body.len() < offset + 2 {
+            return Err(FatalError::invalid_format(
+                "MCAP Schema encoding length",
+                vec![],
+            ));
+        }
+
+        let encoding_len =
+            u16::from_le_bytes(body[offset..offset + 2].try_into().unwrap()) as usize;
+        if body.len() < offset + 2 + encoding_len {
+            return Err(FatalError::invalid_format("MCAP Schema encoding", vec![]));
+        }
+
+        let encoding = String::from_utf8(body[offset + 2..offset + 2 + encoding_len].to_vec())
+            .map_err(|_| {
+                FatalError::invalid_format("MCAP Schema encoding (invalid UTF-8)", vec![])
+            })?;
+
+        let data_start = offset + 2 + encoding_len;
+        let data = body[data_start..].to_vec();
+
+        Ok(SchemaInfo {
+            id,
+            name,
+            encoding,
+            data,
+        })
+    }
+
+    /// Parse a Channel record.
+    fn parse_channel(&self, body: &[u8]) -> Result<ChannelRecordInfo, FatalError> {
+        if body.len() < 6 {
+            return Err(FatalError::invalid_format("MCAP Channel record", vec![]));
+        }
+
+        let id = u16::from_le_bytes(body[0..2].try_into().unwrap());
+        let topic_len = u16::from_le_bytes(body[2..4].try_into().unwrap()) as usize;
+
+        if body.len() < 4 + topic_len {
+            return Err(FatalError::invalid_format("MCAP Channel topic", vec![]));
+        }
+
+        let topic = String::from_utf8(body[4..4 + topic_len].to_vec()).map_err(|_| {
+            FatalError::invalid_format("MCAP Channel topic (invalid UTF-8)", vec![])
+        })?;
+
+        let offset = 4 + topic_len;
+        if body.len() < offset + 2 {
+            return Err(FatalError::invalid_format(
+                "MCAP Channel encoding length",
+                vec![],
+            ));
+        }
+
+        let encoding_len =
+            u16::from_le_bytes(body[offset..offset + 2].try_into().unwrap()) as usize;
+        if body.len() < offset + 2 + encoding_len {
+            return Err(FatalError::invalid_format(
+                "MCAP Channel message encoding",
+                vec![],
+            ));
+        }
+
+        let message_encoding = String::from_utf8(
+            body[offset + 2..offset + 2 + encoding_len].to_vec(),
+        )
+        .map_err(|_| FatalError::invalid_format("MCAP Channel encoding (invalid UTF-8)", vec![]))?;
+
+        let schema_offset = offset + 2 + encoding_len;
+        if body.len() < schema_offset + 2 {
+            return Err(FatalError::invalid_format("MCAP Channel schema id", vec![]));
+        }
+
+        let schema_id =
+            u16::from_le_bytes(body[schema_offset..schema_offset + 2].try_into().unwrap());
+
+        Ok(ChannelRecordInfo {
+            id,
+            topic,
+            message_encoding,
+            schema_id,
+        })
+    }
+
+    /// Parse a Message record.
+    fn parse_message(&self, body: &[u8]) -> Result<MessageRecord, FatalError> {
+        if body.len() < 20 {
+            return Err(FatalError::invalid_format("MCAP Message record", vec![]));
+        }
+
+        let channel_id = u16::from_le_bytes(body[0..2].try_into().unwrap());
+        let sequence = u64::from_le_bytes(body[2..10].try_into().unwrap());
+        let log_time = u64::from_le_bytes(body[10..18].try_into().unwrap());
+        let publish_time = u64::from_le_bytes(body[18..26].try_into().unwrap());
+
+        let data = body[20..].to_vec();
+
+        Ok(MessageRecord {
+            channel_id,
+            log_time,
+            publish_time,
+            data,
+            sequence,
+        })
+    }
+
+    /// Get all discovered channels as ChannelInfo.
+    pub fn channels(&self) -> HashMap<u16, ChannelInfo> {
+        self.channels
+            .iter()
+            .map(|(id, ch)| {
+                let schema = self.schemas.get(&ch.schema_id);
+                let schema_text = schema.and_then(|s| String::from_utf8(s.data.clone()).ok());
+                let schema_data = schema.map(|s| s.data.clone());
+                let schema_encoding = schema.map(|s| s.encoding.clone());
+
+                let message_type = schema
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| "".to_string());
+
+                (
+                    *id,
+                    ChannelInfo {
+                        id: *id,
+                        topic: ch.topic.clone(),
+                        message_type,
+                        encoding: ch.message_encoding.clone(),
+                        schema: schema_text,
+                        schema_data,
+                        schema_encoding,
+                        message_count: 0, // Will be updated during iteration
+                        callerid: None,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Get the total message count.
+    pub fn message_count(&self) -> u64 {
+        self.message_count
+    }
+
+    /// Check if the parser has seen all channels.
+    pub fn has_channels(&self) -> bool {
+        !self.channels.is_empty()
+    }
+
+    /// Check if we've seen the magic bytes.
+    pub fn is_initialized(&self) -> bool {
+        !matches!(self.state, ParserState::NeedMagic)
+    }
+}
+
+impl Default for StreamingMcapParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Parser state for streaming MCAP parsing.
+#[derive(Debug, Clone, PartialEq)]
+enum ParserState {
+    /// Waiting for magic bytes
+    NeedMagic,
+    /// Waiting for record header (opcode + length)
+    NeedRecordHeader,
+    /// Waiting for record body
+    NeedRecordBody,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parser_new() {
+        let parser = StreamingMcapParser::new();
+        assert!(!parser.is_initialized());
+        assert!(!parser.has_channels());
+        assert_eq!(parser.message_count(), 0);
+    }
+
+    #[test]
+    fn test_parser_default() {
+        let parser = StreamingMcapParser::default();
+        assert_eq!(parser.message_count(), 0);
+    }
+
+    #[test]
+    fn test_record_header() {
+        let header = McapRecordHeader {
+            opcode: OP_MESSAGE,
+            length: 100,
+        };
+        assert_eq!(header.opcode, OP_MESSAGE);
+        assert_eq!(header.length, 100);
+    }
+
+    #[test]
+    fn test_schema_info() {
+        let schema = SchemaInfo {
+            id: 1,
+            name: "test_msgs/Msg".to_string(),
+            encoding: "ros2msg".to_string(),
+            data: b"# definition".to_vec(),
+        };
+        assert_eq!(schema.id, 1);
+        assert_eq!(schema.name, "test_msgs/Msg");
+        assert_eq!(schema.encoding, "ros2msg");
+    }
+
+    #[test]
+    fn test_channel_record_info() {
+        let channel = ChannelRecordInfo {
+            id: 1,
+            topic: "/test".to_string(),
+            message_encoding: "cdr".to_string(),
+            schema_id: 0,
+        };
+        assert_eq!(channel.id, 1);
+        assert_eq!(channel.topic, "/test");
+        assert_eq!(channel.message_encoding, "cdr");
+    }
+
+    #[test]
+    fn test_message_record() {
+        let msg = MessageRecord {
+            channel_id: 1,
+            log_time: 1000,
+            publish_time: 900,
+            data: vec![1, 2, 3],
+            sequence: 5,
+        };
+        assert_eq!(msg.channel_id, 1);
+        assert_eq!(msg.log_time, 1000);
+        assert_eq!(msg.data, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_parser_state() {
+        assert_eq!(ParserState::NeedMagic, ParserState::NeedMagic);
+        assert_eq!(ParserState::NeedRecordHeader, ParserState::NeedRecordHeader);
+        assert_eq!(ParserState::NeedRecordBody, ParserState::NeedRecordBody);
+    }
+
+    #[test]
+    fn test_parse_magic() {
+        let mut parser = StreamingMcapParser::new();
+
+        // Too short - should not error, just not advance
+        let result = parser.parse_chunk(&MCAP_MAGIC[..4]);
+        assert!(result.is_ok());
+        assert!(!parser.is_initialized());
+
+        // Full magic
+        let result = parser.parse_chunk(&MCAP_MAGIC[4..]);
+        assert!(result.is_ok());
+        assert!(parser.is_initialized());
+    }
+}

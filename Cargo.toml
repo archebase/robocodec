@@ -50,7 +50,15 @@ pyo3 = { version = "0.25", features = ["abi3-py311", "extension-module"], option
 clap = { version = "4.5", features = ["derive"] }
 indicatif = "0.17"
 human-size = "0.4"
+# S3 streaming support
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+bytes = "1.6"
+tokio = { version = "1.40", features = ["rt-multi-thread", "time"], default-features = false }
+aws-config = { version = "1.5", features = ["behavior-version-latest"], default-features = false, optional = true }
+aws-credential-types = { version = "1.2", default-features = false, optional = true }
+async-trait = "0.1"
 
 [features]
 python = ["pyo3"]
 jemalloc = ["dep:tikv-jemallocator"]
+s3 = ["aws-config", "aws-credential-types"]
