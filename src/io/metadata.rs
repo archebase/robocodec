@@ -18,10 +18,10 @@ use std::collections::HashMap;
 ///
 /// # Timestamp Availability
 ///
-/// Timestamps are available when using `decode_messages_with_timestamp()` for
-/// both BAG and MCAP files. When using the generic `decoded()` method, timestamps
-/// will always be `None` since the underlying decode streams don't expose timing
-/// information through that API.
+/// Timestamps are populated when available from the underlying format.
+/// Both MCAP and BAG formats include timestamp information, so `log_time`
+/// and `publish_time` will typically be `Some(...)`. Use `has_timestamps()`
+/// to verify both timestamps are present.
 #[derive(Debug, Clone)]
 pub struct DecodedMessageResult {
     /// The decoded message fields

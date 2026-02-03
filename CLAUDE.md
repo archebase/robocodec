@@ -97,8 +97,7 @@ The library exports these key types at the top level:
 - **`RoboReader`** - Unified reader with format auto-detection
   - `open(path)` - Open file with auto-detection
   - `open_with_config(path, config)` - Open with configuration
-  - `decoded()` - Iterate over decoded messages (returns `DecodedMessageIter`)
-  - `decode_messages_with_timestamp()` - Iterate with timestamps (both BAG and MCAP)
+  - `decoded()` - Iterate over decoded messages with timestamps (returns `DecodedMessageIter`)
   - `supports_parallel()` - Check if parallel reading is available
   - `chunk_count()` - Get number of chunks for progress tracking
 
