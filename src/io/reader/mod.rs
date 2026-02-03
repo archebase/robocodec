@@ -34,7 +34,6 @@ use crate::io::detection::detect_format;
 use crate::io::formats::bag::BagDecodedMessageStream;
 use crate::io::formats::bag::BagFormat;
 use crate::io::formats::mcap::reader::DecodedMessageStream as McapDecodedMessageStream;
-use crate::io::formats::mcap::reader::DecodedMessageWithTimestampStream as McapTimestampedStream;
 use crate::io::formats::mcap::McapFormat;
 use crate::io::metadata::{ChannelInfo, DecodedMessageResult, FileFormat};
 use crate::io::traits::{FormatReader, ParallelReader};

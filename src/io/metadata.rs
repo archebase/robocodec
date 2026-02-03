@@ -10,8 +10,6 @@
 use crate::core::DecodedMessage;
 use std::collections::HashMap;
 
-use crate::core::DecodedMessage;
-
 /// Result of decoding a message with complete metadata.
 ///
 /// This type combines the decoded message data with all available
