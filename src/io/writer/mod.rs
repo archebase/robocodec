@@ -49,6 +49,70 @@ impl RoboWriter {
         Self::create(path)
     }
 
+    /// Create a writer from a URL string.
+    ///
+    /// This method supports both local file paths and S3 URLs (s3://...).
+    /// The URL format is automatically detected and the appropriate writer is created.
+    ///
+    /// For S3 URLs, this method will block on async initialization using
+    /// the current tokio runtime. If no tokio runtime is active, a new runtime
+    /// will be created for this operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - URL string to write to (local path or s3://bucket/key format)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use robocodec::io::RoboWriter;
+    /// #
+    /// # #[tokio::main]
+    /// # async fn try_main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Local file (works without tokio)
+    /// let writer = RoboWriter::create("output.mcap")?;
+    ///
+    /// // S3 object (requires tokio runtime)
+    /// let writer = RoboWriter::create_url("s3://my-bucket/path/to/output.mcap")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "s3")]
+    pub fn create_url(url: &str) -> Result<Self> {
+        use tokio::runtime::Runtime;
+
+        // Check if this is an S3 URL
+        if let Ok(location) = crate::io::s3::S3Location::from_s3_url(url) {
+            // Use S3Writer for s3:// URLs
+            // Block on the async initialization
+            let rt = Runtime::new().map_err(|e| {
+                crate::CodecError::parse(
+                    "RoboWriter::create_url",
+                    format!("Failed to create tokio runtime: {}", e),
+                )
+            })?;
+
+            let writer = rt.block_on(async {
+                // Create S3 client
+                let client = crate::io::s3::S3Client::default_client().map_err(|e| {
+                    crate::CodecError::EncodeError {
+                        codec: "S3".to_string(),
+                        message: e.to_string(),
+                    }
+                })?;
+                Ok::<_, crate::CodecError>(crate::io::s3::S3Writer::new(location, client)?)
+            })?;
+
+            return Ok(Self {
+                inner: Box::new(writer),
+            });
+        }
+
+        // Fall back to local file path
+        let path = std::path::PathBuf::from(url);
+        Self::create(&path)
+    }
+
     /// Downcast to the inner writer for format-specific operations.
     pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
         self.inner.as_any().downcast_ref::<T>()

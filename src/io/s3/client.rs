@@ -4,9 +4,10 @@
 
 //! HTTP client for S3 streaming operations.
 
+use crate::io::s3::signer::hex_sha256;
 use crate::io::s3::{config::S3ReaderConfig, error::FatalError, location::S3Location, signer};
 use bytes::Bytes;
-use http::{HeaderMap, Method, Uri};
+use http::{HeaderMap, HeaderValue, Method, Uri};
 use std::str::FromStr;
 
 /// HTTP client for S3 operations.
@@ -321,6 +322,389 @@ impl S3Client {
     /// Get the configuration.
     pub fn config(&self) -> &S3ReaderConfig {
         &self.config
+    }
+
+    /// Initialize a multipart upload to S3.
+    ///
+    /// # Arguments
+    ///
+    /// * `location` - The S3 location to upload to
+    ///
+    /// # Returns
+    ///
+    /// The upload ID that must be used for subsequent upload_part calls.
+    pub async fn create_upload(&self, location: &S3Location) -> Result<String, FatalError> {
+        let url = location.url();
+
+        // Build the POST request with AWS SigV4 signing if credentials are provided
+        let response = if let Some(credentials) = self.config.credentials() {
+            if signer::should_sign(&credentials) {
+                let uri = Uri::from_str(&url).map_err(|e| FatalError::HttpError {
+                    status: None,
+                    message: format!("Invalid URL: {}", e),
+                })?;
+
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    "x-amz-content-sha256",
+                    HeaderValue::from_static("UNSIGNED-PAYLOAD"),
+                );
+
+                let region = location.region().unwrap_or("us-east-1");
+                if let Err(e) = signer::sign_request(
+                    &credentials,
+                    region,
+                    "s3",
+                    &Method::POST,
+                    &uri,
+                    &mut headers,
+                ) {
+                    return Err(FatalError::HttpError {
+                        status: None,
+                        message: format!("Failed to sign request: {}", e),
+                    });
+                }
+
+                let mut request_builder = self.client.post(&url);
+                request_builder = request_builder.query(&[("uploads", "")]);
+                for (name, value) in headers.iter() {
+                    if let Ok(value_str) = value.to_str() {
+                        if name.as_str() != "host" {
+                            request_builder = request_builder.header(name.as_str(), value_str);
+                        }
+                    }
+                }
+                request_builder.send().await
+            } else {
+                self.client
+                    .post(&url)
+                    .query(&[("uploads", "")])
+                    .send()
+                    .await
+            }
+        } else {
+            self.client
+                .post(&url)
+                .query(&[("uploads", "")])
+                .send()
+                .await
+        };
+
+        let response = response.map_err(|e| FatalError::HttpError {
+            status: None,
+            message: format!("Failed to create upload: {}", e),
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(FatalError::HttpError {
+                status: Some(status.as_u16()),
+                message: format!("Failed to create upload: HTTP {}", status.as_u16()),
+            });
+        }
+
+        // Parse the UploadId from the XML response
+        let body = response.text().await.map_err(|e| FatalError::IoError {
+            message: format!("Failed to read response: {}", e),
+        })?;
+
+        // Extract UploadId from XML response
+        // Format: <InitiateMultipartUploadResult...><UploadId>...</UploadId>...
+        if let Some(start) = body.find("<UploadId>") {
+            if let Some(end) = body.find("</UploadId>") {
+                return Ok(body[start + 10..end].to_string());
+            }
+        }
+
+        Err(FatalError::IoError {
+            message: "Failed to parse UploadId from response".to_string(),
+        })
+    }
+
+    /// Upload a part to a multipart upload.
+    ///
+    /// # Arguments
+    ///
+    /// * `location` - The S3 location to upload to
+    /// * `upload_id` - The upload ID returned by create_upload
+    /// * `part_number` - The part number (1-indexed)
+    /// * `data` - The part data to upload
+    ///
+    /// # Returns
+    ///
+    /// The ETag of the uploaded part, needed for complete_upload.
+    pub async fn upload_part(
+        &self,
+        location: &S3Location,
+        upload_id: &str,
+        part_number: u32,
+        data: Bytes,
+    ) -> Result<String, FatalError> {
+        let url = location.url();
+
+        // Build the PUT request with AWS SigV4 signing if credentials are provided
+        let response = if let Some(credentials) = self.config.credentials() {
+            if signer::should_sign(&credentials) {
+                let uri = Uri::from_str(&url).map_err(|e| FatalError::HttpError {
+                    status: None,
+                    message: format!("Invalid URL: {}", e),
+                })?;
+
+                let mut headers = HeaderMap::new();
+                let content_hash = hex_sha256(&data);
+                headers.insert(
+                    "x-amz-content-sha256",
+                    HeaderValue::from_str(&content_hash).unwrap(),
+                );
+
+                let region = location.region().unwrap_or("us-east-1");
+                if let Err(e) = signer::sign_request(
+                    &credentials,
+                    region,
+                    "s3",
+                    &Method::PUT,
+                    &uri,
+                    &mut headers,
+                ) {
+                    return Err(FatalError::HttpError {
+                        status: None,
+                        message: format!("Failed to sign request: {}", e),
+                    });
+                }
+
+                let mut request_builder = self.client.put(&url);
+                request_builder = request_builder.query(&[
+                    ("partNumber", part_number.to_string()),
+                    ("uploadId", upload_id.to_string()),
+                ]);
+                for (name, value) in headers.iter() {
+                    if let Ok(value_str) = value.to_str() {
+                        if name.as_str() != "host" {
+                            request_builder = request_builder.header(name.as_str(), value_str);
+                        }
+                    }
+                }
+                request_builder.body(data).send().await
+            } else {
+                self.client
+                    .put(&url)
+                    .query(&[
+                        ("partNumber", part_number.to_string()),
+                        ("uploadId", upload_id.to_string()),
+                    ])
+                    .body(data)
+                    .send()
+                    .await
+            }
+        } else {
+            self.client
+                .put(&url)
+                .query(&[
+                    ("partNumber", part_number.to_string()),
+                    ("uploadId", upload_id.to_string()),
+                ])
+                .body(data)
+                .send()
+                .await
+        };
+
+        let response = response.map_err(|e| FatalError::HttpError {
+            status: None,
+            message: format!("Failed to upload part: {}", e),
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(FatalError::HttpError {
+                status: Some(status.as_u16()),
+                message: format!("Failed to upload part: HTTP {}", status.as_u16()),
+            });
+        }
+
+        // Get ETag from response headers
+        response
+            .headers()
+            .get("etag")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim_matches('"').to_string())
+            .ok_or_else(|| FatalError::IoError {
+                message: "ETag header not found in upload response".to_string(),
+            })
+    }
+
+    /// Complete a multipart upload.
+    ///
+    /// # Arguments
+    ///
+    /// * `location` - The S3 location
+    /// * `upload_id` - The upload ID returned by create_upload
+    /// * `parts` - List of (part_number, etag) tuples for each uploaded part
+    pub async fn complete_upload(
+        &self,
+        location: &S3Location,
+        upload_id: &str,
+        parts: Vec<(u32, String)>,
+    ) -> Result<(), FatalError> {
+        let url = location.url();
+
+        // Build the XML body for complete multipart upload
+        let mut xml = String::from("<CompleteMultipartUpload>");
+        for (part_number, etag) in &parts {
+            xml.push_str(&format!(
+                "<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>",
+                part_number, etag
+            ));
+        }
+        xml.push_str("</CompleteMultipartUpload>");
+
+        let body = Bytes::from(xml);
+
+        // Build the POST request with AWS SigV4 signing
+        let response = if let Some(credentials) = self.config.credentials() {
+            if signer::should_sign(&credentials) {
+                let uri = Uri::from_str(&url).map_err(|e| FatalError::HttpError {
+                    status: None,
+                    message: format!("Invalid URL: {}", e),
+                })?;
+
+                let mut headers = HeaderMap::new();
+                let content_hash = hex_sha256(&body);
+                headers.insert(
+                    "x-amz-content-sha256",
+                    HeaderValue::from_str(&content_hash).unwrap(),
+                );
+
+                let region = location.region().unwrap_or("us-east-1");
+                if let Err(e) = signer::sign_request(
+                    &credentials,
+                    region,
+                    "s3",
+                    &Method::POST,
+                    &uri,
+                    &mut headers,
+                ) {
+                    return Err(FatalError::HttpError {
+                        status: None,
+                        message: format!("Failed to sign request: {}", e),
+                    });
+                }
+
+                let mut request_builder = self.client.post(&url);
+                request_builder = request_builder.query(&[("uploadId", upload_id)]);
+                for (name, value) in headers.iter() {
+                    if let Ok(value_str) = value.to_str() {
+                        if name.as_str() != "host" {
+                            request_builder = request_builder.header(name.as_str(), value_str);
+                        }
+                    }
+                }
+                request_builder.body(body).send().await
+            } else {
+                self.client
+                    .post(&url)
+                    .query(&[("uploadId", upload_id)])
+                    .body(body)
+                    .send()
+                    .await
+            }
+        } else {
+            self.client
+                .post(&url)
+                .query(&[("uploadId", upload_id)])
+                .body(body)
+                .send()
+                .await
+        };
+
+        let response = response.map_err(|e| FatalError::HttpError {
+            status: None,
+            message: format!("Failed to complete upload: {}", e),
+        })?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(FatalError::HttpError {
+                status: Some(status.as_u16()),
+                message: format!("Failed to complete upload: HTTP {}", status.as_u16()),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Abort a multipart upload.
+    ///
+    /// # Arguments
+    ///
+    /// * `location` - The S3 location
+    /// * `upload_id` - The upload ID to abort
+    pub async fn abort_upload(
+        &self,
+        location: &S3Location,
+        upload_id: &str,
+    ) -> Result<(), FatalError> {
+        let url = location.url();
+
+        // Build the DELETE request with AWS SigV4 signing
+        let response = if let Some(credentials) = self.config.credentials() {
+            if signer::should_sign(&credentials) {
+                let uri = Uri::from_str(&url).map_err(|e| FatalError::HttpError {
+                    status: None,
+                    message: format!("Invalid URL: {}", e),
+                })?;
+
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    "x-amz-content-sha256",
+                    HeaderValue::from_static("UNSIGNED-PAYLOAD"),
+                );
+
+                let region = location.region().unwrap_or("us-east-1");
+                if let Err(e) = signer::sign_request(
+                    &credentials,
+                    region,
+                    "s3",
+                    &Method::DELETE,
+                    &uri,
+                    &mut headers,
+                ) {
+                    return Err(FatalError::HttpError {
+                        status: None,
+                        message: format!("Failed to sign request: {}", e),
+                    });
+                }
+
+                let mut request_builder = self.client.delete(&url);
+                request_builder = request_builder.query(&[("uploadId", upload_id)]);
+                for (name, value) in headers.iter() {
+                    if let Ok(value_str) = value.to_str() {
+                        if name.as_str() != "host" {
+                            request_builder = request_builder.header(name.as_str(), value_str);
+                        }
+                    }
+                }
+                request_builder.send().await
+            } else {
+                self.client
+                    .delete(&url)
+                    .query(&[("uploadId", upload_id)])
+                    .send()
+                    .await
+            }
+        } else {
+            self.client
+                .delete(&url)
+                .query(&[("uploadId", upload_id)])
+                .send()
+                .await
+        };
+
+        response.map_err(|e| FatalError::HttpError {
+            status: None,
+            message: format!("Failed to abort upload: {}", e),
+        })?;
+
+        Ok(())
     }
 }
 

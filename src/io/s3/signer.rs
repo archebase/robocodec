@@ -156,7 +156,7 @@ fn format_canonical_headers(headers: &HeaderMap) -> String {
 }
 
 /// Calculate SHA-256 hash and return as hex string.
-fn hex_sha256(data: &[u8]) -> String {
+pub(crate) fn hex_sha256(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(data);
     hex::encode(hash)

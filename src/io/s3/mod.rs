@@ -16,6 +16,7 @@ mod location;
 pub mod mcap_stream;
 mod reader;
 mod signer;
+mod writer;
 
 pub use bag_stream::{
     BagMessageRecord, BagRecord, BagRecordFields, BagRecordHeader, StreamingBagParser,
@@ -31,6 +32,7 @@ pub use mcap_stream::{
 // Re-export MCAP magic from formats module
 pub use crate::io::formats::mcap::constants::MCAP_MAGIC;
 pub use reader::{S3MessageStream, S3Reader, S3ReaderState};
+pub use writer::S3Writer;
 
 // Test-only exports - these are public but only intended for testing
 pub use reader::{S3ReaderConstructor, SummarySchemaInfo};
