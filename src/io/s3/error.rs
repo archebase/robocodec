@@ -265,6 +265,8 @@ impl FatalError {
     }
 }
 
+impl std::error::Error for FatalError {}
+
 impl fmt::Display for FatalError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

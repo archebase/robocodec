@@ -8,6 +8,7 @@
 //! (MCAP, BAG) that streams data sequentially without random access, parsing metadata
 //! on-the-fly to build an in-memory index.
 
+mod bag_stream;
 mod client;
 mod config;
 mod error;
@@ -15,10 +16,17 @@ mod location;
 pub mod mcap_stream;
 mod reader;
 
+pub use bag_stream::{
+    BagMessageRecord, BagRecord, BagRecordFields, BagRecordHeader, StreamingBagParser,
+    BAG_MAGIC_PREFIX,
+};
 pub use client::S3Client;
 pub use config::{AwsCredentials, RetryConfig, S3ReaderConfig};
 pub use error::{RecoverableError, S3Error};
 pub use location::S3Location;
+pub use mcap_stream::{
+    ChannelRecordInfo, McapRecord, McapRecordHeader, MessageRecord, SchemaInfo, StreamingMcapParser,
+};
 pub use reader::{S3MessageStream, S3Reader, S3ReaderState};
 
 #[cfg(test)]

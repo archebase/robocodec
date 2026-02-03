@@ -4,6 +4,7 @@
 
 //! S3 streaming reader implementation.
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -12,8 +13,10 @@ use bytes::BytesMut;
 use crate::io::formats::mcap::constants::MCAP_MAGIC;
 use crate::io::metadata::ChannelInfo;
 use crate::io::s3::{
-    client::S3Client, config::S3ReaderConfig, error::FatalError, location::S3Location,
+    bag_stream::StreamingBagParser, client::S3Client, config::S3ReaderConfig, error::FatalError,
+    location::S3Location, mcap_stream::StreamingMcapParser,
 };
+use crate::io::traits::FormatReader;
 
 /// State machine for S3 streaming reader.
 ///
@@ -67,26 +70,6 @@ impl fmt::Display for S3ReaderState {
 ///
 /// This reader provides sequential access to S3-hosted MCAP and BAG files
 /// without requiring random access or local file storage.
-///
-/// # Example
-///
-/// ```no_run
-/// use robocodec::io::s3::{S3Location, S3Reader};
-///
-/// # #[tokio::main]
-/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// let location = S3Location::new("my-bucket", "path/to/file.mcap");
-/// let reader = S3Reader::open(location).await?;
-///
-/// println!("Channels: {}", reader.channels().len());
-///
-/// for result in reader.iter_messages() {
-///     let (channel, data) = result?;
-///     println!("{}: {} bytes", channel.topic, data.len());
-/// }
-/// # Ok(())
-/// # }
-/// ```
 pub struct S3Reader {
     /// S3 location being read
     location: S3Location,
@@ -213,9 +196,11 @@ impl S3Reader {
             ));
         }
 
-        // For now, return empty channel map - will be populated by full streaming parser
-        // In Phase 2, this will scan for Channel and Schema records
-        Ok((HashMap::new(), 0))
+        // Use streaming parser to discover channels
+        let mut parser = StreamingMcapParser::new();
+        // Parse the header data to discover channels
+        let _ = parser.parse_chunk(data);
+        Ok((parser.channels(), 0))
     }
 
     /// Parse BAG header to discover channels.
@@ -223,25 +208,29 @@ impl S3Reader {
         &self,
         data: &[u8],
     ) -> Result<(HashMap<u16, ChannelInfo>, u64), FatalError> {
-        // BAG magic: #LOGA or #ROSB
-        if data.len() < 8 {
+        use crate::io::s3::bag_stream::BAG_MAGIC_PREFIX;
+
+        // BAG magic: #ROSBAG V
+        if data.len() < BAG_MAGIC_PREFIX.len() {
             return Err(FatalError::invalid_format(
-                "BAG header (8 bytes minimum)",
+                "BAG header (9 bytes minimum)",
                 data.to_vec(),
             ));
         }
 
-        let header = std::str::from_utf8(&data[..8]).unwrap_or("");
-        if !header.starts_with("#LOG") && !header.starts_with("#ROS") {
+        let magic = &data[0..BAG_MAGIC_PREFIX.len()];
+        if magic != BAG_MAGIC_PREFIX {
             return Err(FatalError::invalid_format(
-                "BAG header (#LOGA or version header)",
-                data[..8].to_vec(),
+                "BAG magic (#ROSBAG V)",
+                magic.to_vec(),
             ));
         }
 
-        // For now, return empty channel map - will be populated by full streaming parser
-        // In Phase 3, this will scan for Connection records
-        Ok((HashMap::new(), 0))
+        // Use streaming parser to discover connections
+        let mut parser = StreamingBagParser::new();
+        // Parse the header data to discover connections
+        let _ = parser.parse_chunk(data);
+        Ok((parser.channels(), 0))
     }
 
     /// Get the current reader state.
@@ -275,6 +264,55 @@ impl S3Reader {
     /// Check if the reader has more messages.
     pub fn has_more(&self) -> bool {
         !matches!(self.state, S3ReaderState::Eof | S3ReaderState::Error(_))
+    }
+}
+
+impl FormatReader for S3Reader {
+    fn channels(&self) -> &HashMap<u16, ChannelInfo> {
+        match &self.state {
+            S3ReaderState::Ready { channels, .. } => channels,
+            _ => empty_channels(),
+        }
+    }
+
+    fn message_count(&self) -> u64 {
+        // Streaming reader doesn't pre-count messages
+        // Returns 0 as the count is unknown until full iteration
+        0
+    }
+
+    fn start_time(&self) -> Option<u64> {
+        // Streaming reader doesn't track time bounds during header scan
+        // This could be enhanced in Phase 5 by tracking timestamps in the streaming parser
+        None
+    }
+
+    fn end_time(&self) -> Option<u64> {
+        // Streaming reader doesn't track time bounds during header scan
+        None
+    }
+
+    fn path(&self) -> &str {
+        self.location.key()
+    }
+
+    fn format(&self) -> crate::io::metadata::FileFormat {
+        self.format
+    }
+
+    fn file_size(&self) -> u64 {
+        match &self.state {
+            S3ReaderState::Ready { file_size, .. } => *file_size,
+            _ => 0,
+        }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -427,8 +465,8 @@ mod tests {
             format: crate::io::metadata::FileFormat::Bag,
         };
 
-        // Valid BAG header
-        let data = b"#LOGA 2.0some extra data";
+        // Valid BAG header - #ROSBAG V2.0\n
+        let data = b"#ROSBAG V2.0\n";
 
         let result = reader.parse_bag_header(data);
         assert!(result.is_ok());

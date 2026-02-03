@@ -21,6 +21,10 @@ pub use arena::{MmapArena, MmapArenaRef};
 pub use detection::{detect_format, is_bag_file, is_mcap_file, FormatDetector};
 pub use metadata::{ChannelInfo, FileFormat, FileInfo, MessageMetadata, RawMessage};
 
+// Re-export S3 types when `s3` feature is enabled
+#[cfg(feature = "s3")]
+pub use s3::{S3Client, S3Location, S3Reader, S3ReaderConfig, S3ReaderState};
+
 // Channel iterator (tightly coupled with pipeline - keep in roboflow)
 // pub mod channel_iterator;
 
