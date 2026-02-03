@@ -1,0 +1,248 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/schema/builtin_types.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Predefined ROS2 builtin message types.
+    6|       |//!
+    7|       |//! This module provides the standard builtin_interfaces and std_msgs types that are
+    8|       |//! commonly referenced in ROS2 message definitions.
+    9|       |//!
+   10|       |//! ## Supported Types
+   11|       |//!
+   12|       |//! - `builtin_interfaces/Time` - Timestamp with seconds and nanoseconds
+   13|       |//! - `builtin_interfaces/Duration` - Time duration with seconds and nanoseconds
+   14|       |//! - `std_msgs/Header` - Standard ROS message header with stamp, frame_id
+   15|       |//!
+   16|       |//! Time and Duration have the same structure:
+   17|       |//! ```text
+   18|       |//! int32 sec
+   19|       |//! uint32 nanosec
+   20|       |//! ```
+   21|       |
+   22|       |use crate::schema::ast::{Field, FieldType, MessageType, PrimitiveType};
+   23|       |
+   24|       |/// Create the predefined builtin_interfaces/Time type.
+   25|     26|fn builtin_time() -> MessageType {
+   26|     26|    let mut msg_type = MessageType::new("builtin_interfaces/Time".to_string());
+   27|       |
+   28|     26|    msg_type.add_field(Field {
+   29|     26|        name: "sec".to_string(),
+   30|     26|        type_name: FieldType::Primitive(PrimitiveType::Int32),
+   31|     26|    });
+   32|       |
+   33|     26|    msg_type.add_field(Field {
+   34|     26|        name: "nanosec".to_string(),
+   35|     26|        type_name: FieldType::Primitive(PrimitiveType::UInt32),
+   36|     26|    });
+   37|       |
+   38|     26|    msg_type
+   39|     26|}
+   40|       |
+   41|       |/// Create the predefined builtin_interfaces/msg/Time type (alternative naming).
+   42|     26|fn builtin_time_msg() -> MessageType {
+   43|     26|    let mut msg_type = MessageType::new("builtin_interfaces/msg/Time".to_string());
+   44|       |
+   45|     26|    msg_type.add_field(Field {
+   46|     26|        name: "sec".to_string(),
+   47|     26|        type_name: FieldType::Primitive(PrimitiveType::Int32),
+   48|     26|    });
+   49|       |
+   50|     26|    msg_type.add_field(Field {
+   51|     26|        name: "nanosec".to_string(),
+   52|     26|        type_name: FieldType::Primitive(PrimitiveType::UInt32),
+   53|     26|    });
+   54|       |
+   55|     26|    msg_type
+   56|     26|}
+   57|       |
+   58|       |/// Create the predefined builtin_interfaces/Duration type.
+   59|     26|fn builtin_duration() -> MessageType {
+   60|     26|    let mut msg_type = MessageType::new("builtin_interfaces/Duration".to_string());
+   61|       |
+   62|     26|    msg_type.add_field(Field {
+   63|     26|        name: "sec".to_string(),
+   64|     26|        type_name: FieldType::Primitive(PrimitiveType::Int32),
+   65|     26|    });
+   66|       |
+   67|     26|    msg_type.add_field(Field {
+   68|     26|        name: "nanosec".to_string(),
+   69|     26|        type_name: FieldType::Primitive(PrimitiveType::UInt32),
+   70|     26|    });
+   71|       |
+   72|     26|    msg_type
+   73|     26|}
+   74|       |
+   75|       |/// Create the predefined builtin_interfaces/msg/Duration type (alternative naming).
+   76|     26|fn builtin_duration_msg() -> MessageType {
+   77|     26|    let mut msg_type = MessageType::new("builtin_interfaces/msg/Duration".to_string());
+   78|       |
+   79|     26|    msg_type.add_field(Field {
+   80|     26|        name: "sec".to_string(),
+   81|     26|        type_name: FieldType::Primitive(PrimitiveType::Int32),
+   82|     26|    });
+   83|       |
+   84|     26|    msg_type.add_field(Field {
+   85|     26|        name: "nanosec".to_string(),
+   86|     26|        type_name: FieldType::Primitive(PrimitiveType::UInt32),
+   87|     26|    });
+   88|       |
+   89|     26|    msg_type
+   90|     26|}
+   91|       |
+   92|       |/// Create the predefined std_msgs/Header type.
+   93|       |///
+   94|       |/// Standard ROS message header with timestamp and frame ID.
+   95|       |/// Note: This does not include the `seq` field which is only used in ROS1.
+   96|     26|fn builtin_header() -> MessageType {
+   97|     26|    let mut msg_type = MessageType::new("std_msgs/Header".to_string());
+   98|       |
+   99|       |    // Use builtin_interfaces/Time for stamp field
+  100|     26|    msg_type.add_field(Field {
+  101|     26|        name: "stamp".to_string(),
+  102|     26|        type_name: FieldType::Nested("builtin_interfaces/Time".to_string()),
+  103|     26|    });
+  104|       |
+  105|     26|    msg_type.add_field(Field {
+  106|     26|        name: "frame_id".to_string(),
+  107|     26|        type_name: FieldType::Primitive(PrimitiveType::String),
+  108|     26|    });
+  109|       |
+  110|     26|    msg_type
+  111|     26|}
+  112|       |
+  113|       |/// Create the predefined std_msgs/msg/Header type (alternative naming).
+  114|     26|fn builtin_header_msg() -> MessageType {
+  115|     26|    let mut msg_type = MessageType::new("std_msgs/msg/Header".to_string());
+  116|       |
+  117|       |    // Use builtin_interfaces/msg/Time for stamp field
+  118|     26|    msg_type.add_field(Field {
+  119|     26|        name: "stamp".to_string(),
+  120|     26|        type_name: FieldType::Nested("builtin_interfaces/msg/Time".to_string()),
+  121|     26|    });
+  122|       |
+  123|     26|    msg_type.add_field(Field {
+  124|     26|        name: "frame_id".to_string(),
+  125|     26|        type_name: FieldType::Primitive(PrimitiveType::String),
+  126|     26|    });
+  127|       |
+  128|     26|    msg_type
+  129|     26|}
+  130|       |
+  131|       |/// Get all predefined builtin message types.
+  132|       |///
+  133|       |/// Returns a vector of all builtin types that should be automatically
+  134|       |/// included in every schema.
+  135|       |///
+  136|       |/// # Examples
+  137|       |///
+  138|       |/// ```no_run
+  139|       |/// # fn main() {
+  140|       |/// use robocodec::schema::builtin_types;
+  141|       |///
+  142|       |/// for builtin_type in builtin_types::get_all() {
+  143|       |///     // Add builtin type to your schema
+  144|       |///     println!("Adding builtin type: {}", builtin_type.name);
+  145|       |/// }
+  146|       |/// # }
+  147|       |/// ```
+  148|     25|pub fn get_all() -> Vec<MessageType> {
+  149|     25|    vec![
+  150|     25|        builtin_time(),
+  151|     25|        builtin_time_msg(),
+  152|     25|        builtin_duration(),
+  153|     25|        builtin_duration_msg(),
+  154|     25|        builtin_header(),
+  155|     25|        builtin_header_msg(),
+  156|       |    ]
+  157|     25|}
+  158|       |
+  159|       |#[cfg(test)]
+  160|       |mod tests {
+  161|       |    use super::*;
+  162|       |
+  163|       |    #[test]
+  164|      1|    fn test_builtin_time_structure() {
+  165|      1|        let time = builtin_time();
+  166|       |
+  167|      1|        assert_eq!(time.name, "builtin_interfaces/Time");
+  168|      1|        assert_eq!(time.fields.len(), 2);
+  169|      1|        assert_eq!(time.fields[0].name, "sec");
+  170|      1|        assert_eq!(time.fields[1].name, "nanosec");
+  171|       |
+  172|       |        // Verify field types
+  173|      1|        assert!(matches!(
+                              ^0
+  174|      1|            time.fields[0].type_name,
+  175|       |            FieldType::Primitive(PrimitiveType::Int32)
+  176|       |        ));
+  177|      1|        assert!(matches!(
+                              ^0
+  178|      1|            time.fields[1].type_name,
+  179|       |            FieldType::Primitive(PrimitiveType::UInt32)
+  180|       |        ));
+  181|      1|    }
+  182|       |
+  183|       |    #[test]
+  184|      1|    fn test_builtin_time_msg_structure() {
+  185|      1|        let time = builtin_time_msg();
+  186|       |
+  187|      1|        assert_eq!(time.name, "builtin_interfaces/msg/Time");
+  188|      1|        assert_eq!(time.fields.len(), 2);
+  189|      1|    }
+  190|       |
+  191|       |    #[test]
+  192|      1|    fn test_builtin_duration_structure() {
+  193|      1|        let duration = builtin_duration();
+  194|       |
+  195|      1|        assert_eq!(duration.name, "builtin_interfaces/Duration");
+  196|      1|        assert_eq!(duration.fields.len(), 2);
+  197|      1|    }
+  198|       |
+  199|       |    #[test]
+  200|      1|    fn test_builtin_duration_msg_structure() {
+  201|      1|        let duration = builtin_duration_msg();
+  202|       |
+  203|      1|        assert_eq!(duration.name, "builtin_interfaces/msg/Duration");
+  204|      1|        assert_eq!(duration.fields.len(), 2);
+  205|      1|    }
+  206|       |
+  207|       |    #[test]
+  208|      1|    fn test_get_all() {
+  209|      1|        let all = get_all();
+  210|       |
+  211|      1|        assert_eq!(all.len(), 6);
+  212|       |
+  213|       |        // Verify we have both naming variants for Time and Duration
+  214|      6|        let names: Vec<&str> = all.iter().map(|t| t.name.as_str()).collect();
+                          ^1     ^1          ^1         ^1                       ^1
+  215|      1|        assert!(names.contains(&"builtin_interfaces/Time"));
+  216|      1|        assert!(names.contains(&"builtin_interfaces/msg/Time"));
+  217|      1|        assert!(names.contains(&"builtin_interfaces/Duration"));
+  218|      1|        assert!(names.contains(&"builtin_interfaces/msg/Duration"));
+  219|       |        // Verify Header types
+  220|      1|        assert!(names.contains(&"std_msgs/Header"));
+  221|      1|        assert!(names.contains(&"std_msgs/msg/Header"));
+  222|      1|    }
+  223|       |
+  224|       |    #[test]
+  225|      1|    fn test_builtin_header_structure() {
+  226|      1|        let header = builtin_header();
+  227|       |
+  228|      1|        assert_eq!(header.name, "std_msgs/Header");
+  229|      1|        assert_eq!(header.fields.len(), 2);
+  230|      1|        assert_eq!(header.fields[0].name, "stamp");
+  231|      1|        assert_eq!(header.fields[1].name, "frame_id");
+  232|      1|    }
+  233|       |
+  234|       |    #[test]
+  235|      1|    fn test_builtin_header_msg_structure() {
+  236|      1|        let header = builtin_header_msg();
+  237|       |
+  238|      1|        assert_eq!(header.name, "std_msgs/msg/Header");
+  239|      1|        assert_eq!(header.fields.len(), 2);
+  240|      1|    }
+  241|       |}
+

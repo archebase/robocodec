@@ -1,0 +1,1030 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/bin/cmd/schema.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Schema command - inspect and validate message schemas.
+    6|       |
+    7|       |use std::collections::{BTreeMap, BTreeSet};
+    8|       |use std::path::PathBuf;
+    9|       |
+   10|       |use clap::Subcommand;
+   11|       |use serde::Serialize;
+   12|       |
+   13|       |use crate::common::{open_reader, Result};
+   14|       |use robocodec::FormatReader;
+   15|       |
+   16|       |/// Schema operations.
+   17|       |#[derive(Subcommand, Clone, Debug)]
+   18|       |pub enum SchemaCmd {
+   19|       |    /// List all message types in the file
+   20|       |    List {
+   21|       |        /// Input file
+   22|       |        #[arg(value_name = "FILE")]
+   23|       |        input: PathBuf,
+   24|       |
+   25|       |        /// Group by message type
+   26|       |        #[arg(long)]
+   27|       |        group_by_type: bool,
+   28|       |
+   29|       |        /// Show only standard ROS types
+   30|       |        #[arg(long)]
+   31|       |        standard_only: bool,
+   32|       |
+   33|       |        /// Output as JSON
+   34|       |        #[arg(short, long)]
+   35|       |        json: bool,
+   36|       |    },
+   37|       |
+   38|       |    /// Show full schema for a message type
+   39|       |    Show {
+   40|       |        /// Input file
+   41|       |        #[arg(value_name = "FILE")]
+   42|       |        input: PathBuf,
+   43|       |
+   44|       |        /// Topic or message type to show
+   45|       |        #[arg(value_name = "TOPIC|TYPE")]
+   46|       |        topic_or_type: String,
+   47|       |
+   48|       |        /// Show full schema (don't truncate)
+   49|       |        #[arg(long)]
+   50|       |        full: bool,
+   51|       |
+   52|       |        /// Output as JSON
+   53|       |        #[arg(short, long)]
+   54|       |        json: bool,
+   55|       |    },
+   56|       |
+   57|       |    /// Validate all schemas can be parsed
+   58|       |    Validate {
+   59|       |        /// Input file
+   60|       |        #[arg(value_name = "FILE")]
+   61|       |        input: PathBuf,
+   62|       |
+   63|       |        /// Output as JSON
+   64|       |        #[arg(short, long)]
+   65|       |        json: bool,
+   66|       |    },
+   67|       |
+   68|       |    /// Compare schemas between two files
+   69|       |    Diff {
+   70|       |        /// First file
+   71|       |        #[arg(value_name = "FILE1")]
+   72|       |        file1: PathBuf,
+   73|       |
+   74|       |        /// Second file
+   75|       |        #[arg(value_name = "FILE2")]
+   76|       |        file2: PathBuf,
+   77|       |
+   78|       |        /// Message type to compare
+   79|       |        #[arg(short, long)]
+   80|       |        msg_type: Option<String>,
+   81|       |
+   82|       |        /// Output as JSON
+   83|       |        #[arg(short, long)]
+   84|       |        json: bool,
+   85|       |    },
+   86|       |}
+   87|       |
+   88|       |impl SchemaCmd {
+   89|      5|    pub fn run(self) -> Result<()> {
+   90|      5|        match self {
+   91|       |            SchemaCmd::List {
+   92|      2|                input,
+   93|      2|                group_by_type,
+   94|      2|                standard_only,
+   95|      2|                json,
+   96|      2|            } => cmd_list(input, group_by_type, standard_only, json),
+   97|       |            SchemaCmd::Show {
+   98|      1|                input,
+   99|      1|                topic_or_type,
+  100|      1|                full,
+  101|      1|                json,
+  102|      1|            } => cmd_show(input, topic_or_type, full, json),
+  103|      1|            SchemaCmd::Validate { input, json } => cmd_validate(input, json),
+  104|       |            SchemaCmd::Diff {
+  105|      1|                file1,
+  106|      1|                file2,
+  107|      1|                msg_type,
+  108|      1|                json,
+  109|      1|            } => cmd_diff(file1, file2, msg_type, json),
+  110|       |        }
+  111|      5|    }
+  112|       |}
+  113|       |
+  114|      7|fn cmd_list(input: PathBuf, group_by_type: bool, standard_only: bool, json: bool) -> Result<()> {
+  115|      7|    let reader = open_reader(&input)?;
+                      ^6                          ^1
+  116|       |
+  117|       |    const STANDARD_PREFIXES: &[&str] = &[
+  118|       |        "sensor_msgs/",
+  119|       |        "std_msgs/",
+  120|       |        "geometry_msgs/",
+  121|       |        "nav_msgs/",
+  122|       |        "tf2_msgs/",
+  123|       |        "trajectory_msgs/",
+  124|       |        "visualization_msgs/",
+  125|       |        "diagnostic_msgs/",
+  126|       |        "actionlib_msgs/",
+  127|       |        "sensor_msgs/msg/",
+  128|       |        "std_msgs/msg/",
+  129|       |        "geometry_msgs/msg/",
+  130|       |        "nav_msgs/msg/",
+  131|       |        "tf2_msgs/msg/",
+  132|       |        "trajectory_msgs/msg/",
+  133|       |        "visualization_msgs/msg/",
+  134|       |        "diagnostic_msgs/msg/",
+  135|       |        "actionlib_msgs/msg/",
+  136|       |    ];
+  137|       |
+  138|      6|    if group_by_type {
+  139|       |        // Group by message type, showing all topics that use it
+  140|      2|        let mut type_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+  141|       |
+  142|     12|        for channel in reader.channels().values() {
+                                     ^2                ^2
+  143|     12|            if standard_only {
+  144|      6|                let is_standard = STANDARD_PREFIXES.iter().any(|p| {
+  145|      6|                    channel.message_type.starts_with(p)
+  146|      0|                        || channel.message_type.starts_with(&p.replace('/', "/msg/"))
+  147|      6|                });
+  148|      6|                if !is_standard {
+  149|      0|                    continue;
+  150|      6|                }
+  151|      6|            }
+  152|     12|            type_map
+  153|     12|                .entry(channel.message_type.clone())
+  154|     12|                .or_default()
+  155|     12|                .push(channel.topic.clone());
+  156|       |        }
+  157|       |
+  158|      2|        let types: Vec<TypeInfo> = type_map
+  159|      2|            .into_iter()
+  160|      2|            .map(|(msg_type, topics)| TypeInfo {
+  161|      4|                message_type: msg_type,
+  162|      4|                topics,
+  163|      4|            })
+  164|      2|            .collect();
+  165|       |
+  166|      2|        output_json_or(json, &types, || {
+                                                      ^1
+  167|      1|            println!("=== Message Types in {} ===", input.display());
+  168|      1|            println!();
+  169|      3|            for info in &types {
+                              ^2
+  170|      2|                println!("{}", info.message_type);
+  171|      8|                for topic in &info.topics {
+                                  ^6
+  172|      6|                    println!("  @ {}", topic);
+  173|      6|                }
+  174|      2|                println!();
+  175|       |            }
+  176|      1|            Ok(())
+  177|      1|        })
+  178|       |    } else {
+  179|       |        // List by channel/topic
+  180|      4|        let mut items: Vec<SchemaItem> = reader
+  181|      4|            .channels()
+  182|      4|            .values()
+  183|     24|            .filter(|channel| {
+                           ^4
+  184|     24|                if !standard_only {
+  185|     18|                    return true;
+  186|      6|                }
+  187|      6|                STANDARD_PREFIXES.iter().any(|p| {
+  188|      6|                    channel.message_type.starts_with(p)
+  189|      0|                        || channel.message_type.starts_with(&p.replace('/', "/msg/"))
+  190|      6|                })
+  191|     24|            })
+  192|      4|            .map(|ch| SchemaItem {
+  193|     24|                topic: ch.topic.clone(),
+  194|     24|                message_type: ch.message_type.clone(),
+  195|     24|                encoding: ch
+  196|     24|                    .schema_encoding
+  197|     24|                    .clone()
+  198|     24|                    .unwrap_or_else(|| "unknown".to_string()),
+                                                     ^0        ^0
+  199|     24|            })
+  200|      4|            .collect();
+  201|       |
+  202|     36|        items.sort_by(|a, b| a.message_type.cmp(&b.message_type));
+                      ^4    ^4
+  203|       |
+  204|      4|        output_json_or(json, &items, || {
+                                                      ^3
+  205|      3|            println!("=== Message Types in {} ===", input.display());
+  206|      3|            println!();
+  207|     21|            for item in &items {
+                              ^18
+  208|     18|                println!("{} @ {}", item.message_type, item.topic);
+  209|     18|                println!("  Encoding: {}", item.encoding);
+  210|     18|                println!();
+  211|     18|            }
+  212|      3|            Ok(())
+  213|      3|        })
+  214|       |    }
+  215|      7|}
+  216|       |
+  217|      5|fn cmd_show(input: PathBuf, topic_or_type: String, full: bool, json: bool) -> Result<()> {
+  218|      5|    let reader = open_reader(&input)?;
+                      ^4                          ^1
+  219|       |
+  220|      4|    let mut found = false;
+  221|       |
+  222|     24|    for channel in reader.channels().values() {
+                                 ^4                ^4
+  223|     24|        if channel.topic.contains(&topic_or_type) || channel.message_type.contains(&topic_or_type) {
+                                                                   ^18
+  224|      6|            found = true;
+  225|       |
+  226|      6|            let schema_info = SchemaDetail {
+  227|      6|                topic: channel.topic.clone(),
+  228|      6|                message_type: channel.message_type.clone(),
+  229|      6|                encoding: channel.encoding.clone(),
+  230|      6|                schema_encoding: channel.schema_encoding.clone(),
+  231|      6|                schema: channel.schema.clone(),
+  232|      6|            };
+  233|       |
+  234|      6|            output_json_or(json, &schema_info, || {
+  235|      6|                println!(
+  236|      6|                    "=== {} @ {} ===",
+  237|       |                    schema_info.message_type, schema_info.topic
+  238|       |                );
+  239|      6|                println!("Encoding: {}", schema_info.encoding);
+  240|      6|                if let Some(ref enc) = schema_info.schema_encoding {
+  241|      6|                    println!("Schema encoding: {}", enc);
+  242|      6|                }
+                              ^0
+  243|      6|                println!();
+  244|       |
+  245|      6|                if let Some(ref schema) = schema_info.schema {
+  246|      6|                    if full {
+  247|      0|                        println!("{}", schema);
+  248|      0|                    } else {
+  249|    300|                        for (i, line) in schema.lines().take(50).enumerate() {
+                                                       ^6             ^6       ^6
+  250|    300|                            println!("{}", line);
+  251|    300|                            if i == 49 && schema.lines().count() > 50 {
+                                                        ^6
+  252|      6|                                println!(
+  253|      6|                                    "... ({} lines total, use --full for all)",
+  254|      6|                                    schema.lines().count()
+  255|       |                                );
+  256|      6|                                break;
+  257|    294|                            }
+  258|       |                        }
+  259|       |                    }
+  260|      0|                } else {
+  261|      0|                    println!("(no schema available)");
+  262|      0|                }
+  263|      6|                println!();
+  264|      6|                Ok(())
+  265|      6|            })?;
+                            ^0
+  266|     18|        }
+  267|       |    }
+  268|       |
+  269|      4|    if !found {
+  270|      3|        println!("No matching topic or type found: {}", topic_or_type);
+  271|      3|    }
+                  ^1
+  272|       |
+  273|      4|    Ok(())
+  274|      5|}
+  275|       |
+  276|      3|fn cmd_validate(input: PathBuf, json: bool) -> Result<()> {
+  277|      3|    let reader = open_reader(&input)?;
+                      ^2                          ^1
+  278|       |
+  279|      2|    println!("=== Validating Schemas ===");
+  280|      2|    println!();
+  281|       |
+  282|      2|    let mut results: Vec<ValidationResult> = Vec::new();
+  283|      2|    let mut ok_count = 0;
+  284|      2|    let mut err_count = 0;
+  285|       |
+  286|     12|    for channel in reader.channels().values() {
+                                 ^2                ^2
+  287|     12|        let result = if let Some(schema) = &channel.schema {
+  288|       |            // Try to parse the schema
+  289|     12|            match robocodec::schema::parser::parse_schema_with_encoding_str(
+  290|     12|                &channel.message_type,
+  291|     12|                schema,
+  292|     12|                channel.schema_encoding.as_deref().unwrap_or("ros2msg"),
+  293|     12|            ) {
+  294|       |                Ok(_) => {
+  295|     12|                    ok_count += 1;
+  296|     12|                    ValidationResult {
+  297|     12|                        topic: channel.topic.clone(),
+  298|     12|                        message_type: channel.message_type.clone(),
+  299|     12|                        status: "ok".to_string(),
+  300|     12|                        message: String::new(),
+  301|     12|                    }
+  302|       |                }
+  303|      0|                Err(e) => {
+  304|      0|                    err_count += 1;
+  305|      0|                    ValidationResult {
+  306|      0|                        topic: channel.topic.clone(),
+  307|      0|                        message_type: channel.message_type.clone(),
+  308|      0|                        status: "error".to_string(),
+  309|      0|                        message: e.to_string(),
+  310|      0|                    }
+  311|       |                }
+  312|       |            }
+  313|       |        } else {
+  314|      0|            ValidationResult {
+  315|      0|                topic: channel.topic.clone(),
+  316|      0|                message_type: channel.message_type.clone(),
+  317|      0|                status: "warning".to_string(),
+  318|      0|                message: "no schema available".to_string(),
+  319|      0|            }
+  320|       |        };
+  321|     12|        results.push(result);
+  322|       |    }
+  323|       |
+  324|      2|    output_json_or(json, &results, || {
+                                                    ^1
+  325|      7|        for result in &results {
+                          ^6
+  326|      6|            match result.status.as_str() {
+  327|      6|                "ok" => println!("  ✓ {} @ {}", result.message_type, result.topic),
+  328|      0|                "warning" => println!(
+  329|      0|                    "  ⚠ {} @ {}: {}",
+  330|       |                    result.message_type, result.topic, result.message
+  331|       |                ),
+  332|      0|                "error" => println!(
+  333|      0|                    "  ✗ {} @ {}: {}",
+  334|       |                    result.message_type, result.topic, result.message
+  335|       |                ),
+  336|      0|                _ => {}
+  337|       |            }
+  338|       |        }
+  339|       |
+  340|      1|        println!();
+  341|      1|        println!("Results: {} valid, {} errors", ok_count, err_count);
+  342|       |
+  343|      1|        if err_count > 0 {
+  344|      0|            std::process::exit(1);
+  345|      1|        }
+  346|      1|        Ok(())
+  347|      1|    })
+  348|      3|}
+  349|       |
+  350|      4|fn cmd_diff(file1: PathBuf, file2: PathBuf, msg_type: Option<String>, json: bool) -> Result<()> {
+  351|      4|    if json {
+  352|      1|        return Err(anyhow::anyhow!(
+  353|      1|            "JSON output is not yet implemented for the diff command. \
+  354|      1|             Use the default text output instead."
+  355|      1|        ));
+  356|      3|    }
+  357|       |
+  358|      3|    let reader1 = open_reader(&file1)?;
+                      ^2                           ^1
+  359|      2|    let reader2 = open_reader(&file2)?;
+                                                   ^0
+  360|       |
+  361|      2|    println!("=== Schema Diff ===");
+  362|      2|    println!("  File 1: {}", file1.display());
+  363|      2|    println!("  File 2: {}", file2.display());
+  364|      2|    println!();
+  365|       |
+  366|       |    // Collect schemas from both files
+  367|      2|    let schemas1: BTreeMap<String, String> = reader1
+  368|      2|        .channels()
+  369|      2|        .values()
+  370|     12|        .filter_map(|ch| {
+                       ^2
+  371|     12|            if let Some(ref schema) = ch.schema {
+  372|     12|                if let Some(ref mt) = msg_type {
+                                          ^6
+  373|      6|                    if ch.message_type.contains(mt) {
+  374|      0|                        Some((ch.message_type.clone(), schema.clone()))
+  375|       |                    } else {
+  376|      6|                        None
+  377|       |                    }
+  378|       |                } else {
+  379|      6|                    Some((ch.message_type.clone(), schema.clone()))
+  380|       |                }
+  381|       |            } else {
+  382|      0|                None
+  383|       |            }
+  384|     12|        })
+  385|      2|        .collect();
+  386|       |
+  387|      2|    let schemas2: BTreeMap<String, String> = reader2
+  388|      2|        .channels()
+  389|      2|        .values()
+  390|     12|        .filter_map(|ch| {
+                       ^2
+  391|     12|            if let Some(ref schema) = ch.schema {
+  392|     12|                if let Some(ref mt) = msg_type {
+                                          ^6
+  393|      6|                    if ch.message_type.contains(mt) {
+  394|      0|                        Some((ch.message_type.clone(), schema.clone()))
+  395|       |                    } else {
+  396|      6|                        None
+  397|       |                    }
+  398|       |                } else {
+  399|      6|                    Some((ch.message_type.clone(), schema.clone()))
+  400|       |                }
+  401|       |            } else {
+  402|      0|                None
+  403|       |            }
+  404|     12|        })
+  405|      2|        .collect();
+  406|       |
+  407|      2|    let all_types: BTreeSet<String> = schemas1.keys().chain(schemas2.keys()).cloned().collect();
+  408|       |
+  409|      2|    let mut differences: Vec<SchemaDiff> = Vec::new();
+  410|       |
+  411|      4|    for type_name in all_types {
+                      ^2
+  412|      2|        let schema1 = schemas1.get(&type_name);
+  413|      2|        let schema2 = schemas2.get(&type_name);
+  414|       |
+  415|      2|        match (schema1, schema2) {
+  416|      0|            (None, Some(_)) => {
+  417|      0|                println!("+ {} (only in file 2)", type_name);
+  418|      0|                differences.push(SchemaDiff {
+  419|      0|                    message_type: type_name.clone(),
+  420|      0|                    status: "added".to_string(),
+  421|      0|                    diff: String::new(),
+  422|      0|                });
+  423|      0|            }
+  424|      0|            (Some(_), None) => {
+  425|      0|                println!("- {} (only in file 1)", type_name);
+  426|      0|                differences.push(SchemaDiff {
+  427|      0|                    message_type: type_name.clone(),
+  428|      0|                    status: "removed".to_string(),
+  429|      0|                    diff: String::new(),
+  430|      0|                });
+  431|      0|            }
+  432|      2|            (Some(s1), Some(s2)) if s1 != s2 => {
+                                ^0        ^0             ^0
+  433|      0|                println!("! {} (modified)", type_name);
+  434|      0|                differences.push(SchemaDiff {
+  435|      0|                    message_type: type_name.clone(),
+  436|      0|                    status: "modified".to_string(),
+  437|      0|                    diff: compute_diff(s1, s2),
+  438|      0|                });
+  439|      0|            }
+  440|      2|            _ => {
+  441|      2|                println!("  {} (same)", type_name);
+  442|      2|            }
+  443|       |        }
+  444|       |    }
+  445|       |
+  446|      2|    if differences.is_empty() {
+  447|      2|        println!();
+  448|      2|        println!("No differences found.");
+  449|      2|    }
+                  ^0
+  450|       |
+  451|      2|    Ok(())
+  452|      4|}
+  453|       |
+  454|      4|fn compute_diff(s1: &str, s2: &str) -> String {
+  455|       |    // Simple diff - count lines that differ
+  456|      4|    let lines1: Vec<&str> = s1.lines().collect();
+  457|      4|    let lines2: Vec<&str> = s2.lines().collect();
+  458|       |
+  459|      4|    let mut diff = String::new();
+  460|      4|    let max_len = lines1.len().max(lines2.len());
+  461|       |
+  462|      9|    for i in 0..max_len {
+                              ^4
+  463|      9|        let line1 = lines1.get(i).copied().unwrap_or("");
+  464|      9|        let line2 = lines2.get(i).copied().unwrap_or("");
+  465|       |
+  466|      9|        if line1 != line2 {
+  467|      2|            if !line1.is_empty() {
+  468|      1|                diff.push_str(&format!("- {}\n", line1));
+  469|      1|            }
+  470|      2|            if !line2.is_empty() {
+  471|      2|                diff.push_str(&format!("+ {}\n", line2));
+  472|      2|            }
+                          ^0
+  473|      7|        }
+  474|       |    }
+  475|       |
+  476|      4|    diff
+  477|      4|}
+  478|       |
+  479|     14|fn output_json_or<T>(
+  480|     14|    json: bool,
+  481|     14|    value: &T,
+  482|     14|    human_fn: impl FnOnce() -> std::io::Result<()>,
+  483|     14|) -> Result<()>
+  484|     14|where
+  485|     14|    T: Serialize,
+  486|       |{
+  487|     14|    if json {
+  488|      3|        println!("{}", serde_json::to_string_pretty(value)?);
+                                                                        ^0
+  489|       |    } else {
+  490|     11|        human_fn()?;
+                                ^0
+  491|       |    }
+  492|     14|    Ok(())
+  493|     14|}
+  494|       |
+  495|       |// Output types
+  496|       |
+  497|       |#[derive(Serialize)]
+  498|       |struct TypeInfo {
+  499|       |    message_type: String,
+  500|       |    topics: Vec<String>,
+  501|       |}
+  502|       |
+  503|       |#[derive(Serialize)]
+  504|       |struct SchemaItem {
+  505|       |    topic: String,
+  506|       |    message_type: String,
+  507|       |    encoding: String,
+  508|       |}
+  509|       |
+  510|       |#[derive(Serialize)]
+  511|       |struct SchemaDetail {
+  512|       |    topic: String,
+  513|       |    message_type: String,
+  514|       |    encoding: String,
+  515|       |    schema_encoding: Option<String>,
+  516|       |    schema: Option<String>,
+  517|       |}
+  518|       |
+  519|       |#[derive(Serialize)]
+  520|       |struct ValidationResult {
+  521|       |    topic: String,
+  522|       |    message_type: String,
+  523|       |    status: String,
+  524|       |    message: String,
+  525|       |}
+  526|       |
+  527|       |#[derive(Serialize)]
+  528|       |struct SchemaDiff {
+  529|       |    message_type: String,
+  530|       |    status: String,
+  531|       |    diff: String,
+  532|       |}
+  533|       |
+  534|       |#[cfg(test)]
+  535|       |mod tests {
+  536|       |    use super::*;
+  537|       |
+  538|       |    /// Helper to get fixture path
+  539|     14|    fn fixture_path(name: &str) -> PathBuf {
+  540|     14|        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+                                                                                                ^0  ^0
+  541|     14|        PathBuf::from(manifest_dir)
+  542|     14|            .join("tests")
+  543|     14|            .join("fixtures")
+  544|     14|            .join(name)
+  545|     14|    }
+  546|       |
+  547|       |    // ========================================================================
+  548|       |    // SchemaCmd::run() Tests
+  549|       |    // ========================================================================
+  550|       |
+  551|       |    #[test]
+  552|      1|    fn test_schema_cmd_list_nonexistent_file() {
+  553|      1|        let cmd = SchemaCmd::List {
+  554|      1|            input: PathBuf::from("/nonexistent/file.mcap"),
+  555|      1|            group_by_type: false,
+  556|      1|            standard_only: false,
+  557|      1|            json: false,
+  558|      1|        };
+  559|      1|        let result = cmd.run();
+  560|      1|        assert!(result.is_err(), "should fail for nonexistent file");
+                                               ^0
+  561|      1|    }
+  562|       |
+  563|       |    #[test]
+  564|      1|    fn test_schema_cmd_show_nonexistent_file() {
+  565|      1|        let cmd = SchemaCmd::Show {
+  566|      1|            input: PathBuf::from("/nonexistent/file.mcap"),
+  567|      1|            topic_or_type: "Point".to_string(),
+  568|      1|            full: false,
+  569|      1|            json: false,
+  570|      1|        };
+  571|      1|        let result = cmd.run();
+  572|      1|        assert!(result.is_err(), "should fail for nonexistent file");
+                                               ^0
+  573|      1|    }
+  574|       |
+  575|       |    #[test]
+  576|      1|    fn test_schema_cmd_validate_nonexistent_file() {
+  577|      1|        let cmd = SchemaCmd::Validate {
+  578|      1|            input: PathBuf::from("/nonexistent/file.mcap"),
+  579|      1|            json: false,
+  580|      1|        };
+  581|      1|        let result = cmd.run();
+  582|      1|        assert!(result.is_err(), "should fail for nonexistent file");
+                                               ^0
+  583|      1|    }
+  584|       |
+  585|       |    #[test]
+  586|      1|    fn test_schema_cmd_diff_nonexistent_file() {
+  587|      1|        let cmd = SchemaCmd::Diff {
+  588|      1|            file1: PathBuf::from("/nonexistent/file1.mcap"),
+  589|      1|            file2: PathBuf::from("/nonexistent/file2.mcap"),
+  590|      1|            msg_type: None,
+  591|      1|            json: false,
+  592|      1|        };
+  593|      1|        let result = cmd.run();
+  594|      1|        assert!(result.is_err(), "should fail for nonexistent files");
+                                               ^0
+  595|      1|    }
+  596|       |
+  597|       |    // ========================================================================
+  598|       |    // List Command Tests
+  599|       |    // ========================================================================
+  600|       |
+  601|       |    #[test]
+  602|      1|    fn test_cmd_list_with_valid_file() {
+  603|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  604|      1|        if !path.exists() {
+  605|      0|            return;
+  606|      1|        }
+  607|       |
+  608|      1|        let result = cmd_list(path.clone(), false, false, false);
+  609|      1|        assert!(result.is_ok(), "list command should succeed");
+                                              ^0
+  610|      1|    }
+  611|       |
+  612|       |    #[test]
+  613|      1|    fn test_cmd_list_grouped_by_type() {
+  614|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  615|      1|        if !path.exists() {
+  616|      0|            return;
+  617|      1|        }
+  618|       |
+  619|      1|        let result = cmd_list(path.clone(), true, false, false);
+  620|      1|        assert!(result.is_ok(), "grouped list should succeed");
+                                              ^0
+  621|      1|    }
+  622|       |
+  623|       |    #[test]
+  624|      1|    fn test_cmd_list_standard_only() {
+  625|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  626|      1|        if !path.exists() {
+  627|      0|            return;
+  628|      1|        }
+  629|       |
+  630|      1|        let result = cmd_list(path.clone(), false, true, false);
+  631|      1|        assert!(result.is_ok(), "standard_only filter should succeed");
+                                              ^0
+  632|      1|    }
+  633|       |
+  634|       |    #[test]
+  635|      1|    fn test_cmd_list_json_output() {
+  636|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  637|      1|        if !path.exists() {
+  638|      0|            return;
+  639|      1|        }
+  640|       |
+  641|      1|        let result = cmd_list(path.clone(), false, false, true);
+  642|      1|        assert!(result.is_ok(), "json output should succeed");
+                                              ^0
+  643|      1|    }
+  644|       |
+  645|       |    #[test]
+  646|      1|    fn test_cmd_list_all_options() {
+  647|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  648|      1|        if !path.exists() {
+  649|      0|            return;
+  650|      1|        }
+  651|       |
+  652|      1|        let result = cmd_list(path.clone(), true, true, true);
+  653|      1|        assert!(result.is_ok(), "all options combined should succeed");
+                                              ^0
+  654|      1|    }
+  655|       |
+  656|       |    // ========================================================================
+  657|       |    // Show Command Tests
+  658|       |    // ========================================================================
+  659|       |
+  660|       |    #[test]
+  661|      1|    fn test_cmd_show_with_valid_file() {
+  662|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  663|      1|        if !path.exists() {
+  664|      0|            return;
+  665|      1|        }
+  666|       |
+  667|      1|        let result = cmd_show(path.clone(), "Point".to_string(), false, false);
+  668|      1|        assert!(result.is_ok(), "show command should succeed");
+                                              ^0
+  669|      1|    }
+  670|       |
+  671|       |    #[test]
+  672|      1|    fn test_cmd_show_full_schema() {
+  673|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  674|      1|        if !path.exists() {
+  675|      0|            return;
+  676|      1|        }
+  677|       |
+  678|      1|        let result = cmd_show(path.clone(), "Point".to_string(), true, false);
+  679|      1|        assert!(result.is_ok(), "show with full flag should succeed");
+                                              ^0
+  680|      1|    }
+  681|       |
+  682|       |    #[test]
+  683|      1|    fn test_cmd_show_json_output() {
+  684|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  685|      1|        if !path.exists() {
+  686|      0|            return;
+  687|      1|        }
+  688|       |
+  689|      1|        let result = cmd_show(path.clone(), "Point".to_string(), false, true);
+  690|      1|        assert!(result.is_ok(), "show with json should succeed");
+                                              ^0
+  691|      1|    }
+  692|       |
+  693|       |    #[test]
+  694|      1|    fn test_cmd_show_empty_pattern() {
+  695|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  696|      1|        if !path.exists() {
+  697|      0|            return;
+  698|      1|        }
+  699|       |
+  700|       |        // Empty pattern - may or may not match anything
+  701|      1|        let result = cmd_show(path.clone(), "".to_string(), false, false);
+  702|      1|        assert!(result.is_ok(), "empty pattern should not crash");
+                                              ^0
+  703|      1|    }
+  704|       |
+  705|       |    // ========================================================================
+  706|       |    // Validate Command Tests
+  707|       |    // ========================================================================
+  708|       |
+  709|       |    #[test]
+  710|      1|    fn test_cmd_validate_with_valid_file() {
+  711|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  712|      1|        if !path.exists() {
+  713|      0|            return;
+  714|      1|        }
+  715|       |
+  716|       |        // Note: validation may fail for schemas, but the command should run
+  717|      1|        let result = cmd_validate(path.clone(), false);
+  718|       |        // The result could be Ok or Err depending on schema validity
+  719|       |        // We just check it doesn't panic
+  720|      1|        let _ = result;
+  721|      1|    }
+  722|       |
+  723|       |    #[test]
+  724|      1|    fn test_cmd_validate_json_output() {
+  725|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  726|      1|        if !path.exists() {
+  727|      0|            return;
+  728|      1|        }
+  729|       |
+  730|      1|        let result = cmd_validate(path.clone(), true);
+  731|      1|        let _ = result; // Just check it doesn't panic
+  732|      1|    }
+  733|       |
+  734|       |    // ========================================================================
+  735|       |    // Diff Command Tests
+  736|       |    // ========================================================================
+  737|       |
+  738|       |    #[test]
+  739|      1|    fn test_cmd_diff_json_not_implemented() {
+  740|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  741|      1|        if !path.exists() {
+  742|      0|            return;
+  743|      1|        }
+  744|       |
+  745|      1|        let result = cmd_diff(path.clone(), path.clone(), None, true);
+  746|      1|        assert!(
+  747|      1|            result.is_err(),
+  748|      0|            "json output should fail with not implemented"
+  749|       |        );
+  750|      1|        assert!(result
+  751|      1|            .unwrap_err()
+  752|      1|            .to_string()
+  753|      1|            .contains("not yet implemented"));
+  754|      1|    }
+  755|       |
+  756|       |    #[test]
+  757|      1|    fn test_cmd_diff_same_file() {
+  758|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  759|      1|        if !path.exists() {
+  760|      0|            return;
+  761|      1|        }
+  762|       |
+  763|       |        // Diff a file with itself - should have no differences
+  764|      1|        let result = cmd_diff(path.clone(), path.clone(), None, false);
+  765|      1|        assert!(result.is_ok(), "diff same file should succeed");
+                                              ^0
+  766|      1|    }
+  767|       |
+  768|       |    #[test]
+  769|      1|    fn test_cmd_diff_with_msg_type_filter() {
+  770|      1|        let path = fixture_path("robocodec_test_0.mcap");
+  771|      1|        if !path.exists() {
+  772|      0|            return;
+  773|      1|        }
+  774|       |
+  775|      1|        let result = cmd_diff(path.clone(), path.clone(), Some("Point".to_string()), false);
+  776|      1|        assert!(result.is_ok(), "diff with msg_type filter should succeed");
+                                              ^0
+  777|      1|    }
+  778|       |
+  779|       |    // ========================================================================
+  780|       |    // SchemaCmd Enum Tests
+  781|       |    // ========================================================================
+  782|       |
+  783|       |    #[test]
+  784|      1|    fn test_schema_cmd_clone() {
+  785|      1|        let cmd = SchemaCmd::List {
+  786|      1|            input: PathBuf::from("test.mcap"),
+  787|      1|            group_by_type: true,
+  788|      1|            standard_only: false,
+  789|      1|            json: false,
+  790|      1|        };
+  791|      1|        let cloned = cmd.clone();
+  792|      1|        match (cmd, cloned) {
+  793|      1|            (SchemaCmd::List { input: i1, .. }, SchemaCmd::List { input: i2, .. }) => {
+  794|      1|                assert_eq!(i1, i2);
+  795|       |            }
+  796|      0|            _ => panic!("cloned commands should match"),
+  797|       |        }
+  798|      1|    }
+  799|       |
+  800|       |    #[test]
+  801|      1|    fn test_schema_cmd_debug() {
+  802|      1|        let cmd = SchemaCmd::Show {
+  803|      1|            input: PathBuf::from("test.mcap"),
+  804|      1|            topic_or_type: "Point".to_string(),
+  805|      1|            full: true,
+  806|      1|            json: false,
+  807|      1|        };
+  808|      1|        let debug_str = format!("{:?}", cmd);
+  809|      1|        assert!(debug_str.contains("Show"));
+  810|      1|    }
+  811|       |
+  812|       |    // ========================================================================
+  813|       |    // Standard Prefix Tests
+  814|       |    // ========================================================================
+  815|       |
+  816|       |    #[test]
+  817|      1|    fn test_standard_prefixes_match() {
+  818|       |        // Test that standard prefix matching works correctly
+  819|       |        const STANDARD_PREFIXES: &[&str] = &[
+  820|       |            "sensor_msgs/",
+  821|       |            "std_msgs/",
+  822|       |            "geometry_msgs/",
+  823|       |            "nav_msgs/",
+  824|       |            "tf2_msgs/",
+  825|       |            "trajectory_msgs/",
+  826|       |            "visualization_msgs/",
+  827|       |            "diagnostic_msgs/",
+  828|       |            "actionlib_msgs/",
+  829|       |        ];
+  830|       |
+  831|      1|        let test_type = "sensor_msgs/msg/Point";
+  832|       |
+  833|      1|        let is_standard = STANDARD_PREFIXES.iter().any(|p: &&str| {
+  834|      1|            test_type.starts_with(p) || test_type.starts_with(&p.replace('/', "/msg/"))
+                                                      ^0        ^0          ^0^0
+  835|      1|        });
+  836|       |
+  837|      1|        assert!(
+  838|      1|            is_standard,
+  839|      0|            "sensor_msgs types should be recognized as standard"
+  840|       |        );
+  841|      1|    }
+  842|       |
+  843|       |    #[test]
+  844|      1|    fn test_standard_prefixes_non_standard() {
+  845|       |        // Test that custom types are not matched
+  846|       |        const STANDARD_PREFIXES: &[&str] = &["sensor_msgs/", "std_msgs/", "geometry_msgs/"];
+  847|       |
+  848|      1|        let test_type = "custom_msgs/CustomType";
+  849|       |
+  850|      3|        let is_standard = STANDARD_PREFIXES.iter().any(|p: &&str| {
+                          ^1            ^1                       ^1
+  851|      3|            test_type.starts_with(p) || test_type.starts_with(&p.replace('/', "/msg/"))
+  852|      3|        });
+  853|       |
+  854|      1|        assert!(
+  855|      1|            !is_standard,
+  856|      0|            "custom types should not be recognized as standard"
+  857|       |        );
+  858|      1|    }
+  859|       |
+  860|       |    // ========================================================================
+  861|       |    // Diff Computation Tests
+  862|       |    // ========================================================================
+  863|       |
+  864|       |    #[test]
+  865|      1|    fn test_compute_diff_identical() {
+  866|      1|        let s1 = "line1\nline2\nline3";
+  867|      1|        let s2 = "line1\nline2\nline3";
+  868|      1|        let diff = compute_diff(s1, s2);
+  869|      1|        assert!(diff.is_empty(), "identical schemas should have no diff");
+                                               ^0
+  870|      1|    }
+  871|       |
+  872|       |    #[test]
+  873|      1|    fn test_compute_diff_different() {
+  874|      1|        let s1 = "line1\nline2\nline3";
+  875|      1|        let s2 = "line1\nlineX\nline3";
+  876|      1|        let diff = compute_diff(s1, s2);
+  877|      1|        assert!(!diff.is_empty(), "different schemas should have diff");
+                                                ^0
+  878|      1|        assert!(diff.contains("line2"), "diff should show removed line");
+                                                      ^0
+  879|      1|        assert!(diff.contains("lineX"), "diff should show added line");
+                                                      ^0
+  880|      1|    }
+  881|       |
+  882|       |    #[test]
+  883|      1|    fn test_compute_diff_different_lengths() {
+  884|      1|        let s1 = "line1\nline2";
+  885|      1|        let s2 = "line1\nline2\nline3";
+  886|      1|        let diff = compute_diff(s1, s2);
+  887|      1|        assert!(!diff.is_empty(), "different lengths should produce diff");
+                                                ^0
+  888|      1|    }
+  889|       |
+  890|       |    #[test]
+  891|      1|    fn test_compute_diff_empty() {
+  892|      1|        let diff = compute_diff("", "");
+  893|      1|        assert!(diff.is_empty(), "empty schemas should have no diff");
+                                               ^0
+  894|      1|    }
+  895|       |
+  896|       |    // ========================================================================
+  897|       |    // Output Tests
+  898|       |    // ========================================================================
+  899|       |
+  900|       |    #[test]
+  901|      1|    fn test_type_info_serialization() {
+  902|      1|        let info = TypeInfo {
+  903|      1|            message_type: "test/Msg".to_string(),
+  904|      1|            topics: vec!["/topic1".to_string(), "/topic2".to_string()],
+  905|      1|        };
+  906|       |
+  907|      1|        let json = serde_json::to_string(&info);
+  908|      1|        assert!(json.is_ok(), "TypeInfo should be serializable");
+                                            ^0
+  909|      1|        assert!(json.unwrap().contains("test/Msg"));
+  910|      1|    }
+  911|       |
+  912|       |    #[test]
+  913|      1|    fn test_schema_item_serialization() {
+  914|      1|        let item = SchemaItem {
+  915|      1|            topic: "/test".to_string(),
+  916|      1|            message_type: "test/Msg".to_string(),
+  917|      1|            encoding: "cdr".to_string(),
+  918|      1|        };
+  919|       |
+  920|      1|        let json = serde_json::to_string(&item);
+  921|      1|        assert!(json.is_ok(), "SchemaItem should be serializable");
+                                            ^0
+  922|      1|    }
+  923|       |
+  924|       |    #[test]
+  925|      1|    fn test_schema_detail_serialization() {
+  926|      1|        let detail = SchemaDetail {
+  927|      1|            topic: "/test".to_string(),
+  928|      1|            message_type: "test/Msg".to_string(),
+  929|      1|            encoding: "cdr".to_string(),
+  930|      1|            schema_encoding: Some("ros2msg".to_string()),
+  931|      1|            schema: Some("string data".to_string()),
+  932|      1|        };
+  933|       |
+  934|      1|        let json = serde_json::to_string(&detail);
+  935|      1|        assert!(json.is_ok(), "SchemaDetail should be serializable");
+                                            ^0
+  936|      1|    }
+  937|       |
+  938|       |    #[test]
+  939|      1|    fn test_validation_result_serialization() {
+  940|      1|        let result = ValidationResult {
+  941|      1|            topic: "/test".to_string(),
+  942|      1|            message_type: "test/Msg".to_string(),
+  943|      1|            status: "ok".to_string(),
+  944|      1|            message: String::new(),
+  945|      1|        };
+  946|       |
+  947|      1|        let json = serde_json::to_string(&result);
+  948|      1|        assert!(json.is_ok(), "ValidationResult should be serializable");
+                                            ^0
+  949|      1|    }
+  950|       |
+  951|       |    #[test]
+  952|      1|    fn test_schema_diff_serialization() {
+  953|      1|        let diff = SchemaDiff {
+  954|      1|            message_type: "test/Msg".to_string(),
+  955|      1|            status: "modified".to_string(),
+  956|      1|            diff: "- old line\n+ new line\n".to_string(),
+  957|      1|        };
+  958|       |
+  959|      1|        let json = serde_json::to_string(&diff);
+  960|      1|        assert!(json.is_ok(), "SchemaDiff should be serializable");
+                                            ^0
+  961|      1|    }
+  962|       |}
+

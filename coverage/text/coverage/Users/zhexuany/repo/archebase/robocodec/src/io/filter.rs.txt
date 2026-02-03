@@ -1,0 +1,226 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/io/filter.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Topic and connection filtering for parallel readers.
+    6|       |//!
+    7|       |//! This module provides filtering capabilities for parallel readers,
+    8|       |//! allowing efficient selection of specific topics/channels during
+    9|       |//! concurrent chunk processing.
+   10|       |
+   11|       |use std::collections::{HashMap, HashSet};
+   12|       |use std::fmt;
+   13|       |use std::sync::Arc;
+   14|       |
+   15|       |use crate::io::metadata::ChannelInfo;
+   16|       |
+   17|       |/// Filter for selecting topics/connections during parallel reading.
+   18|       |#[derive(Clone, Default)]
+   19|       |pub enum TopicFilter {
+   20|       |    /// Read all topics (no filtering)
+   21|       |    #[default]
+   22|       |    All,
+   23|       |    /// Read only specific topics
+   24|       |    Include(Vec<String>),
+   25|       |    /// Exclude specific topics
+   26|       |    Exclude(Vec<String>),
+   27|       |    /// Include topics matching regex pattern
+   28|       |    RegexInclude(Arc<regex::Regex>),
+   29|       |    /// Exclude topics matching regex pattern
+   30|       |    RegexExclude(Arc<regex::Regex>),
+   31|       |    /// Custom filter function
+   32|       |    Custom(Arc<dyn Fn(&str) -> bool + Send + Sync>),
+   33|       |}
+   34|       |
+   35|       |impl fmt::Debug for TopicFilter {
+   36|      0|    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+   37|      0|        match self {
+   38|      0|            Self::All => f.debug_tuple("All").finish(),
+   39|      0|            Self::Include(v) => f.debug_tuple("Include").field(v).finish(),
+   40|      0|            Self::Exclude(v) => f.debug_tuple("Exclude").field(v).finish(),
+   41|      0|            Self::RegexInclude(_) => f.debug_tuple("RegexInclude").field(&"<regex>").finish(),
+   42|      0|            Self::RegexExclude(_) => f.debug_tuple("RegexExclude").field(&"<regex>").finish(),
+   43|      0|            Self::Custom(_) => f.debug_tuple("Custom").field(&"<fn>").finish(),
+   44|       |        }
+   45|      0|    }
+   46|       |}
+   47|       |
+   48|       |impl TopicFilter {
+   49|       |    /// Check if a topic should be included.
+   50|     13|    pub fn should_include(&self, topic: &str) -> bool {
+   51|     13|        match self {
+   52|      2|            TopicFilter::All => true,
+   53|      6|            TopicFilter::Include(topics) => topics.contains(&topic.to_string()),
+   54|      2|            TopicFilter::Exclude(topics) => !topics.contains(&topic.to_string()),
+   55|      3|            TopicFilter::RegexInclude(re) => re.is_match(topic),
+   56|      0|            TopicFilter::RegexExclude(re) => !re.is_match(topic),
+   57|      0|            TopicFilter::Custom(f) => f(topic),
+   58|       |        }
+   59|     13|    }
+   60|       |
+   61|       |    /// Create an include filter from topic names.
+   62|      3|    pub fn include(topics: Vec<String>) -> Self {
+   63|      3|        Self::Include(topics)
+   64|      3|    }
+   65|       |
+   66|       |    /// Create an exclude filter from topic names.
+   67|      1|    pub fn exclude(topics: Vec<String>) -> Self {
+   68|      1|        Self::Exclude(topics)
+   69|      1|    }
+   70|       |
+   71|       |    /// Create a regex include filter.
+   72|      1|    pub fn regex_include(pattern: &str) -> Result<Self, regex::Error> {
+   73|      1|        regex::Regex::new(pattern).map(|re| Self::RegexInclude(Arc::new(re)))
+   74|      1|    }
+   75|       |
+   76|       |    /// Create a regex exclude filter.
+   77|      0|    pub fn regex_exclude(pattern: &str) -> Result<Self, regex::Error> {
+   78|      0|        regex::Regex::new(pattern).map(|re| Self::RegexExclude(Arc::new(re)))
+   79|      0|    }
+   80|       |
+   81|       |    /// Create a custom filter from a function.
+   82|      0|    pub fn custom<F>(f: F) -> Self
+   83|      0|    where
+   84|      0|        F: Fn(&str) -> bool + Send + Sync + 'static,
+   85|       |    {
+   86|      0|        Self::Custom(Arc::new(f))
+   87|      0|    }
+   88|       |}
+   89|       |
+   90|       |/// Channel filter mapping topic names to channel IDs.
+   91|       |#[derive(Debug, Clone)]
+   92|       |pub struct ChannelFilter {
+   93|       |    /// Allowed channel IDs
+   94|       |    pub allowed_channels: HashSet<u16>,
+   95|       |    /// Topic to channel ID mapping
+   96|       |    pub topic_to_channels: HashMap<String, Vec<u16>>,
+   97|       |}
+   98|       |
+   99|       |impl ChannelFilter {
+  100|       |    /// Create a channel filter from topic filter and channel info.
+  101|      1|    pub fn from_topic_filter(filter: &TopicFilter, channels: &HashMap<u16, ChannelInfo>) -> Self {
+  102|      1|        let mut allowed_channels = HashSet::new();
+  103|      1|        let mut topic_to_channels: HashMap<String, Vec<u16>> = HashMap::new();
+  104|       |
+  105|      4|        for (&id, channel) in channels {
+                            ^3  ^3
+  106|      3|            if filter.should_include(&channel.topic) {
+  107|      1|                allowed_channels.insert(id);
+  108|      1|                topic_to_channels
+  109|      1|                    .entry(channel.topic.clone())
+  110|      1|                    .or_default()
+  111|      1|                    .push(id);
+  112|      2|            }
+  113|       |        }
+  114|       |
+  115|      1|        Self {
+  116|      1|            allowed_channels,
+  117|      1|            topic_to_channels,
+  118|      1|        }
+  119|      1|    }
+  120|       |
+  121|       |    /// Create a filter that includes all channels.
+  122|      1|    pub fn all(channels: &HashMap<u16, ChannelInfo>) -> Self {
+  123|      1|        let mut allowed_channels = HashSet::new();
+  124|      1|        let mut topic_to_channels: HashMap<String, Vec<u16>> = HashMap::new();
+  125|       |
+  126|      3|        for (&id, channel) in channels {
+                            ^2  ^2
+  127|      2|            allowed_channels.insert(id);
+  128|      2|            topic_to_channels
+  129|      2|                .entry(channel.topic.clone())
+  130|      2|                .or_default()
+  131|      2|                .push(id);
+  132|      2|        }
+  133|       |
+  134|      1|        Self {
+  135|      1|            allowed_channels,
+  136|      1|            topic_to_channels,
+  137|      1|        }
+  138|      1|    }
+  139|       |
+  140|       |    /// Check if a channel ID is allowed.
+  141|      5|    pub fn allows_channel(&self, channel_id: u16) -> bool {
+  142|      5|        self.allowed_channels.contains(&channel_id)
+  143|      5|    }
+  144|       |
+  145|       |    /// Get the number of allowed channels.
+  146|      2|    pub fn channel_count(&self) -> usize {
+  147|      2|        self.allowed_channels.len()
+  148|      2|    }
+  149|       |
+  150|       |    /// Get all channel IDs for a topic.
+  151|      0|    pub fn channels_for_topic(&self, topic: &str) -> &[u16] {
+  152|      0|        self.topic_to_channels
+  153|      0|            .get(topic)
+  154|      0|            .map(|v| v.as_slice())
+  155|      0|            .unwrap_or(&[])
+  156|      0|    }
+  157|       |}
+  158|       |
+  159|       |#[cfg(test)]
+  160|       |mod tests {
+  161|       |    use super::*;
+  162|       |
+  163|       |    #[test]
+  164|      1|    fn test_topic_filter_all() {
+  165|      1|        let filter = TopicFilter::All;
+  166|      1|        assert!(filter.should_include("/any_topic"));
+  167|      1|        assert!(filter.should_include("/another_topic"));
+  168|      1|    }
+  169|       |
+  170|       |    #[test]
+  171|      1|    fn test_topic_filter_include() {
+  172|      1|        let filter = TopicFilter::include(vec!["/camera/image_raw".into(), "/lidar/points".into()]);
+  173|      1|        assert!(filter.should_include("/camera/image_raw"));
+  174|      1|        assert!(filter.should_include("/lidar/points"));
+  175|      1|        assert!(!filter.should_include("/imu/data"));
+  176|      1|    }
+  177|       |
+  178|       |    #[test]
+  179|      1|    fn test_topic_filter_exclude() {
+  180|      1|        let filter = TopicFilter::exclude(vec!["/tf".into()]);
+  181|      1|        assert!(!filter.should_include("/tf"));
+  182|      1|        assert!(filter.should_include("/camera"));
+  183|      1|    }
+  184|       |
+  185|       |    #[test]
+  186|      1|    fn test_topic_filter_regex() {
+  187|      1|        let filter = TopicFilter::regex_include("/camera/.*").unwrap();
+  188|      1|        assert!(filter.should_include("/camera/image_raw"));
+  189|      1|        assert!(filter.should_include("/camera/info"));
+  190|      1|        assert!(!filter.should_include("/lidar/points"));
+  191|      1|    }
+  192|       |
+  193|       |    #[test]
+  194|      1|    fn test_channel_filter_from_topic_filter() {
+  195|      1|        let mut channels = HashMap::new();
+  196|      1|        channels.insert(0, ChannelInfo::new(0, "/camera", "sensor_msgs/Image"));
+  197|      1|        channels.insert(1, ChannelInfo::new(1, "/lidar", "sensor_msgs/PointCloud2"));
+  198|      1|        channels.insert(2, ChannelInfo::new(2, "/imu", "sensor_msgs/Imu"));
+  199|       |
+  200|      1|        let filter = TopicFilter::include(vec!["/camera".into()]);
+  201|      1|        let channel_filter = ChannelFilter::from_topic_filter(&filter, &channels);
+  202|       |
+  203|      1|        assert!(channel_filter.allows_channel(0));
+  204|      1|        assert!(!channel_filter.allows_channel(1));
+  205|      1|        assert!(!channel_filter.allows_channel(2));
+  206|      1|        assert_eq!(channel_filter.channel_count(), 1);
+  207|      1|    }
+  208|       |
+  209|       |    #[test]
+  210|      1|    fn test_channel_filter_all() {
+  211|      1|        let mut channels = HashMap::new();
+  212|      1|        channels.insert(0, ChannelInfo::new(0, "/camera", "sensor_msgs/Image"));
+  213|      1|        channels.insert(1, ChannelInfo::new(1, "/lidar", "sensor_msgs/PointCloud2"));
+  214|       |
+  215|      1|        let filter = ChannelFilter::all(&channels);
+  216|      1|        assert!(filter.allows_channel(0));
+  217|      1|        assert!(filter.allows_channel(1));
+  218|      1|        assert_eq!(filter.channel_count(), 2);
+  219|      1|    }
+  220|       |}
+

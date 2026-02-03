@@ -1,0 +1,538 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/transform/topic_rename.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Topic renaming transformation.
+    6|       |//!
+    7|       |//! Provides topic renaming with regex-based wildcard pattern support and collision detection.
+    8|       |
+    9|       |use regex::Regex;
+   10|       |use std::collections::{HashMap, HashSet};
+   11|       |
+   12|       |use super::{ChannelInfo, McapTransform, TransformError};
+   13|       |
+   14|       |/// A wildcard topic mapping using compiled regex.
+   15|       |#[derive(Debug, Clone)]
+   16|       |struct WildcardTopicMapping {
+   17|       |    /// Compiled regex pattern for matching (e.g., r"^/foo/(.*)$")
+   18|       |    pattern: Regex,
+   19|       |    /// Target template where $1 is replaced with the first capture group
+   20|       |    target_template: String,
+   21|       |}
+   22|       |
+   23|       |impl WildcardTopicMapping {
+   24|       |    /// Create a new wildcard mapping from a wildcard pattern and target.
+   25|       |    ///
+   26|       |    /// # Arguments
+   27|       |    ///
+   28|       |    /// * `pattern` - Wildcard pattern like "/foo/*"
+   29|       |    /// * `target` - Target pattern like "/roboflow/*"
+   30|      6|    fn new(pattern: &str, target: &str) -> Result<Self, String> {
+   31|       |        // Convert wildcard pattern to regex:
+   32|       |        // - Escape special regex characters except *
+   33|       |        // - Replace * with (.*) to capture any suffix
+   34|       |        // - Add ^ and $ anchors for exact matching
+   35|       |
+   36|      6|        let mut regex_pattern = String::from("^");
+   37|       |
+   38|     39|        for c in pattern.chars() {
+                               ^6      ^6
+   39|     39|            match c {
+   40|      6|                '*' => {
+   41|      6|                    regex_pattern.push_str("(.*)");
+   42|      6|                }
+   43|      0|                '.' | '$' | '^' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\' => {
+   44|      0|                    regex_pattern.push('\\');
+   45|      0|                    regex_pattern.push(c);
+   46|      0|                }
+   47|     33|                _ => {
+   48|     33|                    regex_pattern.push(c);
+   49|     33|                }
+   50|       |            }
+   51|       |        }
+   52|      6|        regex_pattern.push('$');
+   53|       |
+   54|       |        // Build target template by replacing * with $1, $2, etc.
+   55|      6|        let mut target_template = String::new();
+   56|      6|        let mut group_idx = 0;
+   57|      6|        let target_chars = target.chars().peekable();
+   58|       |
+   59|     47|        for c in target_chars {
+                          ^41
+   60|     41|            if c == '*' {
+   61|      6|                group_idx += 1;
+   62|      6|                target_template.push_str(&format!("${{group{}}}", group_idx));
+   63|     35|            } else {
+   64|     35|                target_template.push(c);
+   65|     35|            }
+   66|       |        }
+   67|       |
+   68|       |        // Compile the regex
+   69|      6|        let compiled = Regex::new(&regex_pattern)
+   70|      6|            .map_err(|e| format!("Invalid wildcard pattern '{}': {}", pattern, e))?;
+                                       ^0      ^0                                               ^0
+   71|       |
+   72|      6|        Ok(Self {
+   73|      6|            pattern: compiled,
+   74|      6|            target_template,
+   75|      6|        })
+   76|      6|    }
+   77|       |
+   78|       |    /// Apply this wildcard mapping to a topic.
+   79|       |    ///
+   80|       |    /// Returns Some(new_topic) if the pattern matches, None otherwise.
+   81|      5|    fn apply(&self, topic: &str) -> Option<String> {
+   82|      5|        self.pattern.captures(topic).map(|caps| {
+                                                              ^3
+   83|      3|            let mut result = self.target_template.clone();
+   84|       |            // Replace ${group1}, ${group2}, etc. with captured values
+   85|      3|            for i in 1..caps.len() {
+   86|      3|                let placeholder = format!("${{group{}}}", i);
+   87|      3|                if let Some(captured) = caps.get(i) {
+   88|      3|                    result = result.replace(&placeholder, captured.as_str());
+   89|      3|                }
+                              ^0
+   90|       |            }
+   91|      3|            result
+   92|      3|        })
+   93|      5|    }
+   94|       |}
+   95|       |
+   96|       |/// Topic renaming transformation.
+   97|       |///
+   98|       |/// Renames topics using exact string mappings or wildcard patterns.
+   99|       |/// When multiple source topics map to the same target topic, numeric suffixes
+  100|       |/// are automatically added to prevent collisions.
+  101|       |///
+  102|       |/// # Example
+  103|       |///
+  104|       |/// ```no_run
+  105|       |/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+  106|       |/// use robocodec::transform::TopicRenameTransform;
+  107|       |///
+  108|       |/// let mut rename = TopicRenameTransform::new();
+  109|       |/// rename.add_mapping("/old_camera/image_raw", "/camera/image");
+  110|       |/// rename.add_wildcard_mapping("/foo/*", "/robocodec/*")?;
+  111|       |///
+  112|       |/// // When applied, topics will be renamed according to mappings.
+  113|       |/// // Collisions are auto-resolved: /a and /b both → /c becomes /c and /c_2
+  114|       |/// # Ok(())
+  115|       |/// # }
+  116|       |/// ```
+  117|       |#[derive(Debug, Clone)]
+  118|       |pub struct TopicRenameTransform {
+  119|       |    /// Exact topic mappings: source -> target
+  120|       |    mappings: HashMap<String, String>,
+  121|       |    /// Wildcard topic mappings (sorted by prefix length, longest first)
+  122|       |    wildcard_mappings: Vec<WildcardTopicMapping>,
+  123|       |}
+  124|       |
+  125|       |impl Default for TopicRenameTransform {
+  126|      0|    fn default() -> Self {
+  127|      0|        Self::new()
+  128|      0|    }
+  129|       |}
+  130|       |
+  131|       |impl TopicRenameTransform {
+  132|       |    /// Create a new empty topic rename transform.
+  133|     21|    pub fn new() -> Self {
+  134|     21|        Self {
+  135|     21|            mappings: HashMap::new(),
+  136|     21|            wildcard_mappings: Vec::new(),
+  137|     21|        }
+  138|     21|    }
+  139|       |
+  140|       |    /// Add an exact topic rename mapping.
+  141|       |    ///
+  142|       |    /// # Arguments
+  143|       |    ///
+  144|       |    /// * `source` - Original topic name (e.g., "/camera_front/image_raw")
+  145|       |    /// * `target` - New topic name (e.g., "/camera/image")
+  146|     16|    pub fn add_mapping(&mut self, source: impl Into<String>, target: impl Into<String>) {
+  147|     16|        self.mappings.insert(source.into(), target.into());
+  148|     16|    }
+  149|       |
+  150|       |    /// Add a wildcard topic rename mapping.
+  151|       |    ///
+  152|       |    /// The wildcard `*` will match any suffix. For example:
+  153|       |    /// - Pattern `/foo/*` with target `/roboflow/*`
+  154|       |    /// - Maps `/foo/upperlimb/joint_states` to `/roboflow/upperlimb/joint_states`
+  155|       |    ///
+  156|       |    /// # Arguments
+  157|       |    ///
+  158|       |    /// * `pattern` - Source pattern with wildcard (e.g., "/foo/*")
+  159|       |    /// * `target` - Target pattern with wildcard (e.g., "/roboflow/*")
+  160|       |    ///
+  161|       |    /// # Errors
+  162|       |    ///
+  163|       |    /// Returns an error if the pattern cannot be compiled into a regex.
+  164|      6|    pub fn add_wildcard_mapping(
+  165|      6|        &mut self,
+  166|      6|        pattern: impl Into<String>,
+  167|      6|        target: impl Into<String>,
+  168|      6|    ) -> Result<(), String> {
+  169|      6|        let pattern = pattern.into();
+  170|      6|        let target = target.into();
+  171|       |
+  172|       |        // Compile the wildcard pattern into a regex-based mapping
+  173|      6|        let mapping = WildcardTopicMapping::new(&pattern, &target)?;
+                                                                                ^0
+  174|       |
+  175|      6|        self.wildcard_mappings.push(mapping);
+  176|       |
+  177|       |        // Sort by pattern length (descending) so longer/more specific patterns match first
+  178|       |        // We approximate this by sorting by the regex pattern string length as a proxy for specificity
+  179|      6|        self.wildcard_mappings
+  180|      6|            .sort_by(|a, b| b.pattern.as_str().len().cmp(&a.pattern.as_str().len()));
+                                          ^2                       ^2  ^2
+  181|       |
+  182|      6|        Ok(())
+  183|      6|    }
+  184|       |
+  185|       |    /// Create a transform from a HashMap of exact mappings.
+  186|      7|    pub fn from_map(mappings: HashMap<String, String>) -> Self {
+  187|      7|        Self {
+  188|      7|            mappings,
+  189|      7|            wildcard_mappings: Vec::new(),
+  190|      7|        }
+  191|      7|    }
+  192|       |
+  193|       |    /// Create a transform with both exact and wildcard mappings.
+  194|       |    ///
+  195|       |    /// # Errors
+  196|       |    ///
+  197|       |    /// Returns an error if any wildcard pattern cannot be compiled.
+  198|      6|    pub fn with_wildcards(
+  199|      6|        exact_mappings: HashMap<String, String>,
+  200|      6|        wildcard_mappings: Vec<(String, String)>,
+  201|      6|    ) -> Result<Self, String> {
+  202|      6|        let mut transform = Self::from_map(exact_mappings);
+  203|      8|        for (pattern, target) in wildcard_mappings {
+                           ^2       ^2
+  204|      2|            transform.add_wildcard_mapping(pattern, target)?;
+                                                                         ^0
+  205|       |        }
+  206|      6|        Ok(transform)
+  207|      6|    }
+  208|       |
+  209|       |    /// Get the number of exact mappings configured.
+  210|      4|    pub fn len(&self) -> usize {
+  211|      4|        self.mappings.len()
+  212|      4|    }
+  213|       |
+  214|       |    /// Get the number of wildcard mappings configured.
+  215|      4|    pub fn wildcard_len(&self) -> usize {
+  216|      4|        self.wildcard_mappings.len()
+  217|      4|    }
+  218|       |
+  219|       |    /// Check if any mappings are configured.
+  220|      1|    pub fn is_empty(&self) -> bool {
+  221|      1|        self.mappings.is_empty() && self.wildcard_mappings.is_empty()
+  222|      1|    }
+  223|       |
+  224|       |    /// Get all exact mappings.
+  225|      1|    pub fn mappings(&self) -> &HashMap<String, String> {
+  226|      1|        &self.mappings
+  227|      1|    }
+  228|       |
+  229|       |    /// Apply the transformation to a topic name.
+  230|       |    ///
+  231|       |    /// Returns `Some(new_name)` with the transformed topic.
+  232|     28|    pub fn apply(&self, topic: &str) -> Option<String> {
+  233|       |        // First check exact mappings
+  234|     28|        if let Some(exact_target) = self.mappings.get(topic) {
+                                  ^16
+  235|     16|            return Some(exact_target.clone());
+  236|     12|        }
+  237|       |
+  238|       |        // Then try wildcard patterns (more specific patterns first due to sorting)
+  239|     14|        for mapping in &self.wildcard_mappings {
+                          ^5
+  240|      5|            if let Some(renamed) = mapping.apply(topic) {
+                                      ^3
+  241|      3|                return Some(renamed);
+  242|      2|            }
+  243|       |        }
+  244|       |
+  245|       |        // No match, return original
+  246|      9|        Some(topic.to_string())
+  247|     28|    }
+  248|       |}
+  249|       |
+  250|       |impl McapTransform for TopicRenameTransform {
+  251|     20|    fn transform_topic(&self, topic: &str) -> Option<String> {
+  252|     20|        self.apply(topic)
+  253|     20|    }
+  254|       |
+  255|     10|    fn transform_type(
+  256|     10|        &self,
+  257|     10|        type_name: &str,
+  258|     10|        _schema_text: Option<&str>,
+  259|     10|    ) -> (String, Option<String>) {
+  260|       |        // Topic transform doesn't modify types
+  261|     10|        (type_name.to_string(), None)
+  262|     10|    }
+  263|       |
+  264|      6|    fn validate(&self, channels: &[ChannelInfo]) -> std::result::Result<(), TransformError> {
+  265|      6|        if self.mappings.is_empty() {
+  266|      1|            return Ok(());
+  267|      5|        }
+  268|       |
+  269|       |        // Collect all existing topics
+  270|      5|        let existing_topics: HashSet<&str> = channels.iter().map(|c| c.topic.as_str()).collect();
+  271|       |
+  272|       |        // Check that all source topics exist
+  273|      5|        for source in self.mappings.keys() {
+  274|      5|            if !existing_topics.contains(source.as_str()) {
+  275|      1|                return Err(TransformError::NotFound {
+  276|      1|                    name: source.clone(),
+  277|      1|                    kind: "topic",
+  278|      1|                });
+  279|      4|            }
+  280|       |        }
+  281|       |
+  282|       |        // Build mapping from target topic to source topics
+  283|      4|        let mut target_to_sources: HashMap<&str, Vec<&str>> = HashMap::new();
+  284|       |
+  285|      8|        for (source, target) in &self.mappings {
+                           ^4      ^4
+  286|      4|            target_to_sources.entry(target).or_default().push(source);
+  287|      4|        }
+  288|       |
+  289|       |        // Check for collisions where multiple sources map to the same target
+  290|      8|        for (target, sources) in &target_to_sources {
+                           ^4      ^4
+  291|       |            // Multiple sources mapping to the same target is OK
+  292|       |            // - we'll auto-suffix during application
+  293|       |            // But we should warn if the target also exists as a source topic
+  294|       |            // that isn't being renamed to itself
+  295|      4|            if sources.len() > 1 {
+  296|       |                // Check if any of the sources IS the target
+  297|       |                // This is OK if it's a self-mapping
+  298|      0|                let all_self_mappings = sources.iter().all(|s| *s == *target);
+  299|      0|                if !all_self_mappings {
+  300|      0|                    // Multiple different sources → same target
+  301|      0|                    // This will be handled by auto-suffixing
+  302|      0|                }
+  303|       |            } else {
+  304|       |                // Single source mapping
+  305|      4|                let source = &sources[0];
+  306|       |                // Check if target conflicts with an existing topic that isn't the source
+  307|      4|                if source != target && existing_topics.contains(*target) {
+  308|      0|                    // The target exists as a topic that won't be renamed
+  309|      0|                    // This could cause confusion but we'll allow it
+  310|      0|                    // The original topic will keep its name alongside the renamed one
+  311|      4|                }
+  312|       |            }
+  313|       |        }
+  314|       |
+  315|      4|        Ok(())
+  316|      6|    }
+  317|       |
+  318|      3|    fn modifies_topics(&self) -> bool {
+  319|      3|        !self.mappings.is_empty()
+  320|      3|    }
+  321|       |
+  322|      0|    fn as_any(&self) -> &dyn std::any::Any {
+  323|      0|        self
+  324|      0|    }
+  325|       |
+  326|      1|    fn box_clone(&self) -> Box<dyn McapTransform> {
+  327|      1|        Box::new(self.clone())
+  328|      1|    }
+  329|       |}
+  330|       |
+  331|       |#[cfg(test)]
+  332|       |mod tests {
+  333|       |    use super::*;
+  334|       |
+  335|      3|    fn make_channel(id: u16, topic: &str) -> ChannelInfo {
+  336|      3|        ChannelInfo::new(
+  337|      3|            id,
+  338|      3|            topic.to_string(),
+  339|      3|            "std_msgs/String".to_string(),
+  340|      3|            "cdr".to_string(),
+  341|      3|            Some("string data".to_string()),
+  342|      3|            Some("ros2msg".to_string()),
+  343|       |        )
+  344|      3|    }
+  345|       |
+  346|       |    #[test]
+  347|      1|    fn test_new() {
+  348|      1|        let transform = TopicRenameTransform::new();
+  349|      1|        assert!(transform.is_empty());
+  350|      1|        assert_eq!(transform.len(), 0);
+  351|      1|    }
+  352|       |
+  353|       |    #[test]
+  354|      1|    fn test_add_mapping() {
+  355|      1|        let mut transform = TopicRenameTransform::new();
+  356|      1|        transform.add_mapping("/old", "/new");
+  357|      1|        assert_eq!(transform.len(), 1);
+  358|      1|        assert!(transform.mappings().contains_key("/old"));
+  359|      1|    }
+  360|       |
+  361|       |    #[test]
+  362|      1|    fn test_from_map() {
+  363|      1|        let mut map = HashMap::new();
+  364|      1|        map.insert("/a".to_string(), "/x".to_string());
+  365|      1|        map.insert("/b".to_string(), "/y".to_string());
+  366|       |
+  367|      1|        let transform = TopicRenameTransform::from_map(map);
+  368|      1|        assert_eq!(transform.len(), 2);
+  369|      1|    }
+  370|       |
+  371|       |    #[test]
+  372|      1|    fn test_apply_with_mapping() {
+  373|      1|        let mut transform = TopicRenameTransform::new();
+  374|      1|        transform.add_mapping("/old", "/new");
+  375|       |
+  376|      1|        assert_eq!(transform.apply("/old"), Some("/new".to_string()));
+  377|      1|        assert_eq!(transform.apply("/other"), Some("/other".to_string()));
+  378|      1|    }
+  379|       |
+  380|       |    #[test]
+  381|      1|    fn test_validate_empty() {
+  382|      1|        let transform = TopicRenameTransform::new();
+  383|      1|        let channels = vec![make_channel(1, "/test")];
+  384|      1|        assert!(transform.validate(&channels).is_ok());
+  385|      1|    }
+  386|       |
+  387|       |    #[test]
+  388|      1|    fn test_validate_success() {
+  389|      1|        let mut transform = TopicRenameTransform::new();
+  390|      1|        transform.add_mapping("/test", "/renamed");
+  391|       |
+  392|      1|        let channels = vec![make_channel(1, "/test")];
+  393|      1|        assert!(transform.validate(&channels).is_ok());
+  394|      1|    }
+  395|       |
+  396|       |    #[test]
+  397|      1|    fn test_validate_not_found() {
+  398|      1|        let mut transform = TopicRenameTransform::new();
+  399|      1|        transform.add_mapping("/nonexistent", "/new");
+  400|       |
+  401|      1|        let channels = vec![make_channel(1, "/test")];
+  402|      1|        let result = transform.validate(&channels);
+  403|      1|        assert!(result.is_err());
+  404|      1|        match result.unwrap_err() {
+  405|      1|            TransformError::NotFound { name, .. } => assert_eq!(name, "/nonexistent"),
+  406|      0|            _ => panic!("Expected NotFound error"),
+  407|       |        }
+  408|      1|    }
+  409|       |
+  410|       |    #[test]
+  411|      1|    fn test_transform_topic() {
+  412|      1|        let mut transform = TopicRenameTransform::new();
+  413|      1|        transform.add_mapping("/camera_old", "/camera");
+  414|       |
+  415|      1|        assert_eq!(
+  416|      1|            transform.transform_topic("/camera_old"),
+  417|      1|            Some("/camera".to_string())
+  418|       |        );
+  419|      1|        assert_eq!(
+  420|      1|            transform.transform_topic("/other"),
+  421|      1|            Some("/other".to_string())
+  422|       |        );
+  423|      1|    }
+  424|       |
+  425|       |    #[test]
+  426|      1|    fn test_transform_type_passthrough() {
+  427|      1|        let transform = TopicRenameTransform::new();
+  428|      1|        let (new_type, schema) = transform.transform_type("std_msgs/String", Some("schema"));
+  429|      1|        assert_eq!(new_type, "std_msgs/String");
+  430|      1|        assert_eq!(schema, None); // Topic transform doesn't modify schemas
+  431|      1|    }
+  432|       |
+  433|       |    #[test]
+  434|      1|    fn test_modifies_topics() {
+  435|      1|        let mut transform = TopicRenameTransform::new();
+  436|      1|        assert!(!transform.modifies_topics());
+  437|       |
+  438|      1|        transform.add_mapping("/a", "/b");
+  439|      1|        assert!(transform.modifies_topics());
+  440|      1|    }
+  441|       |
+  442|       |    #[test]
+  443|      1|    fn test_wildcard_mapping() {
+  444|      1|        let mut transform = TopicRenameTransform::new();
+  445|      1|        transform
+  446|      1|            .add_wildcard_mapping("/foo/*", "/roboflow/*")
+  447|      1|            .unwrap();
+  448|       |
+  449|       |        // Exact match for wildcard pattern
+  450|      1|        assert_eq!(
+  451|      1|            transform.apply("/foo/upperlimb/joint_states"),
+  452|      1|            Some("/roboflow/upperlimb/joint_states".to_string())
+  453|       |        );
+  454|      1|        assert_eq!(
+  455|      1|            transform.apply("/foo/sensor/camera"),
+  456|      1|            Some("/roboflow/sensor/camera".to_string())
+  457|       |        );
+  458|       |
+  459|       |        // Non-matching topic stays the same
+  460|      1|        assert_eq!(
+  461|      1|            transform.apply("/other/topic"),
+  462|      1|            Some("/other/topic".to_string())
+  463|       |        );
+  464|      1|    }
+  465|       |
+  466|       |    #[test]
+  467|      1|    fn test_wildcard_with_exact_mappings() {
+  468|      1|        let mut transform = TopicRenameTransform::new();
+  469|      1|        transform.add_mapping("/exact/topic", "/renamed/exact");
+  470|      1|        transform
+  471|      1|            .add_wildcard_mapping("/prefix/*", "/new/*")
+  472|      1|            .unwrap();
+  473|       |
+  474|       |        // Exact mapping takes priority
+  475|      1|        assert_eq!(
+  476|      1|            transform.apply("/exact/topic"),
+  477|      1|            Some("/renamed/exact".to_string())
+  478|       |        );
+  479|       |
+  480|       |        // Wildcard matches
+  481|      1|        assert_eq!(
+  482|      1|            transform.apply("/prefix/something"),
+  483|      1|            Some("/new/something".to_string())
+  484|       |        );
+  485|       |
+  486|       |        // No match
+  487|      1|        assert_eq!(
+  488|      1|            transform.apply("/other/topic"),
+  489|      1|            Some("/other/topic".to_string())
+  490|       |        );
+  491|      1|    }
+  492|       |
+  493|       |    #[test]
+  494|      1|    fn test_wildcard_len() {
+  495|      1|        let mut transform = TopicRenameTransform::new();
+  496|      1|        assert_eq!(transform.wildcard_len(), 0);
+  497|       |
+  498|      1|        transform.add_wildcard_mapping("/foo/*", "/bar/*").unwrap();
+  499|      1|        assert_eq!(transform.wildcard_len(), 1);
+  500|       |
+  501|      1|        transform.add_wildcard_mapping("/baz/*", "/qux/*").unwrap();
+  502|      1|        assert_eq!(transform.wildcard_len(), 2);
+  503|      1|    }
+  504|       |
+  505|       |    #[test]
+  506|      1|    fn test_with_wildcards() {
+  507|      1|        let mut exact = HashMap::new();
+  508|      1|        exact.insert("/exact".to_string(), "/renamed".to_string());
+  509|       |
+  510|      1|        let wildcards = vec![
+  511|      1|            ("/foo/*".to_string(), "/bar/*".to_string()),
+  512|      1|            ("/baz/*".to_string(), "/qux/*".to_string()),
+  513|       |        ];
+  514|       |
+  515|      1|        let transform = TopicRenameTransform::with_wildcards(exact, wildcards).unwrap();
+  516|       |
+  517|      1|        assert_eq!(transform.len(), 1);
+  518|      1|        assert_eq!(transform.wildcard_len(), 2);
+  519|      1|    }
+  520|       |}
+

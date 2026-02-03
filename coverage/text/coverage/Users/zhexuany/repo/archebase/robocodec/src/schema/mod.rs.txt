@@ -1,0 +1,143 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/schema/mod.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Schema parsing for ROS and IDL formats.
+    6|       |//!
+    7|       |//! This module provides parsing for:
+    8|       |//! - ROS1 `.msg` files
+    9|       |//! - ROS2 IDL formats
+   10|       |//! - OMG IDL formats
+   11|       |
+   12|       |pub mod ast;
+   13|       |pub mod builtin_types;
+   14|       |pub mod descriptor;
+   15|       |pub mod parser;
+   16|       |
+   17|       |pub use ast::{Field, FieldType, MessageSchema, MessageType, PrimitiveType};
+   18|       |pub use descriptor::{FieldInfo, SchemaDescriptor};
+   19|       |pub use parser::{parse_schema, parse_schema_with_encoding};
+   20|       |
+   21|       |// Re-export parser-specific types
+   22|       |pub use parser::{msg_parser, ros2_idl_parser};
+   23|       |
+   24|       |// Legacy re-exports for compatibility
+   25|       |pub use msg_parser::{parse_with_encoding, parse_with_version, RosVersion};
+   26|       |pub use ros2_idl_parser::{normalize_ros2_idl, parse as parse_ros2_idl};
+   27|       |
+   28|       |/// Schema format type.
+   29|       |#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   30|       |pub enum SchemaFormat {
+   31|       |    /// ROS .msg format
+   32|       |    Msg,
+   33|       |    /// OMG IDL format
+   34|       |    Idl,
+   35|       |}
+   36|       |
+   37|       |impl SchemaFormat {
+   38|       |    /// Parse from string.
+   39|      9|    pub fn parse(s: &str) -> Option<Self> {
+   40|      9|        match s.to_lowercase().as_str() {
+   41|      9|            "msg" => Some(SchemaFormat::Msg),
+                                   ^3
+   42|      6|            "idl" => Some(SchemaFormat::Idl),
+                                   ^3
+   43|      3|            _ => None,
+   44|       |        }
+   45|      9|    }
+   46|       |
+   47|       |    /// Get string representation.
+   48|      2|    pub fn as_str(&self) -> &'static str {
+   49|      2|        match self {
+   50|      1|            SchemaFormat::Msg => "msg",
+   51|      1|            SchemaFormat::Idl => "idl",
+   52|       |        }
+   53|      2|    }
+   54|       |}
+   55|       |
+   56|       |#[cfg(test)]
+   57|       |mod tests {
+   58|       |    use super::*;
+   59|       |
+   60|       |    #[test]
+   61|      1|    fn test_schema_format_from_str_msg() {
+   62|      1|        assert_eq!(SchemaFormat::parse("msg"), Some(SchemaFormat::Msg));
+   63|      1|        assert_eq!(SchemaFormat::parse("MSG"), Some(SchemaFormat::Msg));
+   64|      1|        assert_eq!(SchemaFormat::parse("Msg"), Some(SchemaFormat::Msg));
+   65|      1|    }
+   66|       |
+   67|       |    #[test]
+   68|      1|    fn test_schema_format_from_str_idl() {
+   69|      1|        assert_eq!(SchemaFormat::parse("idl"), Some(SchemaFormat::Idl));
+   70|      1|        assert_eq!(SchemaFormat::parse("IDL"), Some(SchemaFormat::Idl));
+   71|      1|        assert_eq!(SchemaFormat::parse("Idl"), Some(SchemaFormat::Idl));
+   72|      1|    }
+   73|       |
+   74|       |    #[test]
+   75|      1|    fn test_schema_format_from_str_unknown() {
+   76|      1|        assert_eq!(SchemaFormat::parse("unknown"), None);
+   77|      1|        assert_eq!(SchemaFormat::parse(""), None);
+   78|      1|        assert_eq!(SchemaFormat::parse("xml"), None);
+   79|      1|    }
+   80|       |
+   81|       |    #[test]
+   82|      1|    fn test_schema_format_as_str() {
+   83|      1|        assert_eq!(SchemaFormat::Msg.as_str(), "msg");
+   84|      1|        assert_eq!(SchemaFormat::Idl.as_str(), "idl");
+   85|      1|    }
+   86|       |
+   87|       |    #[test]
+   88|      1|    fn test_schema_format_equality() {
+   89|      1|        assert_eq!(SchemaFormat::Msg, SchemaFormat::Msg);
+   90|      1|        assert_eq!(SchemaFormat::Idl, SchemaFormat::Idl);
+   91|      1|        assert_ne!(SchemaFormat::Msg, SchemaFormat::Idl);
+   92|      1|    }
+   93|       |
+   94|       |    #[test]
+   95|      1|    fn test_parse_schema_reexport() {
+   96|       |        // Verify that parse_schema is accessible
+   97|      1|        let schema = parse_schema("test/Type", "int32 value");
+   98|      1|        assert!(schema.is_ok());
+   99|      1|    }
+  100|       |
+  101|       |    #[test]
+  102|      1|    fn test_parse_schema_with_encoding_reexport() {
+  103|       |        // Verify that parse_schema_with_encoding is accessible
+  104|      1|        let schema = parse_schema_with_encoding("test/Type", "int32 value", SchemaFormat::Msg);
+  105|      1|        assert!(schema.is_ok());
+  106|      1|    }
+  107|       |
+  108|       |    #[test]
+  109|      1|    fn test_message_schema_reexport() {
+  110|       |        // Verify that MessageSchema is accessible
+  111|      1|        let schema = MessageSchema::new("test/Type".to_string());
+  112|      1|        assert_eq!(schema.name, "test/Type");
+  113|      1|    }
+  114|       |
+  115|       |    #[test]
+  116|      1|    fn test_parse_with_encoding_reexport() {
+  117|       |        // Verify parse_with_encoding re-export
+  118|      1|        let schema = parse_with_encoding("test/Type", "int32 value", "ros1msg");
+  119|      1|        assert!(schema.is_ok());
+  120|      1|    }
+  121|       |
+  122|       |    #[test]
+  123|      1|    fn test_parse_ros2_idl_reexport() {
+  124|       |        // Verify parse_ros2_idl re-export
+  125|      1|        let idl = "struct Test { int32 value; };";
+  126|      1|        let result = parse_ros2_idl("test/Type", idl);
+  127|      1|        assert!(result.is_ok());
+  128|      1|    }
+  129|       |
+  130|       |    #[test]
+  131|      1|    fn test_normalize_ros2_idl_reexport() {
+  132|       |        // Verify normalize_ros2_idl re-export
+  133|      1|        let idl = "#include 'test.idl'\nstruct Test { int32 value; };";
+  134|      1|        let normalized = normalize_ros2_idl(idl);
+  135|      1|        assert!(normalized.contains("struct Test"));
+  136|      1|    }
+  137|       |}
+

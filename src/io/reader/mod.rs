@@ -491,4 +491,168 @@ mod tests {
         assert_eq!(result.times(), (Some(1000), Some(900)));
         assert!(result.has_timestamps());
     }
+
+    #[test]
+    fn test_decoded_message_result_without_timestamps() {
+        use crate::core::DecodedMessage;
+
+        let message = DecodedMessage::new();
+        let channel = ChannelInfo::new(0, "/test", "test_msgs/Test");
+        let result = DecodedMessageResult::new(message.clone(), channel, None, None);
+
+        assert_eq!(result.topic(), "/test");
+        assert_eq!(result.log_time, None);
+        assert_eq!(result.publish_time, None);
+        assert!(!result.has_timestamps());
+    }
+
+    #[test]
+    fn test_decoded_message_result_with_sequence() {
+        use crate::core::DecodedMessage;
+
+        let message = DecodedMessage::new();
+        let channel = ChannelInfo::new(0, "/test", "test_msgs/Test");
+        let result =
+            DecodedMessageResult::new(message, channel, Some(1000), Some(900)).with_sequence(42);
+
+        assert_eq!(result.sequence, Some(42));
+    }
+
+    #[test]
+    fn test_open_file_not_found() {
+        let result = RoboReader::open("/nonexistent/path/to/file.mcap");
+        assert!(result.is_err());
+        match result {
+            Err(err) => {
+                let err_msg = format!("{}", err);
+                assert!(err_msg.contains("File not found"));
+                assert!(err_msg.contains("/nonexistent/path/to/file.mcap"));
+            }
+            Ok(_) => panic!("Expected error for non-existent file"),
+        }
+    }
+
+    #[test]
+    fn test_open_unknown_format() {
+        // Create a temp file with unknown extension
+        let temp_path = std::env::temp_dir().join("test_unknown.xyz123");
+        std::fs::write(&temp_path, b"invalid content").unwrap();
+
+        let result = RoboReader::open(&temp_path);
+        assert!(result.is_err());
+        match result {
+            Err(err) => {
+                let err_msg = format!("{}", err);
+                assert!(err_msg.contains("Unknown file format"));
+            }
+            Ok(_) => panic!("Expected error for unknown format"),
+        }
+
+        // Cleanup
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_open_with_config_delegates() {
+        let temp_path = std::env::temp_dir().join("test_config.mcap");
+        std::fs::write(&temp_path, b"").unwrap();
+
+        // Just verify it accepts the config parameter
+        let config = ReaderConfig::default();
+        let result = RoboReader::open_with_config(&temp_path, config);
+        // Will fail to parse as valid MCAP but should accept the config param
+        assert!(result.is_err());
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_decoded_not_supported_for_unknown_format() {
+        // MockReader has Unknown format, so decoded() should fail
+        let mock = MockReader::new("test.unknown");
+        let reader = RoboReader {
+            inner: Box::new(mock),
+        };
+
+        let result = reader.decoded();
+        assert!(result.is_err());
+        match result {
+            Err(err) => {
+                let err_msg = format!("{}", err);
+                assert!(err_msg.contains("decoded() not supported for this format"));
+                assert!(err_msg.contains("Unknown"));
+            }
+            Ok(_) => panic!("Expected error for unsupported format"),
+        }
+    }
+
+    #[test]
+    fn test_channels_by_topic() {
+        let mut mock = MockReader::new("test.mcap");
+        mock.channels
+            .insert(0, ChannelInfo::new(0, "/chatter", "std_msgs/String"));
+        mock.channels
+            .insert(1, ChannelInfo::new(1, "/chatter", "std_msgs/String")); // Same topic, different channel
+
+        let reader = RoboReader {
+            inner: Box::new(mock),
+        };
+
+        let channels = reader.channels_by_topic("/chatter");
+        assert_eq!(channels.len(), 2);
+
+        let empty = reader.channels_by_topic("/nonexistent");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_supports_parallel_false_for_mock() {
+        let mock = MockReader::new("test.bag");
+        let reader = RoboReader {
+            inner: Box::new(mock),
+        };
+
+        // MockReader doesn't implement ParallelReader, so should return false
+        assert!(!reader.supports_parallel());
+    }
+
+    #[test]
+    fn test_chunk_count_zero_for_mock() {
+        let mock = MockReader::new("test.bag");
+        let reader = RoboReader {
+            inner: Box::new(mock),
+        };
+
+        // MockReader doesn't implement ParallelReader, so should return 0
+        assert_eq!(reader.chunk_count(), 0);
+    }
+
+    #[test]
+    fn test_file_info_delegates_to_inner() {
+        let mut mock = MockReader::new("test.mcap");
+        mock.message_count = 42;
+        mock.file_size = 12345;
+        mock.start_time = Some(100);
+        mock.end_time = Some(200);
+
+        let reader = RoboReader {
+            inner: Box::new(mock),
+        };
+
+        let info = reader.file_info();
+        assert_eq!(info.message_count, 42);
+        assert_eq!(info.size, 12345);
+        assert_eq!(info.start_time, 100);
+        assert_eq!(info.end_time, 200);
+    }
+
+    #[test]
+    fn test_format_delegates_to_inner() {
+        let mock = MockReader::new("test.bag");
+        let reader = RoboReader {
+            inner: Box::new(mock),
+        };
+
+        assert_eq!(reader.format(), FileFormat::Unknown);
+    }
 }

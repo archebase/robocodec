@@ -1,0 +1,484 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/types/buffer_pool.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Lock-free buffer pool for zero-allocation compression.
+    6|       |//!
+    7|       |//! This module provides a lock-free buffer pool using crossbeam::queue::ArrayQueue
+    8|       |//! that reuses buffers across compression operations, eliminating per-chunk allocations
+    9|       |//! and the 10% deallocation overhead from dropping Vec<u8>.
+   10|       |
+   11|       |use crossbeam_queue::ArrayQueue;
+   12|       |use std::sync::atomic::{AtomicUsize, Ordering};
+   13|       |use std::sync::Arc;
+   14|       |
+   15|       |/// Default buffer capacity (4MB)
+   16|       |const DEFAULT_BUFFER_CAPACITY: usize = 4 * 1024 * 1024;
+   17|       |
+   18|       |/// Maximum number of buffers to keep in the pool per worker
+   19|       |const MAX_POOL_SIZE: usize = 4;
+   20|       |
+   21|       |/// A pooled buffer that returns itself to the pool when dropped.
+   22|       |///
+   23|       |/// This is a zero-cost wrapper - the Drop implementation handles
+   24|       |/// returning the buffer to the pool without any runtime overhead
+   25|       |/// during normal use.
+   26|       |pub struct PooledBuffer {
+   27|       |    /// The buffer data
+   28|       |    data: Vec<u8>,
+   29|       |    /// Reference to the pool to return to
+   30|       |    pool: Arc<BufferPoolInner>,
+   31|       |}
+   32|       |
+   33|       |impl PooledBuffer {
+   34|       |    /// Get a mutable reference to the buffer data.
+   35|       |    #[inline]
+   36|       |    #[allow(clippy::should_implement_trait)]
+   37|    401|    pub fn as_mut(&mut self) -> &mut Vec<u8> {
+   38|    401|        &mut self.data
+   39|    401|    }
+   40|       |
+   41|       |    /// Get a reference to the buffer data.
+   42|       |    #[inline]
+   43|       |    #[allow(clippy::should_implement_trait)]
+   44|      0|    pub fn as_ref(&self) -> &[u8] {
+   45|      0|        &self.data
+   46|      0|    }
+   47|       |
+   48|       |    /// Get the capacity of the buffer.
+   49|       |    #[inline]
+   50|      4|    pub fn capacity(&self) -> usize {
+   51|      4|        self.data.capacity()
+   52|      4|    }
+   53|       |
+   54|       |    /// Get the length of the buffer.
+   55|       |    #[inline]
+   56|      2|    pub fn len(&self) -> usize {
+   57|      2|        self.data.len()
+   58|      2|    }
+   59|       |
+   60|       |    /// Check if the buffer is empty.
+   61|       |    #[inline]
+   62|      0|    pub fn is_empty(&self) -> bool {
+   63|      0|        self.data.is_empty()
+   64|      0|    }
+   65|       |
+   66|       |    /// Clear the buffer (zero-cost - just sets length to 0).
+   67|       |    #[inline]
+   68|      1|    pub fn clear(&mut self) {
+   69|      1|        self.data.clear();
+   70|      1|    }
+   71|       |
+   72|       |    /// Reserve additional capacity if needed.
+   73|       |    #[inline]
+   74|      0|    pub fn reserve(&mut self, additional: usize) {
+   75|      0|        self.data.reserve(additional);
+   76|      0|    }
+   77|       |
+   78|       |    /// Convert into the inner Vec, preventing return to pool.
+   79|       |    ///
+   80|       |    /// Use this when you need to transfer ownership of the buffer
+   81|       |    /// without returning it to the pool.
+   82|       |    #[inline]
+   83|      1|    pub fn into_inner(self) -> Vec<u8> {
+   84|       |        // Prevent returning to pool since we're taking ownership
+   85|      1|        let this = std::mem::ManuallyDrop::new(self);
+   86|      1|        unsafe { std::ptr::read(&this.data) }
+   87|      1|    }
+   88|       |}
+   89|       |
+   90|       |impl Drop for PooledBuffer {
+   91|       |    #[inline]
+   92|    414|    fn drop(&mut self) {
+   93|       |        // Return buffer to pool - zero-cost clear and return
+   94|    414|        let data = std::mem::take(&mut self.data);
+   95|    414|        self.pool.return_buffer(data);
+   96|    414|    }
+   97|       |}
+   98|       |
+   99|       |impl AsRef<[u8]> for PooledBuffer {
+  100|       |    #[inline]
+  101|      0|    fn as_ref(&self) -> &[u8] {
+  102|      0|        &self.data
+  103|      0|    }
+  104|       |}
+  105|       |
+  106|       |impl AsMut<[u8]> for PooledBuffer {
+  107|       |    #[inline]
+  108|      0|    fn as_mut(&mut self) -> &mut [u8] {
+  109|      0|        &mut self.data
+  110|      0|    }
+  111|       |}
+  112|       |
+  113|       |impl AsMut<Vec<u8>> for PooledBuffer {
+  114|       |    #[inline]
+  115|      0|    fn as_mut(&mut self) -> &mut Vec<u8> {
+  116|      0|        &mut self.data
+  117|      0|    }
+  118|       |}
+  119|       |
+  120|       |impl std::fmt::Debug for PooledBuffer {
+  121|      0|    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+  122|      0|        f.debug_struct("PooledBuffer")
+  123|      0|            .field("len", &self.data.len())
+  124|      0|            .field("capacity", &self.data.capacity())
+  125|      0|            .finish()
+  126|      0|    }
+  127|       |}
+  128|       |
+  129|       |/// Inner buffer pool state (shared via Arc).
+  130|       |#[derive(Debug)]
+  131|       |struct BufferPoolInner {
+  132|       |    /// Lock-free queue of available buffers
+  133|       |    queue: ArrayQueue<Vec<u8>>,
+  134|       |    /// Default buffer capacity for new allocations
+  135|       |    default_capacity: usize,
+  136|       |    /// Total number of buffer allocations (for metrics)
+  137|       |    total_allocations: AtomicUsize,
+  138|       |    /// Current pool size (for metrics)
+  139|       |    pool_size: AtomicUsize,
+  140|       |}
+  141|       |
+  142|       |impl BufferPoolInner {
+  143|       |    /// Return a buffer to the pool.
+  144|       |    ///
+  145|       |    /// This is zero-cost when the pool is full - the buffer is simply dropped.
+  146|       |    #[inline]
+  147|    414|    fn return_buffer(&self, mut buffer: Vec<u8>) {
+  148|    414|        buffer.clear(); // Zero-cost: just sets len to 0, keeps capacity
+  149|       |
+  150|       |        // Try to return to pool - if full, buffer is dropped (dealloc happens here)
+  151|    414|        if self.queue.push(buffer).is_err() {
+  152|      0|            // Pool full, let buffer drop (will deallocate)
+  153|      0|            // This is fine - it means we have enough buffers in circulation
+  154|    414|        } else {
+  155|    414|            self.pool_size.fetch_add(1, Ordering::Release);
+  156|    414|        }
+  157|    414|    }
+  158|       |
+  159|       |    /// Take a buffer from the pool, or allocate a new one.
+  160|       |    #[inline]
+  161|    415|    fn take_buffer(&self, min_capacity: usize) -> Vec<u8> {
+  162|       |        // Try to get a buffer from the pool (lock-free)
+  163|    415|        if let Some(buffer) = self.queue.pop() {
+                                  ^409
+  164|    409|            self.pool_size.fetch_sub(1, Ordering::Acquire);
+  165|    409|            let mut buf: Vec<u8> = buffer;
+  166|       |
+  167|       |            // Check if buffer is large enough
+  168|    409|            if buf.capacity() >= min_capacity {
+  169|    409|                buf.clear(); // Zero-cost reset
+  170|    409|                return buf;
+  171|      0|            }
+  172|       |
+  173|       |            // Buffer too small, reserve more space
+  174|      0|            buf.reserve(min_capacity.saturating_sub(buf.capacity()));
+  175|      0|            return buf;
+  176|      6|        }
+  177|       |
+  178|       |        // No available buffer, allocate new one (slow path)
+  179|      6|        self.total_allocations.fetch_add(1, Ordering::Release);
+  180|      6|        Vec::with_capacity(min_capacity.max(self.default_capacity))
+  181|    415|    }
+  182|       |
+  183|       |    /// Get the current pool size.
+  184|       |    #[inline]
+  185|      6|    fn pool_size(&self) -> usize {
+  186|      6|        self.pool_size.load(Ordering::Acquire)
+  187|      6|    }
+  188|       |
+  189|       |    /// Get total allocations.
+  190|       |    #[inline]
+  191|      4|    fn total_allocations(&self) -> usize {
+  192|      4|        self.total_allocations.load(Ordering::Acquire)
+  193|      4|    }
+  194|       |}
+  195|       |
+  196|       |/// Lock-free buffer pool for compression buffers.
+  197|       |///
+  198|       |/// Uses crossbeam::queue::ArrayQueue for zero-contention buffer reuse.
+  199|       |/// Each thread can acquire and return buffers without blocking.
+  200|       |///
+  201|       |/// # Example
+  202|       |///
+  203|       |/// ```no_run
+  204|       |/// use robocodec::types::buffer_pool::BufferPool;
+  205|       |///
+  206|       |/// # fn main() {
+  207|       |/// let pool = BufferPool::with_capacity(4 * 1024 * 1024);
+  208|       |///
+  209|       |/// // In compression worker:
+  210|       |/// let mut output = pool.acquire(1024);
+  211|       |/// // use output.as_mut() to access the Vec<u8>
+  212|       |/// output.as_mut().extend_from_slice(&[0u8; 100]);
+  213|       |/// // output automatically returned to pool when dropped
+  214|       |/// # }
+  215|       |/// ```
+  216|       |#[derive(Clone, Debug)]
+  217|       |pub struct BufferPool {
+  218|       |    inner: Arc<BufferPoolInner>,
+  219|       |}
+  220|       |
+  221|       |impl BufferPool {
+  222|       |    /// Create a new buffer pool with the specified default buffer capacity.
+  223|       |    ///
+  224|       |    /// # Parameters
+  225|       |    ///
+  226|       |    /// - `default_capacity`: Default capacity for newly allocated buffers
+  227|       |    ///
+  228|       |    /// The pool will hold up to `MAX_POOL_SIZE` buffers per shared pool instance.
+  229|      8|    pub fn with_capacity(default_capacity: usize) -> Self {
+  230|      8|        Self {
+  231|      8|            inner: Arc::new(BufferPoolInner {
+  232|      8|                queue: ArrayQueue::new(MAX_POOL_SIZE),
+  233|      8|                default_capacity,
+  234|      8|                total_allocations: AtomicUsize::new(0),
+  235|      8|                pool_size: AtomicUsize::new(0),
+  236|      8|            }),
+  237|      8|        }
+  238|      8|    }
+  239|       |
+  240|       |    /// Create a buffer pool with 4MB default capacity.
+  241|      0|    pub fn new() -> Self {
+  242|      0|        Self::with_capacity(DEFAULT_BUFFER_CAPACITY)
+  243|      0|    }
+  244|       |
+  245|       |    /// Get a buffer with at least the specified capacity.
+  246|       |    ///
+  247|       |    /// The buffer is automatically returned to the pool when dropped.
+  248|       |    ///
+  249|       |    /// # Example
+  250|       |    ///
+  251|       |    /// ```no_run
+  252|       |    /// use robocodec::types::buffer_pool::BufferPool;
+  253|       |    ///
+  254|       |    /// # fn main() {
+  255|       |    /// let pool = BufferPool::new();
+  256|       |    /// let mut buf = pool.acquire(1024);
+  257|       |    /// // Use as_mut() to access the inner Vec<u8>
+  258|       |    /// buf.as_mut().extend_from_slice(&[0u8; 100]);
+  259|       |    /// // buf returned to pool when it goes out of scope
+  260|       |    /// # }
+  261|       |    /// ```
+  262|       |    #[inline]
+  263|    415|    pub fn acquire(&self, min_capacity: usize) -> PooledBuffer {
+  264|    415|        let data = self.inner.take_buffer(min_capacity);
+  265|    415|        PooledBuffer {
+  266|    415|            data,
+  267|    415|            pool: Arc::clone(&self.inner),
+  268|    415|        }
+  269|    415|    }
+  270|       |
+  271|       |    /// Get a buffer with default capacity.
+  272|       |    #[inline]
+  273|      0|    pub fn acquire_default(&self) -> PooledBuffer {
+  274|      0|        self.acquire(0)
+  275|      0|    }
+  276|       |
+  277|       |    /// Get the current number of buffers in the pool.
+  278|       |    #[inline]
+  279|      6|    pub fn pool_size(&self) -> usize {
+  280|      6|        self.inner.pool_size()
+  281|      6|    }
+  282|       |
+  283|       |    /// Get the total number of buffer allocations (excluding pool reuses).
+  284|       |    #[inline]
+  285|      4|    pub fn total_allocations(&self) -> usize {
+  286|      4|        self.inner.total_allocations()
+  287|      4|    }
+  288|       |
+  289|       |    /// Pre-warm the pool with buffers.
+  290|       |    ///
+  291|       |    /// Useful for eliminating initial allocation overhead.
+  292|      2|    pub fn warmup(&self, count: usize) {
+  293|      2|        for _ in 0..count.min(MAX_POOL_SIZE) {
+  294|      7|            let buffer = Vec::with_capacity(self.inner.default_capacity);
+  295|      7|            if self.inner.queue.push(buffer).is_ok() {
+  296|      7|                self.inner.pool_size.fetch_add(1, Ordering::Release);
+  297|      7|            }
+                          ^0
+  298|       |        }
+  299|      2|    }
+  300|       |
+  301|       |    /// Get the default buffer capacity.
+  302|       |    #[inline]
+  303|      0|    pub fn default_capacity(&self) -> usize {
+  304|      0|        self.inner.default_capacity
+  305|      0|    }
+  306|       |
+  307|       |    /// Directly return a buffer to the pool without going through PooledBuffer.
+  308|       |    ///
+  309|       |    /// This is useful when you have a Vec<u8> that you want to return to the pool
+  310|       |    /// without creating a PooledBuffer wrapper. The buffer will be cleared before
+  311|       |    /// being returned to the pool.
+  312|       |    ///
+  313|       |    /// # Example
+  314|       |    ///
+  315|       |    /// ```no_run
+  316|       |    /// # fn main() {
+  317|       |    /// use robocodec::types::buffer_pool::BufferPool;
+  318|       |    ///
+  319|       |    /// let buffer_pool = BufferPool::new();
+  320|       |    /// let mut data = vec![1, 2, 3];
+  321|       |    /// buffer_pool.return_buffer(data);  // data is returned to pool
+  322|       |    /// # }
+  323|       |    /// ```
+  324|       |    #[inline]
+  325|      0|    pub fn return_buffer(&self, mut buffer: Vec<u8>) {
+  326|      0|        buffer.clear();
+  327|      0|        if self.inner.queue.push(buffer).is_ok() {
+  328|      0|            self.inner.pool_size.fetch_add(1, Ordering::Release);
+  329|      0|        }
+  330|       |        // If pool is full, buffer is dropped (deallocated)
+  331|      0|    }
+  332|       |}
+  333|       |
+  334|       |impl Default for BufferPool {
+  335|      0|    fn default() -> Self {
+  336|      0|        Self::new()
+  337|      0|    }
+  338|       |}
+  339|       |
+  340|       |/// Helper trait for types that can use a buffer pool.
+  341|       |pub trait WithBufferPool {
+  342|       |    /// Set the buffer pool for this type.
+  343|       |    fn with_buffer_pool(self, pool: BufferPool) -> Self
+  344|       |    where
+  345|       |        Self: Sized;
+  346|       |}
+  347|       |
+  348|       |#[cfg(test)]
+  349|       |mod tests {
+  350|       |    use super::*;
+  351|       |
+  352|       |    #[test]
+  353|      1|    fn test_buffer_pool_acquire() {
+  354|      1|        let pool = BufferPool::with_capacity(1024);
+  355|      1|        let buffer = pool.acquire(512);
+  356|      1|        assert!(buffer.capacity() >= 512);
+  357|      1|    }
+  358|       |
+  359|       |    #[test]
+  360|      1|    fn test_buffer_pool_reuse() {
+  361|      1|        let pool = BufferPool::with_capacity(1024);
+  362|       |
+  363|       |        // First buffer
+  364|      1|        let capacity = {
+  365|      1|            let buffer = pool.acquire(1024);
+  366|      1|            buffer.capacity()
+  367|       |        };
+  368|       |
+  369|       |        // Buffer should be returned to pool
+  370|      1|        assert_eq!(pool.pool_size(), 1);
+  371|       |
+  372|       |        // Second buffer should reuse the first one
+  373|      1|        let buffer = pool.acquire(512);
+  374|      1|        assert_eq!(buffer.capacity(), capacity);
+  375|      1|        assert_eq!(pool.total_allocations(), 1); // Only one allocation
+  376|      1|    }
+  377|       |
+  378|       |    #[test]
+  379|      1|    fn test_buffer_pool_warmup() {
+  380|      1|        let pool = BufferPool::with_capacity(4096);
+  381|      1|        pool.warmup(3);
+  382|       |
+  383|      1|        assert_eq!(pool.pool_size(), 3);
+  384|       |
+  385|       |        // Should use pre-allocated buffers
+  386|      4|        for _ in 0..3 {
+  387|      3|            let _buffer = pool.acquire(1024);
+  388|      3|        }
+  389|       |
+  390|      1|        assert_eq!(pool.total_allocations(), 0); // No new allocations
+  391|      1|    }
+  392|       |
+  393|       |    #[test]
+  394|      1|    fn test_pooled_buffer_clear() {
+  395|      1|        let pool = BufferPool::with_capacity(100);
+  396|      1|        let mut buffer = pool.acquire(100);
+  397|       |
+  398|      1|        buffer.as_mut().extend_from_slice(&[1, 2, 3, 4, 5]);
+  399|      1|        assert_eq!(buffer.len(), 5);
+  400|       |
+  401|      1|        buffer.clear();
+  402|      1|        assert_eq!(buffer.len(), 0);
+  403|      1|        assert_eq!(buffer.capacity(), 100); // Capacity preserved
+  404|      1|    }
+  405|       |
+  406|       |    #[test]
+  407|      1|    fn test_pooled_buffer_into_inner() {
+  408|      1|        let pool = BufferPool::with_capacity(100);
+  409|      1|        let buffer = pool.acquire(100);
+  410|       |
+  411|      1|        let vec = buffer.into_inner();
+  412|      1|        assert!(vec.capacity() >= 100);
+  413|       |        // Buffer not returned to pool
+  414|      1|        assert_eq!(pool.pool_size(), 0);
+  415|      1|    }
+  416|       |
+  417|       |    #[test]
+  418|      1|    fn test_buffer_pool_clone() {
+  419|      1|        let pool1 = BufferPool::with_capacity(1024);
+  420|      1|        let pool2 = pool1.clone();
+  421|       |
+  422|      1|        {
+  423|      1|            let _buffer = pool1.acquire(100);
+  424|      1|        }
+  425|       |
+  426|       |        // Both pools share the same inner state
+  427|      1|        assert_eq!(pool2.pool_size(), 1);
+  428|      1|    }
+  429|       |
+  430|       |    #[test]
+  431|      1|    fn test_buffer_pool_max_size() {
+  432|      1|        let pool = BufferPool::with_capacity(1024);
+  433|       |
+  434|       |        // Return more buffers than MAX_POOL_SIZE
+  435|      6|        for _ in 0..MAX_POOL_SIZE + 2 {
+                                  ^1
+  436|      6|            let _buffer = pool.acquire(100);
+  437|      6|        }
+  438|       |
+  439|       |        // Pool should be at most MAX_POOL_SIZE
+  440|      1|        assert!(pool.pool_size() <= MAX_POOL_SIZE);
+  441|      1|    }
+  442|       |
+  443|       |    #[test]
+  444|      1|    fn test_buffer_pool_concurrent() {
+  445|       |        use std::thread;
+  446|      1|        let pool = Arc::new(BufferPool::with_capacity(4096));
+  447|      1|        pool.warmup(4);
+  448|       |
+  449|      1|        let handles: Vec<_> = (0..4)
+  450|      4|            .map(|_| {
+                           ^1
+  451|      4|                let pool = Arc::clone(&pool);
+  452|      4|                thread::spawn(move || {
+  453|    404|                    for _ in 0..100 {
+  454|    400|                        let mut buf = pool.acquire(1024);
+  455|    400|                        buf.as_mut().push(42);
+  456|    400|                    }
+  457|      4|                })
+  458|      4|            })
+  459|      1|            .collect();
+  460|       |
+  461|      5|        for handle in handles {
+                          ^4
+  462|      4|            handle.join().unwrap();
+  463|      4|        }
+  464|       |
+  465|       |        // Should have done mostly pool reuses
+  466|       |        // 4 threads * 100 iterations = 400 acquires
+  467|       |        // With 4 pre-warmed buffers, most should be reuses
+  468|      1|        println!(
+  469|      1|            "Total allocations: {}, Pool size: {}",
+  470|      1|            pool.total_allocations(),
+  471|      1|            pool.pool_size()
+  472|       |        );
+  473|      1|        assert!(pool.total_allocations() < 400); // Many were reuses
+  474|      1|    }
+  475|       |}
+

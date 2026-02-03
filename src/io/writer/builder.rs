@@ -284,4 +284,81 @@ mod tests {
         assert_eq!(builder.config.compression_level, Some(3));
         assert_eq!(builder.config.chunk_size, Some(1024 * 1024));
     }
+
+    #[test]
+    fn test_builder_path_not_set() {
+        let builder = WriterBuilder::new();
+        let result = builder.build();
+        assert!(result.is_err());
+        match result {
+            Err(err) => {
+                let err_msg = format!("{}", err);
+                assert!(err_msg.contains("Path is not set"));
+            }
+            Ok(_) => panic!("Expected error when path not set"),
+        }
+    }
+
+    #[test]
+    fn test_builder_parent_directory_not_exists() {
+        // Use a non-existent parent directory
+        let result = WriterBuilder::new()
+            .path("/nonexistent_directory_12345/output.mcap")
+            .build();
+
+        assert!(result.is_err());
+        match result {
+            Err(err) => {
+                let err_msg = format!("{}", err);
+                assert!(err_msg.contains("Parent directory does not exist"));
+                assert!(err_msg.contains("/nonexistent_directory_12345"));
+            }
+            Ok(_) => panic!("Expected error when parent directory doesn't exist"),
+        }
+    }
+
+    #[test]
+    fn test_builder_unknown_extension() {
+        // Create a temp directory
+        let temp_dir = std::env::temp_dir();
+        let unknown_path = temp_dir.join("test.unknown_ext_xyz");
+
+        let result = WriterBuilder::new().path(&unknown_path).build();
+
+        assert!(result.is_err());
+        match result {
+            Err(err) => {
+                let err_msg = format!("{}", err);
+                assert!(err_msg.contains("Unknown file format from extension"));
+            }
+            Ok(_) => panic!("Expected error for unknown extension"),
+        }
+    }
+
+    #[test]
+    fn test_builder_strategy_methods() {
+        let builder = WriterBuilder::new()
+            .path("output.bag")
+            .strategy(WriteStrategy::Parallel)
+            .compression_level(5)
+            .chunk_size(2048)
+            .num_threads(8);
+
+        assert_eq!(builder.config.strategy, WriteStrategy::Parallel);
+        assert_eq!(builder.config.compression_level, Some(5));
+        assert_eq!(builder.config.chunk_size, Some(2048));
+        assert_eq!(builder.config.num_threads, Some(8));
+    }
+
+    #[test]
+    fn test_write_strategy_variants() {
+        // Test that all variants can be created
+        let auto = WriteStrategy::Auto;
+        let sequential = WriteStrategy::Sequential;
+        let parallel = WriteStrategy::Parallel;
+
+        assert_eq!(auto.resolve(), WriteStrategy::Sequential);
+        assert_eq!(sequential.resolve(), WriteStrategy::Sequential);
+        assert_eq!(parallel.resolve(), WriteStrategy::Parallel);
+    }
 }

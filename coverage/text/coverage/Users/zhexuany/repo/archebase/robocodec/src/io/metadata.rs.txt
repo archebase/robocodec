@@ -1,0 +1,491 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/io/metadata.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Shared metadata types for all robotics data formats.
+    6|       |//!
+    7|       |//! This module provides unified types for representing metadata that
+    8|       |//! is common across different formats (MCAP, ROS1 bag, etc.).
+    9|       |
+   10|       |use crate::core::DecodedMessage;
+   11|       |use std::collections::HashMap;
+   12|       |
+   13|       |/// Result of decoding a message with complete metadata.
+   14|       |///
+   15|       |/// This type combines the decoded message data with all available
+   16|       |/// metadata from the file format, providing a unified interface
+   17|       |/// regardless of whether the source is MCAP or ROS1 bag.
+   18|       |///
+   19|       |/// # Timestamp Availability
+   20|       |///
+   21|       |/// Timestamps are populated when available from the underlying format.
+   22|       |/// Both MCAP and BAG formats include timestamp information, so `log_time`
+   23|       |/// and `publish_time` will typically be `Some(...)`. Use `has_timestamps()`
+   24|       |/// to verify both timestamps are present.
+   25|       |#[derive(Debug, Clone)]
+   26|       |pub struct DecodedMessageResult {
+   27|       |    /// The decoded message fields
+   28|       |    pub message: DecodedMessage,
+   29|       |    /// Channel information
+   30|       |    pub channel: ChannelInfo,
+   31|       |    /// Log timestamp (nanoseconds since Unix epoch, if available)
+   32|       |    pub log_time: Option<u64>,
+   33|       |    /// Publish timestamp (nanoseconds since Unix epoch, if available)
+   34|       |    pub publish_time: Option<u64>,
+   35|       |    /// Sequence number (if available from the format)
+   36|       |    pub sequence: Option<u64>,
+   37|       |}
+   38|       |
+   39|       |impl DecodedMessageResult {
+   40|       |    /// Create a new decoded message result.
+   41|      1|    pub fn new(
+   42|      1|        message: DecodedMessage,
+   43|      1|        channel: ChannelInfo,
+   44|      1|        log_time: Option<u64>,
+   45|      1|        publish_time: Option<u64>,
+   46|      1|    ) -> Self {
+   47|      1|        Self {
+   48|      1|            message,
+   49|      1|            channel,
+   50|      1|            log_time,
+   51|      1|            publish_time,
+   52|      1|            sequence: None,
+   53|      1|        }
+   54|      1|    }
+   55|       |
+   56|       |    /// Create with sequence number.
+   57|      0|    pub fn with_sequence(mut self, sequence: u64) -> Self {
+   58|      0|        self.sequence = Some(sequence);
+   59|      0|        self
+   60|      0|    }
+   61|       |
+   62|       |    /// Get a reference to the decoded message.
+   63|       |    ///
+   64|       |    /// Provides access to the decoded message fields.
+   65|      0|    pub fn message(&self) -> &DecodedMessage {
+   66|      0|        &self.message
+   67|      0|    }
+   68|       |
+   69|       |    /// Get the topic name for this message.
+   70|       |    ///
+   71|       |    /// Returns the topic name from the channel metadata.
+   72|      3|    pub fn topic(&self) -> &str {
+   73|      3|        &self.channel.topic
+   74|      3|    }
+   75|       |
+   76|       |    /// Get the message type name for this message.
+   77|       |    ///
+   78|       |    /// Returns the fully-qualified message type (e.g., "std_msgs/String").
+   79|      2|    pub fn message_type(&self) -> &str {
+   80|      2|        &self.channel.message_type
+   81|      2|    }
+   82|       |
+   83|       |    /// Get the time range as (log_time, publish_time).
+   84|       |    ///
+   85|       |    /// Returns `None` for either timestamp if not available. Note that when
+   86|       |    /// using the `decoded()` method, both timestamps will always be `None`.
+   87|       |    /// Use `decode_messages_with_timestamp()` to get actual timestamp values.
+   88|      1|    pub fn times(&self) -> (Option<u64>, Option<u64>) {
+   89|      1|        (self.log_time, self.publish_time)
+   90|      1|    }
+   91|       |
+   92|       |    /// Check if both timestamps are available for this result.
+   93|       |    ///
+   94|       |    /// Returns `true` only if both `log_time` and `publish_time` are `Some`.
+   95|       |    /// When using the `decoded()` method, this will always return `false`.
+   96|       |    /// Use `decode_messages_with_timestamp()` for timestamped messages.
+   97|      1|    pub fn has_timestamps(&self) -> bool {
+   98|      1|        self.log_time.is_some() && self.publish_time.is_some()
+   99|      1|    }
+  100|       |}
+  101|       |
+  102|       |/// Information about a channel/topic in a robotics data file.
+  103|       |///
+  104|       |/// A channel (also called a "topic" in ROS terminology) represents
+  105|       |/// a named stream of messages of a specific type.
+  106|       |#[derive(Debug, Clone, PartialEq)]
+  107|       |pub struct ChannelInfo {
+  108|       |    /// Unique channel ID within the file
+  109|       |    pub id: u16,
+  110|       |    /// Topic name (e.g., "/joint_states", "/tf")
+  111|       |    pub topic: String,
+  112|       |    /// Message type name (e.g., "sensor_msgs/msg/JointState", "tf2_msgs/TFMessage")
+  113|       |    pub message_type: String,
+  114|       |    /// Encoding format (e.g., "cdr", "protobuf", "json")
+  115|       |    pub encoding: String,
+  116|       |    /// Schema definition (message definition text for ROS messages)
+  117|       |    pub schema: Option<String>,
+  118|       |    /// Schema binary data (e.g., protobuf FileDescriptorSet)
+  119|       |    pub schema_data: Option<Vec<u8>>,
+  120|       |    /// Schema encoding (e.g., "ros2msg", "protobuf", "ros1msg")
+  121|       |    pub schema_encoding: Option<String>,
+  122|       |    /// Number of messages in this channel (0 if unknown)
+  123|       |    pub message_count: u64,
+  124|       |    /// Caller ID - identifies the publishing node (ROS1 specific)
+  125|       |    pub callerid: Option<String>,
+  126|       |}
+  127|       |
+  128|       |impl ChannelInfo {
+  129|       |    /// Create a new ChannelInfo.
+  130|     17|    pub fn new(id: u16, topic: impl Into<String>, message_type: impl Into<String>) -> Self {
+  131|     17|        Self {
+  132|     17|            id,
+  133|     17|            topic: topic.into(),
+  134|     17|            message_type: message_type.into(),
+  135|     17|            encoding: String::new(),
+  136|     17|            schema: None,
+  137|     17|            schema_data: None,
+  138|     17|            schema_encoding: None,
+  139|     17|            message_count: 0,
+  140|     17|            callerid: None,
+  141|     17|        }
+  142|     17|    }
+  143|       |
+  144|       |    /// Set the topic.
+  145|      1|    pub fn with_topic(mut self, topic: impl Into<String>) -> Self {
+  146|      1|        self.topic = topic.into();
+  147|      1|        self
+  148|      1|    }
+  149|       |
+  150|       |    /// Set the encoding.
+  151|      2|    pub fn with_encoding(mut self, encoding: impl Into<String>) -> Self {
+  152|      2|        self.encoding = encoding.into();
+  153|      2|        self
+  154|      2|    }
+  155|       |
+  156|       |    /// Set the schema.
+  157|      2|    pub fn with_schema(mut self, schema: impl Into<String>) -> Self {
+  158|      2|        self.schema = Some(schema.into());
+  159|      2|        self
+  160|      2|    }
+  161|       |
+  162|       |    /// Set the schema data.
+  163|      0|    pub fn with_schema_data(mut self, data: Vec<u8>, encoding: impl Into<String>) -> Self {
+  164|      0|        self.schema_data = Some(data);
+  165|      0|        self.schema_encoding = Some(encoding.into());
+  166|      0|        self
+  167|      0|    }
+  168|       |
+  169|       |    /// Set the message count.
+  170|      2|    pub fn with_message_count(mut self, count: u64) -> Self {
+  171|      2|        self.message_count = count;
+  172|      2|        self
+  173|      2|    }
+  174|       |
+  175|       |    /// Set the caller ID.
+  176|      0|    pub fn with_callerid(mut self, callerid: impl Into<String>) -> Self {
+  177|      0|        self.callerid = Some(callerid.into());
+  178|      0|        self
+  179|      0|    }
+  180|       |}
+  181|       |
+  182|       |/// Raw message data with metadata (undecoded).
+  183|       |///
+  184|       |/// This represents a message before decoding, containing only the raw bytes
+  185|       |/// and timing information.
+  186|       |#[derive(Debug, Clone, PartialEq)]
+  187|       |pub struct RawMessage {
+  188|       |    /// Channel ID this message belongs to
+  189|       |    pub channel_id: u16,
+  190|       |    /// Log timestamp (nanoseconds since Unix epoch)
+  191|       |    pub log_time: u64,
+  192|       |    /// Publish timestamp (nanoseconds since Unix epoch)
+  193|       |    pub publish_time: u64,
+  194|       |    /// Raw message data bytes
+  195|       |    pub data: Vec<u8>,
+  196|       |    /// Sequence number (if available from the format)
+  197|       |    pub sequence: Option<u64>,
+  198|       |}
+  199|       |
+  200|       |impl RawMessage {
+  201|       |    /// Create a new RawMessage.
+  202|      2|    pub fn new(channel_id: u16, log_time: u64, publish_time: u64, data: Vec<u8>) -> Self {
+  203|      2|        Self {
+  204|      2|            channel_id,
+  205|      2|            log_time,
+  206|      2|            publish_time,
+  207|      2|            data,
+  208|      2|            sequence: None,
+  209|      2|        }
+  210|      2|    }
+  211|       |
+  212|       |    /// Set the sequence number.
+  213|      2|    pub fn with_sequence(mut self, sequence: u64) -> Self {
+  214|      2|        self.sequence = Some(sequence);
+  215|      2|        self
+  216|      2|    }
+  217|       |
+  218|       |    /// Get the data length.
+  219|      2|    pub fn len(&self) -> usize {
+  220|      2|        self.data.len()
+  221|      2|    }
+  222|       |
+  223|       |    /// Check if the message has no data.
+  224|      0|    pub fn is_empty(&self) -> bool {
+  225|      0|        self.data.is_empty()
+  226|      0|    }
+  227|       |}
+  228|       |
+  229|       |/// Decoded message with timestamps.
+  230|       |///
+  231|       |/// This type wraps a decoded message with its log and publish timestamps,
+  232|       |/// providing a unified way to access timestamped decoded messages across
+  233|       |/// different formats (MCAP, BAG, etc.).
+  234|       |#[derive(Debug, Clone, PartialEq)]
+  235|       |pub struct TimestampedDecodedMessage {
+  236|       |    /// The decoded message fields
+  237|       |    pub message: DecodedMessage,
+  238|       |    /// Log timestamp (nanoseconds since Unix epoch)
+  239|       |    pub log_time: u64,
+  240|       |    /// Publish timestamp (nanoseconds since Unix epoch)
+  241|       |    pub publish_time: u64,
+  242|       |}
+  243|       |
+  244|       |impl TimestampedDecodedMessage {
+  245|       |    /// Create a new TimestampedDecodedMessage.
+  246|      0|    pub fn new(message: DecodedMessage, log_time: u64, publish_time: u64) -> Self {
+  247|      0|        Self {
+  248|      0|            message,
+  249|      0|            log_time,
+  250|      0|            publish_time,
+  251|      0|        }
+  252|      0|    }
+  253|       |
+  254|       |    /// Get a reference to the decoded message.
+  255|      0|    pub fn message(&self) -> &DecodedMessage {
+  256|      0|        &self.message
+  257|      0|    }
+  258|       |
+  259|       |    /// Convert into the decoded message, discarding timestamps.
+  260|      0|    pub fn into_message(self) -> DecodedMessage {
+  261|      0|        self.message
+  262|      0|    }
+  263|       |}
+  264|       |
+  265|       |/// Metadata about a single message.
+  266|       |///
+  267|       |/// Lightweight version of RawMessage for references into arena data.
+  268|       |#[derive(Debug, Clone, Copy, PartialEq)]
+  269|       |pub struct MessageMetadata {
+  270|       |    /// Channel ID this message belongs to
+  271|       |    pub channel_id: u16,
+  272|       |    /// Log timestamp (nanoseconds)
+  273|       |    pub log_time: u64,
+  274|       |    /// Publish timestamp (nanoseconds)
+  275|       |    pub publish_time: u64,
+  276|       |    /// Offset of the message data in the file
+  277|       |    pub data_offset: u64,
+  278|       |    /// Length of the message data
+  279|       |    pub data_len: u32,
+  280|       |    /// Sequence number (if available)
+  281|       |    pub sequence: Option<u64>,
+  282|       |}
+  283|       |
+  284|       |impl MessageMetadata {
+  285|       |    /// Create a new MessageMetadata.
+  286|      1|    pub fn new(
+  287|      1|        channel_id: u16,
+  288|      1|        log_time: u64,
+  289|      1|        publish_time: u64,
+  290|      1|        data_offset: u64,
+  291|      1|        data_len: u32,
+  292|      1|    ) -> Self {
+  293|      1|        Self {
+  294|      1|            channel_id,
+  295|      1|            log_time,
+  296|      1|            publish_time,
+  297|      1|            data_offset,
+  298|      1|            data_len,
+  299|      1|            sequence: None,
+  300|      1|        }
+  301|      1|    }
+  302|       |
+  303|       |    /// Get the data range as a tuple.
+  304|      3|    pub fn data_range(&self) -> (u64, u64) {
+  305|      3|        (self.data_offset, self.data_offset + self.data_len as u64)
+  306|      3|    }
+  307|       |
+  308|       |    /// Check if the data range is valid for a given file size.
+  309|      2|    pub fn is_valid_for_size(&self, file_size: u64) -> bool {
+  310|      2|        let (start, end) = self.data_range();
+  311|      2|        start < end && end <= file_size
+  312|      2|    }
+  313|       |}
+  314|       |
+  315|       |/// Information about a robotics data file.
+  316|       |///
+  317|       |/// Provides metadata about the file regardless of its format.
+  318|       |#[derive(Debug, Clone)]
+  319|       |pub struct FileInfo {
+  320|       |    /// File path
+  321|       |    pub path: String,
+  322|       |    /// Detected format
+  323|       |    pub format: FileFormat,
+  324|       |    /// File size in bytes
+  325|       |    pub size: u64,
+  326|       |    /// All channels in the file
+  327|       |    pub channels: HashMap<u16, ChannelInfo>,
+  328|       |    /// Total message count (0 if unknown)
+  329|       |    pub message_count: u64,
+  330|       |    /// Start timestamp (nanoseconds, 0 if unknown)
+  331|       |    pub start_time: u64,
+  332|       |    /// End timestamp (nanoseconds, 0 if unknown)
+  333|       |    pub end_time: u64,
+  334|       |    /// Duration in nanoseconds (0 if unknown)
+  335|       |    pub duration: u64,
+  336|       |}
+  337|       |
+  338|       |impl FileInfo {
+  339|       |    /// Create a new FileInfo.
+  340|      1|    pub fn new(path: impl Into<String>, format: FileFormat) -> Self {
+  341|      1|        Self {
+  342|      1|            path: path.into(),
+  343|      1|            format,
+  344|      1|            size: 0,
+  345|      1|            channels: HashMap::new(),
+  346|      1|            message_count: 0,
+  347|      1|            start_time: 0,
+  348|      1|            end_time: 0,
+  349|      1|            duration: 0,
+  350|      1|        }
+  351|      1|    }
+  352|       |
+  353|       |    /// Check if the file has a specific topic.
+  354|      1|    pub fn has_topic(&self, topic: &str) -> bool {
+  355|      1|        self.channels.values().any(|c| c.topic == topic)
+  356|      1|    }
+  357|       |
+  358|       |    /// Get all channels for a specific topic.
+  359|      1|    pub fn channels_for_topic(&self, topic: &str) -> Vec<&ChannelInfo> {
+  360|      1|        self.channels
+  361|      1|            .values()
+  362|      2|            .filter(|c| c.topic == topic)
+                           ^1
+  363|      1|            .collect()
+  364|      1|    }
+  365|       |
+  366|       |    /// Get the total number of topics.
+  367|      1|    pub fn topic_count(&self) -> usize {
+  368|       |        use std::collections::HashSet;
+  369|      1|        self.channels
+  370|      1|            .values()
+  371|      2|            .map(|c| c.topic.as_str())
+                           ^1
+  372|      1|            .collect::<HashSet<_>>()
+  373|      1|            .len()
+  374|      1|    }
+  375|       |}
+  376|       |
+  377|       |/// Detected file format.
+  378|       |///
+  379|       |/// Used by the format detection system to identify the type of
+  380|       |/// robotics data file.
+  381|       |#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  382|       |pub enum FileFormat {
+  383|       |    /// MCAP format
+  384|       |    Mcap,
+  385|       |    /// ROS1 bag format
+  386|       |    Bag,
+  387|       |    /// Unknown format
+  388|       |    Unknown,
+  389|       |}
+  390|       |
+  391|       |impl FileFormat {
+  392|       |    /// Get the file extension for this format.
+  393|      1|    pub fn extension(&self) -> &'static str {
+  394|      1|        match self {
+  395|      1|            FileFormat::Mcap => "mcap",
+  396|      0|            FileFormat::Bag => "bag",
+  397|      0|            FileFormat::Unknown => "",
+  398|       |        }
+  399|      1|    }
+  400|       |
+  401|       |    /// Get the default MIME type for this format.
+  402|      1|    pub fn mime_type(&self) -> &'static str {
+  403|      1|        match self {
+  404|      0|            FileFormat::Mcap => "application/x-mcap",
+  405|      1|            FileFormat::Bag => "application/x-rosbag",
+  406|      0|            FileFormat::Unknown => "application/octet-stream",
+  407|       |        }
+  408|      1|    }
+  409|       |}
+  410|       |
+  411|       |impl std::fmt::Display for FileFormat {
+  412|      1|    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+  413|      1|        match self {
+  414|      1|            FileFormat::Mcap => write!(f, "MCAP"),
+  415|      0|            FileFormat::Bag => write!(f, "ROS1 Bag"),
+  416|      0|            FileFormat::Unknown => write!(f, "Unknown"),
+  417|       |        }
+  418|      1|    }
+  419|       |}
+  420|       |
+  421|       |#[cfg(test)]
+  422|       |mod tests {
+  423|       |    use super::*;
+  424|       |
+  425|       |    #[test]
+  426|      1|    fn test_channel_info_builder() {
+  427|      1|        let info = ChannelInfo::new(1, "/test", "std_msgs/String")
+  428|      1|            .with_encoding("json")
+  429|      1|            .with_schema("string data")
+  430|      1|            .with_message_count(100);
+  431|       |
+  432|      1|        assert_eq!(info.id, 1);
+  433|      1|        assert_eq!(info.topic, "/test");
+  434|      1|        assert_eq!(info.message_type, "std_msgs/String");
+  435|      1|        assert_eq!(info.encoding, "json");
+  436|      1|        assert_eq!(info.schema, Some("string data".to_string()));
+  437|      1|        assert_eq!(info.message_count, 100);
+  438|      1|    }
+  439|       |
+  440|       |    #[test]
+  441|      1|    fn test_raw_message() {
+  442|      1|        let msg = RawMessage::new(1, 1000, 900, b"test data".to_vec()).with_sequence(5);
+  443|       |
+  444|      1|        assert_eq!(msg.channel_id, 1);
+  445|      1|        assert_eq!(msg.log_time, 1000);
+  446|      1|        assert_eq!(msg.publish_time, 900);
+  447|      1|        assert_eq!(msg.data, b"test data");
+  448|      1|        assert_eq!(msg.sequence, Some(5));
+  449|      1|        assert_eq!(msg.len(), 9);
+  450|      1|    }
+  451|       |
+  452|       |    #[test]
+  453|      1|    fn test_message_metadata() {
+  454|      1|        let meta = MessageMetadata::new(1, 1000, 900, 100, 50);
+  455|      1|        assert_eq!(meta.channel_id, 1);
+  456|      1|        assert_eq!(meta.data_range(), (100, 150));
+  457|      1|        assert!(meta.is_valid_for_size(200));
+  458|      1|        assert!(!meta.is_valid_for_size(120));
+  459|      1|    }
+  460|       |
+  461|       |    #[test]
+  462|      1|    fn test_file_info() {
+  463|      1|        let mut info = FileInfo::new("test.mcap", FileFormat::Mcap);
+  464|      1|        info.size = 1000;
+  465|      1|        info.message_count = 500;
+  466|       |
+  467|      1|        let ch = ChannelInfo::new(1, "/ch1", "std_msgs/String");
+  468|      1|        info.channels.insert(1, ch.clone());
+  469|      1|        info.channels.insert(
+  470|       |            2,
+  471|      1|            ChannelInfo::new(2, "/ch2", "std_msgs/String").with_topic("/ch1"),
+  472|       |        ); // Same topic, different channel
+  473|       |
+  474|      1|        assert!(info.has_topic("/ch1"));
+  475|      1|        assert_eq!(info.channels_for_topic("/ch1").len(), 2);
+  476|      1|        assert_eq!(info.topic_count(), 1); // Only one unique topic
+  477|      1|    }
+  478|       |
+  479|       |    #[test]
+  480|      1|    fn test_file_format() {
+  481|      1|        assert_eq!(FileFormat::Mcap.extension(), "mcap");
+  482|      1|        assert_eq!(FileFormat::Bag.mime_type(), "application/x-rosbag");
+  483|      1|        assert_eq!(format!("{}", FileFormat::Mcap), "MCAP");
+  484|      1|    }
+  485|       |}
+

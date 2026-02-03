@@ -1,0 +1,89 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/bin/cmd/rewrite.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Rewrite command - rewrite a file in the same format.
+    6|       |
+    7|       |use std::path::PathBuf;
+    8|       |
+    9|       |use clap::Args;
+   10|       |
+   11|       |use crate::common::Result;
+   12|       |use robocodec::RoboRewriter;
+   13|       |
+   14|       |/// Rewrite a robotics data file (same format only).
+   15|       |///
+   16|       |/// Creates a new file with the same format as the input, re-encoding
+   17|       |/// all messages. This can be used to normalize file structure or
+   18|       |/// apply transformations in the future.
+   19|       |#[derive(Args, Clone, Debug)]
+   20|       |pub struct RewriteCmd {
+   21|       |    /// Input file path
+   22|       |    #[arg(value_name = "INPUT")]
+   23|       |    pub input: PathBuf,
+   24|       |
+   25|       |    /// Output file path
+   26|       |    #[arg(value_name = "OUTPUT")]
+   27|       |    pub output: PathBuf,
+   28|       |}
+   29|       |
+   30|       |impl RewriteCmd {
+   31|      2|    pub fn run(self) -> Result<()> {
+   32|       |        // Check if this is a cross-format attempt
+   33|      2|        let input_ext = self
+   34|      2|            .input
+   35|      2|            .extension()
+   36|      2|            .and_then(|e| e.to_str())
+   37|      2|            .unwrap_or("")
+   38|      2|            .to_lowercase();
+   39|      2|        let output_ext = self
+   40|      2|            .output
+   41|      2|            .extension()
+   42|      2|            .and_then(|e| e.to_str())
+   43|      2|            .unwrap_or("")
+   44|      2|            .to_lowercase();
+   45|       |
+   46|       |        // Check if formats differ
+   47|      2|        let is_cross_format = matches!(
+                                            ^1
+   48|      2|            (input_ext.as_str(), output_ext.as_str()),
+   49|      2|            ("bag", "mcap") | ("mcap", "bag")
+                                             ^0      ^0
+   50|       |        );
+   51|       |
+   52|      2|        if is_cross_format {
+   53|      1|            return Err(anyhow::anyhow!(
+   54|      1|                "Cross-format rewrite ({input_ext} → {output_ext}) is not supported.\n\n\
+   55|      1|                robocodec can read and write both BAG and MCAP formats, but cannot convert between them.\n\
+   56|      1|                The serialization formats are fundamentally different (ROS1 vs ROS2).\n\n\
+   57|      1|                For format conversion, consider using:\n\
+   58|      1|                - Foxglove's mcap CLI: https://github.com/foxglove/mcap\n\
+   59|      1|                - rosbag tool for ROS1 bags\n\
+   60|      1|                - ros2 bag tool for ROS2"
+   61|      1|            ));
+   62|      1|        }
+   63|       |
+   64|      1|        let format_name = match input_ext.as_str() {
+   65|      1|            "bag" => "BAG",
+   66|      0|            "mcap" => "MCAP",
+   67|      0|            _ => "file",
+   68|       |        };
+   69|       |
+   70|      1|        println!("Rewriting {} file:", format_name);
+   71|      1|        println!("  Input:  {}", self.input.display());
+   72|      1|        println!("  Output: {}", self.output.display());
+   73|       |
+   74|      1|        let mut rewriter = RoboRewriter::open(&self.input)?;
+                          ^0
+   75|      0|        let stats = rewriter.rewrite(&self.output)?;
+   76|       |
+   77|      0|        println!("  Messages written: {}", stats.message_count);
+   78|      0|        println!("  Channels: {}", stats.channel_count);
+   79|      0|        println!("  Complete!");
+   80|      0|        Ok(())
+   81|      2|    }
+   82|       |}
+

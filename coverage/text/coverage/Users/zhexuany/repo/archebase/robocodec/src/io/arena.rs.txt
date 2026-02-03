@@ -1,0 +1,362 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/io/arena.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Memory-mapped file arena for safe lifetime management.
+    6|       |//!
+    7|       |//! The `MmapArena` owns the memory-mapped file data and provides safe references
+    8|       |//! to its contents. This eliminates the need for unsafe lifetime transmutes by
+    9|       |//! establishing clear ownership: the arena owns the data, readers borrow from
+   10|       |//! the arena, and iterators borrow from readers.
+   11|       |//!
+   12|       |//! # Ownership Model
+   13|       |//!
+   14|       |//! ```text
+   15|       |//! MmapArena (owns mmap)
+   16|       |//!   ↓
+   17|       |//! Reader (borrows from arena for 'arena lifetime)
+   18|       |//!   ↓
+   19|       |//! Iterator (borrows from reader)
+   20|       |//! ```
+   21|       |//!
+   22|       |//! # Example
+   23|       |//!
+   24|       |//! ```rust,no_run
+   25|       |//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+   26|       |//! use robocodec::io::arena::MmapArena;
+   27|       |//!
+   28|       |//! // Open a file and create an arena
+   29|       |//! let arena = MmapArena::open("data.mcap")?;
+   30|       |//!
+   31|       |//! // The arena owns the data
+   32|       |//! let data: &[u8] = arena.data();
+   33|       |//!
+   34|       |//! // All references are tied to the arena's lifetime
+   35|       |//! // No unsafe transmute needed!
+   36|       |//! # Ok(())
+   37|       |//! # }
+   38|       |//! ```
+   39|       |
+   40|       |use std::fs::File;
+   41|       |use std::ops::Deref;
+   42|       |use std::path::Path;
+   43|       |
+   44|       |use crate::CodecError;
+   45|       |
+   46|       |/// A memory-mapped file arena that owns all file data.
+   47|       |///
+   48|       |/// The arena provides safe access to memory-mapped file contents without
+   49|       |/// requiring unsafe lifetime extensions. All references to the data are
+   50|       |/// tied to the arena's lifetime, ensuring the data outlives all borrows.
+   51|       |///
+   52|       |/// # Safety
+   53|       |///
+   54|       |/// This type is a thin wrapper around `memmap2::Mmap` that enforces
+   55|       |/// lifetime safety at the type level. The mmap is owned by the arena,
+   56|       |/// and any slices borrowed from the arena are tied to its lifetime.
+   57|       |pub struct MmapArena {
+   58|       |    /// The memory-mapped file (owned)
+   59|       |    mmap: memmap2::Mmap,
+   60|       |    /// File path for diagnostics
+   61|       |    path: String,
+   62|       |}
+   63|       |
+   64|       |impl MmapArena {
+   65|       |    /// Open a file and create a memory-mapped arena.
+   66|       |    ///
+   67|       |    /// # Errors
+   68|       |    ///
+   69|       |    /// Returns an error if the file cannot be opened or memory-mapped.
+   70|      5|    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, CodecError> {
+   71|      5|        let path_ref = path.as_ref();
+   72|      5|        let path_str = path_ref.to_string_lossy().to_string();
+   73|       |
+   74|      5|        let file = File::open(path_ref).map_err(|e| {
+                                                                  ^0
+   75|      0|            CodecError::encode(
+   76|       |                "MmapArena",
+   77|      0|                format!("Failed to open file '{path_str}': {e}"),
+   78|       |            )
+   79|      0|        })?;
+   80|       |
+   81|       |        // Note: We use unsafe mmap here, but the wrapper ensures safety
+   82|       |        // by owning the mmap and only providing references tied to its lifetime.
+   83|      5|        let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
+                                                                                  ^0
+   84|      0|            CodecError::encode(
+   85|       |                "MmapArena",
+   86|      0|                format!("Failed to mmap file '{path_str}': {e}"),
+   87|       |            )
+   88|      0|        })?;
+   89|       |
+   90|      5|        Ok(Self {
+   91|      5|            mmap,
+   92|      5|            path: path_str,
+   93|      5|        })
+   94|      5|    }
+   95|       |
+   96|       |    /// Create an arena from existing mmap data.
+   97|      0|    pub fn from_mmap(mmap: memmap2::Mmap, path: String) -> Self {
+   98|      0|        Self { mmap, path }
+   99|      0|    }
+  100|       |
+  101|       |    /// Get the file path.
+  102|      0|    pub fn path(&self) -> &str {
+  103|      0|        &self.path
+  104|      0|    }
+  105|       |
+  106|       |    /// Get a reference to the memory-mapped data.
+  107|      2|    pub fn data(&self) -> &[u8] {
+  108|      2|        &self.mmap
+  109|      2|    }
+  110|       |
+  111|       |    /// Get the length of the data.
+  112|      2|    pub fn len(&self) -> usize {
+  113|      2|        self.mmap.len()
+  114|      2|    }
+  115|       |
+  116|       |    /// Check if the arena is empty.
+  117|      1|    pub fn is_empty(&self) -> bool {
+  118|      1|        self.mmap.is_empty()
+  119|      1|    }
+  120|       |
+  121|       |    /// Create a reference to a slice of the data with bounds checking.
+  122|       |    ///
+  123|       |    /// # Errors
+  124|       |    ///
+  125|       |    /// Returns an error if the range is out of bounds.
+  126|      5|    pub fn slice(&self, offset: usize, len: usize) -> Result<&[u8], CodecError> {
+  127|      5|        let end = offset
+  128|      5|            .checked_add(len)
+  129|      5|            .ok_or_else(|| CodecError::buffer_too_short(len, 0, offset as u64))?;
+                                         ^0                           ^0      ^0             ^0
+  130|       |
+  131|      5|        if end > self.mmap.len() {
+  132|      2|            let available = if offset < self.mmap.len() {
+  133|      1|                self.mmap.len() - offset
+  134|       |            } else {
+  135|      1|                0
+  136|       |            };
+  137|      2|            return Err(CodecError::buffer_too_short(len, available, offset as u64));
+  138|      3|        }
+  139|       |
+  140|      3|        Ok(&self.mmap[offset..end])
+  141|      5|    }
+  142|       |
+  143|       |    /// Create a reference to a slice of the data without bounds checking.
+  144|       |    ///
+  145|       |    /// # Safety
+  146|       |    ///
+  147|       |    /// Caller must ensure the range is within bounds.
+  148|      0|    pub unsafe fn slice_unchecked(&self, offset: usize, len: usize) -> &[u8] {
+  149|       |        // SAFETY: Caller ensures the range is valid
+  150|      0|        self.mmap.get_unchecked(offset..offset + len)
+  151|      0|    }
+  152|       |}
+  153|       |
+  154|       |impl Deref for MmapArena {
+  155|       |    type Target = [u8];
+  156|       |
+  157|      1|    fn deref(&self) -> &Self::Target {
+  158|      1|        &self.mmap
+  159|      1|    }
+  160|       |}
+  161|       |
+  162|       |impl std::fmt::Debug for MmapArena {
+  163|      0|    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+  164|      0|        f.debug_struct("MmapArena")
+  165|      0|            .field("path", &self.path)
+  166|      0|            .field("len", &self.mmap.len())
+  167|      0|            .finish()
+  168|      0|    }
+  169|       |}
+  170|       |
+  171|       |/// A reference to a memory-mapped arena with a specific lifetime.
+  172|       |///
+  173|       |/// This type is used when you need to store a reference to an arena
+  174|       |/// with an explicit lifetime parameter, such as in a reader struct.
+  175|       |///
+  176|       |/// # Example
+  177|       |///
+  178|       |/// ```no_run
+  179|       |/// use robocodec::io::arena::{MmapArena, MmapArenaRef};
+  180|       |/// use std::collections::HashMap;
+  181|       |///
+  182|       |/// # fn main() {
+  183|       |/// struct ChannelInfo { name: String }
+  184|       |/// struct McapReader<'arena> {
+  185|       |///     arena: MmapArenaRef<'arena>,
+  186|       |///     channels: HashMap<u16, ChannelInfo>,
+  187|       |/// }
+  188|       |///
+  189|       |/// impl<'arena> McapReader<'arena> {
+  190|       |///     fn new(arena: &'arena MmapArena) -> Self {
+  191|       |///         Self {
+  192|       |///             arena: MmapArenaRef::new(arena),
+  193|       |///             channels: HashMap::new(),
+  194|       |///         }
+  195|       |///     }
+  196|       |/// }
+  197|       |/// # }
+  198|       |/// ```
+  199|       |#[derive(Debug, Clone, Copy)]
+  200|       |pub struct MmapArenaRef<'arena> {
+  201|       |    /// Reference to the arena
+  202|       |    arena: &'arena MmapArena,
+  203|       |}
+  204|       |
+  205|       |impl<'arena> MmapArenaRef<'arena> {
+  206|       |    /// Create a new arena reference.
+  207|      1|    pub fn new(arena: &'arena MmapArena) -> Self {
+  208|      1|        Self { arena }
+  209|      1|    }
+  210|       |
+  211|       |    /// Get the underlying arena reference.
+  212|      0|    pub fn get(&self) -> &'arena MmapArena {
+  213|      0|        self.arena
+  214|      0|    }
+  215|       |
+  216|       |    /// Get the file path.
+  217|      0|    pub fn path(&self) -> &str {
+  218|      0|        self.arena.path()
+  219|      0|    }
+  220|       |
+  221|       |    /// Get a reference to the data.
+  222|      1|    pub fn data(&self) -> &'arena [u8] {
+  223|      1|        self.arena.data()
+  224|      1|    }
+  225|       |
+  226|       |    /// Get the length of the data.
+  227|      1|    pub fn len(&self) -> usize {
+  228|      1|        self.arena.len()
+  229|      1|    }
+  230|       |
+  231|       |    /// Check if the arena is empty.
+  232|      0|    pub fn is_empty(&self) -> bool {
+  233|      0|        self.arena.is_empty()
+  234|      0|    }
+  235|       |
+  236|       |    /// Create a slice with bounds checking.
+  237|      1|    pub fn slice(&self, offset: usize, len: usize) -> Result<&'arena [u8], CodecError> {
+  238|      1|        self.arena.slice(offset, len)
+  239|      1|    }
+  240|       |
+  241|       |    /// Create a slice without bounds checking.
+  242|       |    ///
+  243|       |    /// # Safety
+  244|       |    ///
+  245|       |    /// Caller must ensure the range is valid.
+  246|      0|    pub unsafe fn slice_unchecked(&self, offset: usize, len: usize) -> &'arena [u8] {
+  247|       |        // SAFETY: Caller ensures the range is valid, and the borrow is tied
+  248|       |        // to 'arena which is the arena's lifetime
+  249|      0|        self.arena.slice_unchecked(offset, len)
+  250|      0|    }
+  251|       |}
+  252|       |
+  253|       |impl<'arena> Deref for MmapArenaRef<'arena> {
+  254|       |    type Target = [u8];
+  255|       |
+  256|      0|    fn deref(&self) -> &Self::Target {
+  257|      0|        self.data()
+  258|      0|    }
+  259|       |}
+  260|       |
+  261|       |impl<'arena> AsRef<[u8]> for MmapArenaRef<'arena> {
+  262|      0|    fn as_ref(&self) -> &[u8] {
+  263|      0|        self.data()
+  264|      0|    }
+  265|       |}
+  266|       |
+  267|       |#[cfg(test)]
+  268|       |mod tests {
+  269|       |    use super::*;
+  270|       |    use std::fs::File;
+  271|       |    use std::io::Write;
+  272|       |
+  273|      5|    fn create_temp_file(name: &str, data: &[u8]) -> String {
+  274|      5|        let mut path = std::env::temp_dir();
+  275|      5|        path.push(format!(
+  276|      5|            "robocodec_test_arena_{}_{}.tmp",
+  277|      5|            std::process::id(),
+  278|       |            name
+  279|       |        ));
+  280|      5|        {
+  281|      5|            let mut temp_file = File::create(&path).unwrap();
+  282|      5|            temp_file.write_all(data).unwrap();
+  283|      5|            temp_file.flush().unwrap();
+  284|      5|        }
+  285|      5|        path.to_str().unwrap().to_string()
+  286|      5|    }
+  287|       |
+  288|       |    #[test]
+  289|      1|    fn test_arena_open() {
+  290|      1|        let path = create_temp_file("open", b"hello world");
+  291|       |
+  292|      1|        let arena = MmapArena::open(&path).unwrap();
+  293|      1|        assert_eq!(arena.data(), b"hello world");
+  294|      1|        assert_eq!(arena.len(), 11);
+  295|      1|        assert!(!arena.is_empty());
+  296|       |
+  297|      1|        let _ = std::fs::remove_file(&path);
+  298|      1|    }
+  299|       |
+  300|       |    #[test]
+  301|      1|    fn test_arena_slice() {
+  302|      1|        let path = create_temp_file("slice", b"hello world");
+  303|       |
+  304|      1|        let arena = MmapArena::open(&path).unwrap();
+  305|      1|        let slice = arena.slice(0, 5).unwrap();
+  306|      1|        assert_eq!(slice, b"hello");
+  307|       |
+  308|      1|        let slice = arena.slice(6, 5).unwrap();
+  309|      1|        assert_eq!(slice, b"world");
+  310|       |
+  311|      1|        let _ = std::fs::remove_file(&path);
+  312|      1|    }
+  313|       |
+  314|       |    #[test]
+  315|      1|    fn test_arena_slice_out_of_bounds() {
+  316|      1|        let path = create_temp_file("oob", b"hello");
+  317|       |
+  318|      1|        let arena = MmapArena::open(&path).unwrap();
+  319|      1|        let result = arena.slice(0, 100);
+  320|      1|        assert!(result.is_err());
+  321|       |
+  322|      1|        let result = arena.slice(10, 1);
+  323|      1|        assert!(result.is_err());
+  324|       |
+  325|      1|        let _ = std::fs::remove_file(&path);
+  326|      1|    }
+  327|       |
+  328|       |    #[test]
+  329|      1|    fn test_arena_ref() {
+  330|      1|        let path = create_temp_file("ref", b"hello world");
+  331|       |
+  332|      1|        let arena = MmapArena::open(&path).unwrap();
+  333|      1|        let arena_ref = MmapArenaRef::new(&arena);
+  334|       |
+  335|      1|        assert_eq!(arena_ref.data(), b"hello world");
+  336|      1|        assert_eq!(arena_ref.len(), 11);
+  337|       |
+  338|      1|        let slice = arena_ref.slice(0, 5).unwrap();
+  339|      1|        assert_eq!(slice, b"hello");
+  340|       |
+  341|      1|        let _ = std::fs::remove_file(&path);
+  342|      1|    }
+  343|       |
+  344|       |    #[test]
+  345|      1|    fn test_arena_deref() {
+  346|      1|        let path = create_temp_file("deref", b"hello");
+  347|       |
+  348|      1|        let arena = MmapArena::open(&path).unwrap();
+  349|       |        // Test Deref implementation
+  350|      1|        let first = arena.first().unwrap();
+  351|      1|        assert_eq!(*first, b'h');
+  352|       |
+  353|      1|        let _ = std::fs::remove_file(&path);
+  354|      1|    }
+  355|       |}
+

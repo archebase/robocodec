@@ -1,0 +1,878 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/io/formats/bag/parallel.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! ROS1 bag format implementation for the unified I/O layer.
+    6|       |//!
+    7|       |//! This module provides BAG-specific readers that implement the unified I/O traits.
+    8|       |//!
+    9|       |//! **Note:** This implementation uses a custom BAG parser with no external dependencies.
+   10|       |//! It supports:
+   11|       |//! - BZ2 and uncompressed chunks
+   12|       |//! - Parallel reading via chunk indexes (default behavior)
+   13|       |//! - Full connection metadata extraction
+   14|       |//! - Decoded message streaming via `decode_messages()`
+   15|       |
+   16|       |use std::collections::HashMap;
+   17|       |use std::io::Write;
+   18|       |use std::path::Path;
+   19|       |use std::sync::Arc;
+   20|       |use std::time::Instant;
+   21|       |
+   22|       |use rayon::prelude::*;
+   23|       |
+   24|       |use crate::core::DecodedMessage;
+   25|       |use crate::encoding::CdrDecoder;
+   26|       |use crate::io::filter::ChannelFilter;
+   27|       |use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage, TimestampedDecodedMessage};
+   28|       |use crate::io::traits::{
+   29|       |    FormatReader, MessageChunkData, ParallelReader, ParallelReaderConfig, ParallelReaderStats,
+   30|       |};
+   31|       |use crate::{CodecError, Result};
+   32|       |
+   33|       |use super::parser::{BagChunkInfo, BagConnection, BagParser};
+   34|       |use super::writer::BagWriter;
+   35|       |
+   36|       |/// ROS1 bag format type.
+   37|       |///
+   38|       |/// This type provides factory methods for creating BAG readers.
+   39|       |/// Default behavior is parallel reading for optimal performance.
+   40|       |pub struct BagFormat;
+   41|       |
+   42|       |impl BagFormat {
+   43|       |    /// Create a BAG reader with parallel reading support (default).
+   44|       |    ///
+   45|       |    /// The reader uses memory-mapping and processes chunks in parallel
+   46|       |    /// using the Rayon thread pool.
+   47|     46|    pub fn open<P: AsRef<Path>>(path: P) -> Result<ParallelBagReader> {
+   48|     46|        ParallelBagReader::open(path)
+   49|     46|    }
+   50|       |
+   51|       |    /// Create a BAG writer with the given configuration.
+   52|       |    ///
+   53|       |    /// Returns a boxed FormatWriter trait object for unified writer API.
+   54|     12|    pub fn create_writer<P: AsRef<Path>>(
+   55|     12|        path: P,
+   56|     12|        _config: &crate::io::writer::WriterConfig,
+   57|     12|    ) -> Result<Box<dyn crate::io::traits::FormatWriter>> {
+   58|       |        // For now, we create a simple writer
+   59|       |        // TODO: Use config options for compression, chunk size, etc.
+   60|     12|        let writer = BagWriter::create(path)?;
+                                                          ^0
+   61|     12|        Ok(Box::new(writer))
+   62|     12|    }
+   63|       |}
+   64|       |
+   65|       |/// Parallel BAG reader with memory-mapped file access.
+   66|       |///
+   67|       |/// This reader parses the BAG file metadata (connections, chunk indexes)
+   68|       |/// and supports parallel processing of chunks using Rayon.
+   69|       |pub struct ParallelBagReader {
+   70|       |    /// File path
+   71|       |    path: String,
+   72|       |    /// Custom BAG parser
+   73|       |    parser: BagParser,
+   74|       |    /// Channel information (channel_id -> ChannelInfo)
+   75|       |    channels: HashMap<u16, ChannelInfo>,
+   76|       |    /// Connection ID to channel ID mapping (conn_id -> channel_id)
+   77|       |    conn_id_map: HashMap<u32, u16>,
+   78|       |    /// Total message count (estimated from chunks)
+   79|       |    message_count: u64,
+   80|       |    /// Start timestamp
+   81|       |    start_time: Option<u64>,
+   82|       |    /// End timestamp
+   83|       |    end_time: Option<u64>,
+   84|       |}
+   85|       |
+   86|       |impl ParallelBagReader {
+   87|       |    /// Open a BAG file for parallel reading.
+   88|     46|    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+   89|     46|        let path_ref = path.as_ref();
+   90|     46|        let path_str = path_ref.to_string_lossy().to_string();
+   91|       |
+   92|       |        // Open the custom parser
+   93|     46|        let parser = BagParser::open(path_ref)?;
+                          ^45                               ^1
+   94|       |
+   95|       |        // Build channels from parser's connections
+   96|       |        // Each connection becomes a separate channel to preserve callerid info
+   97|     45|        let mut channels: HashMap<u16, ChannelInfo> = HashMap::new();
+   98|     45|        let mut conn_id_map: HashMap<u32, u16> = HashMap::new();
+   99|     45|        let mut next_channel_id: u16 = 0;
+  100|       |
+  101|       |        // Use (topic, callerid) as the key to identify unique channels
+  102|     45|        let mut topic_callerid_to_channel: HashMap<(String, String), u16> = HashMap::new();
+  103|       |
+  104|       |        // Sort connections by conn_id to ensure deterministic channel ID assignment
+  105|     45|        let mut sorted_conn_ids: Vec<u32> = parser.connections().keys().copied().collect();
+  106|     45|        sorted_conn_ids.sort();
+  107|       |
+  108|    250|        for conn_id in sorted_conn_ids {
+                          ^205
+  109|    205|            let conn = &parser.connections()[&conn_id];
+  110|    205|            let callerid = conn.caller_id.clone();
+  111|    205|            let key = (conn.topic.clone(), callerid.clone());
+  112|       |
+  113|       |            // Check if we already have a channel for this (topic, callerid) combination
+  114|    205|            let channel_id = if let Some(&existing_id) = topic_callerid_to_channel.get(&key) {
+                                                        ^0
+  115|      0|                existing_id
+  116|       |            } else {
+  117|    205|                let id = next_channel_id;
+  118|    205|                next_channel_id = next_channel_id.wrapping_add(1);
+  119|       |
+  120|    205|                channels.insert(
+  121|    205|                    id,
+  122|       |                    ChannelInfo {
+  123|    205|                        id,
+  124|    205|                        topic: conn.topic.clone(),
+  125|    205|                        message_type: conn.message_type.clone(),
+  126|    205|                        encoding: "ros1".to_string(), // ROS1 serialization format
+  127|    205|                        schema: Some(conn.message_definition.clone()),
+  128|    205|                        schema_data: None,
+  129|    205|                        schema_encoding: Some("ros1msg".to_string()),
+  130|       |                        message_count: 0,
+  131|    205|                        callerid: if callerid.is_empty() {
+  132|      0|                            None
+  133|       |                        } else {
+  134|    205|                            Some(callerid.clone())
+  135|       |                        },
+  136|       |                    },
+  137|       |                );
+  138|    205|                topic_callerid_to_channel.insert(key, id);
+  139|    205|                id
+  140|       |            };
+  141|       |
+  142|    205|            conn_id_map.insert(conn_id, channel_id);
+  143|       |        }
+  144|       |
+  145|       |        // Calculate message count and time bounds from chunks
+  146|     45|        let chunks = parser.chunks();
+  147|    104|        let message_count = chunks.iter().map(|c| c.message_count as u64).sum();
+                          ^45             ^45    ^45    ^45                             ^45
+  148|     45|        let start_time = chunks.first().map(|c| c.start_time);
+  149|     45|        let end_time = chunks.last().map(|c| c.end_time);
+  150|       |
+  151|     45|        Ok(Self {
+  152|     45|            path: path_str,
+  153|     45|            parser,
+  154|     45|            channels,
+  155|     45|            conn_id_map,
+  156|     45|            message_count,
+  157|     45|            start_time,
+  158|     45|            end_time,
+  159|     45|        })
+  160|     46|    }
+  161|       |
+  162|       |    /// Get the connection ID to channel ID mapping.
+  163|      0|    pub fn conn_id_map(&self) -> &HashMap<u32, u16> {
+  164|      0|        &self.conn_id_map
+  165|      0|    }
+  166|       |
+  167|       |    /// Get all chunk information from the parser.
+  168|      0|    pub fn chunks(&self) -> &[BagChunkInfo] {
+  169|      0|        self.parser.chunks()
+  170|      0|    }
+  171|       |
+  172|       |    /// Get all connections from the parser.
+  173|      0|    pub fn connections(&self) -> &HashMap<u32, BagConnection> {
+  174|      0|        self.parser.connections()
+  175|      0|    }
+  176|       |
+  177|       |    /// Create a raw message iterator for sequential reading.
+  178|       |    ///
+  179|       |    /// This is useful for rewriters that need to process messages one by one.
+  180|     11|    pub fn iter_raw(&self) -> Result<BagRawIter<'_>> {
+  181|     11|        Ok(BagRawIter::new(
+  182|     11|            &self.parser,
+  183|     11|            &self.channels,
+  184|     11|            &self.conn_id_map,
+  185|     11|        ))
+  186|     11|    }
+  187|       |
+  188|       |    /// Decode messages from the BAG file.
+  189|       |    ///
+  190|       |    /// Returns an iterator that yields decoded messages with their channel info.
+  191|       |    /// Uses ROS1 CDR deserialization.
+  192|       |    ///
+  193|       |    /// # Example
+  194|       |    ///
+  195|       |    /// ```no_run
+  196|       |    /// # use robocodec::io::formats::bag::BagFormat;
+  197|       |    /// # fn test() -> Result<(), Box<dyn std::error::Error>> {
+  198|       |    /// let reader = BagFormat::open("test.bag")?;
+  199|       |    /// let decoded_iter = reader.decode_messages()?;
+  200|       |    /// let mut stream = decoded_iter.stream()?;
+  201|       |    ///
+  202|       |    /// while let Some(result) = stream.next() {
+  203|       |    ///     let (message, channel_info) = result?;
+  204|       |    ///     println!("Topic: {}, Data: {:?}", channel_info.topic, message);
+  205|       |    /// }
+  206|       |    /// # Ok(())
+  207|       |    /// # }
+  208|       |    /// ```
+  209|      0|    pub fn decode_messages(&self) -> Result<BagDecodedMessageIter<'_>> {
+  210|      0|        Ok(BagDecodedMessageIter::new(
+  211|      0|            &self.parser,
+  212|      0|            &self.channels,
+  213|      0|            &self.conn_id_map,
+  214|      0|        ))
+  215|      0|    }
+  216|       |
+  217|       |    /// Decode messages with timestamps from the BAG file.
+  218|       |    ///
+  219|       |    /// Returns an iterator that yields decoded messages with their log_time and publish_time.
+  220|       |    /// Similar to `decode_messages` but includes timestamp information for each message.
+  221|       |    ///
+  222|       |    /// # Example
+  223|       |    ///
+  224|       |    /// ```no_run
+  225|       |    /// # use robocodec::io::formats::bag::BagFormat;
+  226|       |    /// # fn test() -> Result<(), Box<dyn std::error::Error>> {
+  227|       |    /// let reader = BagFormat::open("test.bag")?;
+  228|       |    /// let decoded_iter = reader.decode_messages_with_timestamp()?;
+  229|       |    /// let mut stream = decoded_iter.stream()?;
+  230|       |    ///
+  231|       |    /// while let Some(result) = stream.next() {
+  232|       |    ///     let (timestamped_msg, channel_info) = result?;
+  233|       |    ///     println!("Topic: {}, Log Time: {}", channel_info.topic, timestamped_msg.log_time);
+  234|       |    /// }
+  235|       |    /// # Ok(())
+  236|       |    /// # }
+  237|       |    /// ```
+  238|      4|    pub fn decode_messages_with_timestamp(&self) -> Result<BagDecodedMessageWithTimestampIter<'_>> {
+  239|      4|        Ok(BagDecodedMessageWithTimestampIter::new(
+  240|      4|            &self.parser,
+  241|      4|            &self.channels,
+  242|      4|            &self.conn_id_map,
+  243|      4|        ))
+  244|      4|    }
+  245|       |
+  246|       |    /// Process a single chunk in parallel.
+  247|      0|    fn process_chunk(
+  248|      0|        chunk_info: &BagChunkInfo,
+  249|      0|        parser: &BagParser,
+  250|      0|        conn_id_map: &HashMap<u32, u16>,
+  251|      0|        channels: &HashMap<u16, ChannelInfo>,
+  252|      0|        _channel_filter: &Option<ChannelFilter>,
+  253|      0|    ) -> Result<ProcessedChunk> {
+  254|       |        // Read and decompress the chunk
+  255|      0|        let decompressed = parser.read_chunk(chunk_info)?;
+  256|       |
+  257|       |        // Parse messages from decompressed data
+  258|      0|        let messages = parser.parse_chunk_messages(&decompressed, conn_id_map)?;
+  259|       |
+  260|       |        // Calculate total bytes
+  261|      0|        let total_bytes = messages.iter().map(|m| m.data.len()).sum::<usize>();
+  262|      0|        let message_count = messages.len();
+  263|       |
+  264|       |        // Build message chunk
+  265|      0|        let mut chunk = MessageChunkData::new(chunk_info.sequence);
+  266|       |
+  267|      0|        for msg in messages {
+  268|       |            // Verify channel exists
+  269|      0|            if channels.contains_key(&msg.channel_id) {
+  270|      0|                let raw_msg = RawMessage {
+  271|      0|                    channel_id: msg.channel_id,
+  272|      0|                    log_time: msg.log_time,
+  273|      0|                    publish_time: msg.publish_time,
+  274|      0|                    data: msg.data,
+  275|      0|                    sequence: Some(msg.sequence as u64),
+  276|      0|                };
+  277|      0|                chunk.add_message(raw_msg);
+  278|      0|            }
+  279|       |        }
+  280|       |
+  281|      0|        Ok(ProcessedChunk {
+  282|      0|            chunk,
+  283|      0|            total_bytes: total_bytes as u64,
+  284|      0|            message_count: message_count as u64,
+  285|      0|        })
+  286|      0|    }
+  287|       |}
+  288|       |
+  289|       |impl FormatReader for ParallelBagReader {
+  290|     40|    fn channels(&self) -> &HashMap<u16, ChannelInfo> {
+  291|     40|        &self.channels
+  292|     40|    }
+  293|       |
+  294|      3|    fn message_count(&self) -> u64 {
+  295|      3|        self.message_count
+  296|      3|    }
+  297|       |
+  298|      3|    fn start_time(&self) -> Option<u64> {
+  299|      3|        self.start_time
+  300|      3|    }
+  301|       |
+  302|      3|    fn end_time(&self) -> Option<u64> {
+  303|      3|        self.end_time
+  304|      3|    }
+  305|       |
+  306|      0|    fn path(&self) -> &str {
+  307|      0|        &self.path
+  308|      0|    }
+  309|       |
+  310|      2|    fn format(&self) -> FileFormat {
+  311|      2|        FileFormat::Bag
+  312|      2|    }
+  313|       |
+  314|      0|    fn file_size(&self) -> u64 {
+  315|      0|        self.parser.file_size()
+  316|      0|    }
+  317|       |
+  318|      8|    fn as_any(&self) -> &dyn std::any::Any {
+  319|      8|        self
+  320|      8|    }
+  321|       |
+  322|      0|    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+  323|      0|        self
+  324|      0|    }
+  325|       |}
+  326|       |
+  327|       |impl ParallelReader for ParallelBagReader {
+  328|      0|    fn read_parallel(
+  329|      0|        &self,
+  330|      0|        config: ParallelReaderConfig,
+  331|      0|        sender: crossbeam_channel::Sender<MessageChunkData>,
+  332|      0|    ) -> Result<ParallelReaderStats> {
+  333|      0|        let num_threads = config.num_threads.unwrap_or_else(|| {
+  334|      0|            std::thread::available_parallelism()
+  335|      0|                .map(|n| n.get())
+  336|      0|                .unwrap_or(8)
+  337|      0|        });
+  338|       |
+  339|      0|        println!(
+  340|      0|            "Starting parallel BAG reader with {} worker threads...",
+  341|       |            num_threads
+  342|       |        );
+  343|      0|        println!("  File: {}", self.path);
+  344|      0|        println!("  Chunks to process: {}", self.parser.chunks().len());
+  345|       |
+  346|      0|        let total_start = Instant::now();
+  347|       |
+  348|       |        // Build channel filter from topic filter
+  349|      0|        let channel_filter = config
+  350|      0|            .topic_filter
+  351|      0|            .as_ref()
+  352|      0|            .map(|tf| ChannelFilter::from_topic_filter(tf, self.channels()));
+  353|       |
+  354|       |        // Create thread pool for controlled parallelism
+  355|      0|        let pool = rayon::ThreadPoolBuilder::new()
+  356|      0|            .num_threads(num_threads)
+  357|      0|            .thread_name(|index| format!("bag-reader-{}", index))
+  358|      0|            .build()
+  359|      0|            .map_err(|e| {
+  360|      0|                CodecError::encode(
+  361|       |                    "ParallelBagReader",
+  362|      0|                    format!("Failed to create thread pool: {e}"),
+  363|       |                )
+  364|      0|            })?;
+  365|       |
+  366|       |        // Get references for parallel processing
+  367|      0|        let chunks = self.parser.chunks();
+  368|      0|        let parser = &self.parser;
+  369|      0|        let conn_id_map = &self.conn_id_map;
+  370|      0|        let channels = &self.channels;
+  371|       |
+  372|       |        // Process chunks in parallel
+  373|      0|        let results: Vec<Result<ProcessedChunk>> = pool.install(|| {
+  374|      0|            chunks
+  375|      0|                .par_iter()
+  376|      0|                .enumerate()
+  377|      0|                .map(|(i, chunk_info)| {
+  378|      0|                    if i % config.progress_interval == 0 && i > 0 {
+  379|      0|                        eprint!("\rProcessing chunk {}/{}...", i, chunks.len());
+  380|      0|                        let _ = std::io::stdout().flush();
+  381|      0|                    }
+  382|      0|                    Self::process_chunk(chunk_info, parser, conn_id_map, channels, &channel_filter)
+  383|      0|                })
+  384|      0|                .collect()
+  385|      0|        });
+  386|       |
+  387|      0|        eprintln!(); // New line after progress
+  388|       |
+  389|       |        // Collect results and send chunks
+  390|      0|        let mut messages_read = 0u64;
+  391|      0|        let mut chunks_processed = 0;
+  392|      0|        let mut total_bytes = 0u64;
+  393|       |
+  394|      0|        for result in results {
+  395|      0|            let processed = result?;
+  396|      0|            chunks_processed += 1;
+  397|      0|            messages_read += processed.message_count;
+  398|      0|            total_bytes += processed.total_bytes;
+  399|       |
+  400|      0|            if processed.chunk.message_count() > 0 {
+  401|      0|                sender.send(processed.chunk).map_err(|e| {
+  402|      0|                    CodecError::encode("ParallelBagReader", format!("Failed to send chunk: {e}"))
+  403|      0|                })?;
+  404|      0|            }
+  405|       |        }
+  406|       |
+  407|      0|        let duration = total_start.elapsed();
+  408|       |
+  409|      0|        println!("Parallel BAG reader complete:");
+  410|      0|        println!("  Chunks processed: {}", chunks_processed);
+  411|      0|        println!("  Messages read: {}", messages_read);
+  412|      0|        println!(
+  413|      0|            "  Total bytes: {:.2} MB",
+  414|      0|            total_bytes as f64 / (1024.0 * 1024.0)
+  415|       |        );
+  416|      0|        println!("  Total time: {:.2}s", duration.as_secs_f64());
+  417|       |
+  418|      0|        Ok(ParallelReaderStats {
+  419|      0|            messages_read,
+  420|      0|            chunks_processed,
+  421|      0|            total_bytes,
+  422|      0|            read_time_sec: 0.0,
+  423|      0|            decompress_time_sec: 0.0,
+  424|      0|            deserialize_time_sec: 0.0,
+  425|      0|            total_time_sec: duration.as_secs_f64(),
+  426|      0|        })
+  427|      0|    }
+  428|       |
+  429|      0|    fn chunk_count(&self) -> usize {
+  430|      0|        self.parser.chunks().len()
+  431|      0|    }
+  432|       |
+  433|      0|    fn supports_parallel(&self) -> bool {
+  434|      0|        !self.parser.chunks().is_empty()
+  435|      0|    }
+  436|       |}
+  437|       |
+  438|       |/// Processed chunk ready to be sent to the output channel.
+  439|       |struct ProcessedChunk {
+  440|       |    /// Message chunk with all messages
+  441|       |    chunk: MessageChunkData,
+  442|       |    /// Total bytes in this chunk
+  443|       |    total_bytes: u64,
+  444|       |    /// Number of messages in this chunk
+  445|       |    message_count: u64,
+  446|       |}
+  447|       |
+  448|       |/// Raw message iterator for BAG files (sequential reading).
+  449|       |///
+  450|       |/// This iterator processes chunks sequentially and yields messages one by one.
+  451|       |/// Used primarily by rewriters that need to process messages in order.
+  452|       |pub struct BagRawIter<'a> {
+  453|       |    /// Reference to the parser
+  454|       |    parser: &'a BagParser,
+  455|       |    /// Channel information
+  456|       |    channels: &'a HashMap<u16, ChannelInfo>,
+  457|       |    /// Connection ID to channel ID mapping
+  458|       |    conn_id_map: &'a HashMap<u32, u16>,
+  459|       |    /// Current chunk index
+  460|       |    current_chunk_idx: usize,
+  461|       |    /// Current messages from decompressed chunk
+  462|       |    current_messages: Vec<super::parser::BagMessageData>,
+  463|       |    /// Current message index within chunk
+  464|       |    current_msg_idx: usize,
+  465|       |}
+  466|       |
+  467|       |impl<'a> BagRawIter<'a> {
+  468|       |    /// Create a new raw message iterator.
+  469|     15|    pub fn new(
+  470|     15|        parser: &'a BagParser,
+  471|     15|        channels: &'a HashMap<u16, ChannelInfo>,
+  472|     15|        conn_id_map: &'a HashMap<u32, u16>,
+  473|     15|    ) -> Self {
+  474|     15|        Self {
+  475|     15|            parser,
+  476|     15|            channels,
+  477|     15|            conn_id_map,
+  478|     15|            current_chunk_idx: 0,
+  479|     15|            current_messages: Vec::new(),
+  480|     15|            current_msg_idx: 0,
+  481|     15|        }
+  482|     15|    }
+  483|       |
+  484|       |    /// Load the next chunk's messages.
+  485|     30|    fn load_next_chunk(&mut self) -> Result<bool> {
+  486|     30|        let chunks = self.parser.chunks();
+  487|     30|        if self.current_chunk_idx >= chunks.len() {
+  488|     11|            return Ok(false);
+  489|     19|        }
+  490|       |
+  491|     19|        let chunk_info = &chunks[self.current_chunk_idx];
+  492|     19|        self.current_chunk_idx += 1;
+  493|       |
+  494|       |        // Read and decompress the chunk
+  495|     19|        let decompressed = self.parser.read_chunk(chunk_info)?;
+                                                                           ^0
+  496|       |
+  497|       |        // Parse messages from decompressed data
+  498|     19|        self.current_messages = self
+  499|     19|            .parser
+  500|     19|            .parse_chunk_messages(&decompressed, self.conn_id_map)?;
+                                                                                ^0
+  501|     19|        self.current_msg_idx = 0;
+  502|       |
+  503|     19|        Ok(true)
+  504|     30|    }
+  505|       |}
+  506|       |
+  507|       |impl<'a> Iterator for BagRawIter<'a> {
+  508|       |    type Item = Result<(RawMessage, ChannelInfo)>;
+  509|       |
+  510|     42|    fn next(&mut self) -> Option<Self::Item> {
+  511|       |        loop {
+  512|       |            // Check if we have messages in current chunk
+  513|     61|            if self.current_msg_idx < self.current_messages.len() {
+  514|     31|                let msg = &self.current_messages[self.current_msg_idx];
+  515|     31|                self.current_msg_idx += 1;
+  516|       |
+  517|     31|                if let Some(channel_info) = self.channels.get(&msg.channel_id) {
+  518|     31|                    return Some(Ok((
+  519|     31|                        RawMessage {
+  520|     31|                            channel_id: msg.channel_id,
+  521|     31|                            log_time: msg.log_time,
+  522|     31|                            publish_time: msg.publish_time,
+  523|     31|                            data: msg.data.clone(),
+  524|     31|                            sequence: Some(msg.sequence as u64),
+  525|     31|                        },
+  526|     31|                        channel_info.clone(),
+  527|     31|                    )));
+  528|      0|                }
+  529|       |                // Return error for unknown channel instead of silently skipping
+  530|       |                // This indicates data corruption or an indexing bug
+  531|      0|                return Some(Err(CodecError::parse(
+  532|      0|                    "BagRawIter",
+  533|      0|                    format!(
+  534|      0|                        "Unknown channel_id {}: message refers to non-existent channel. This indicates data corruption or an indexing bug.",
+  535|      0|                        msg.channel_id
+  536|      0|                    ),
+  537|      0|                )));
+  538|     30|            }
+  539|       |
+  540|       |            // Load next chunk
+  541|     30|            match self.load_next_chunk() {
+  542|     19|                Ok(true) => continue,
+  543|     11|                Ok(false) => return None,
+  544|      0|                Err(e) => return Some(Err(e)),
+  545|       |            }
+  546|       |        }
+  547|     42|    }
+  548|       |}
+  549|       |
+  550|       |/// Iterator over decoded BAG messages.
+  551|       |///
+  552|       |/// Yields `(DecodedMessage, ChannelInfo)` tuples where `DecodedMessage`
+  553|       |/// is a `HashMap<String, CodecValue>` containing decoded field values.
+  554|       |pub struct BagDecodedMessageIter<'a> {
+  555|       |    parser: &'a BagParser,
+  556|       |    channels: &'a HashMap<u16, ChannelInfo>,
+  557|       |    conn_id_map: &'a HashMap<u32, u16>,
+  558|       |    decoder: Arc<CdrDecoder>,
+  559|       |}
+  560|       |
+  561|       |impl<'a> BagDecodedMessageIter<'a> {
+  562|       |    /// Create a new decoded message iterator.
+  563|      0|    fn new(
+  564|      0|        parser: &'a BagParser,
+  565|      0|        channels: &'a HashMap<u16, ChannelInfo>,
+  566|      0|        conn_id_map: &'a HashMap<u32, u16>,
+  567|      0|    ) -> Self {
+  568|      0|        Self {
+  569|      0|            parser,
+  570|      0|            channels,
+  571|      0|            conn_id_map,
+  572|      0|            decoder: Arc::new(CdrDecoder::new()),
+  573|      0|        }
+  574|      0|    }
+  575|       |
+  576|       |    /// Get the channels for this iterator.
+  577|      0|    pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
+  578|      0|        self.channels
+  579|      0|    }
+  580|       |
+  581|       |    /// Create a proper streaming iterator over decoded messages.
+  582|      0|    pub fn stream(&self) -> Result<BagDecodedMessageStream<'a>> {
+  583|      0|        BagDecodedMessageStream::new(
+  584|      0|            self.parser,
+  585|      0|            self.channels,
+  586|      0|            self.conn_id_map,
+  587|      0|            Arc::clone(&self.decoder),
+  588|       |        )
+  589|      0|    }
+  590|       |}
+  591|       |
+  592|       |impl<'a> Iterator for BagDecodedMessageIter<'a> {
+  593|       |    type Item = std::result::Result<(DecodedMessage, ChannelInfo), CodecError>;
+  594|       |
+  595|      0|    fn next(&mut self) -> Option<Self::Item> {
+  596|       |        // Note: This placeholder implementation doesn't work properly
+  597|       |        // Use stream() instead to get a proper streaming iterator
+  598|      0|        None
+  599|      0|    }
+  600|       |}
+  601|       |
+  602|       |/// Streaming iterator over decoded BAG messages.
+  603|       |pub struct BagDecodedMessageStream<'a> {
+  604|       |    raw_iter: BagRawIter<'a>,
+  605|       |    decoder: Arc<CdrDecoder>,
+  606|       |    /// Cache for parsed schemas (message_type -> MessageSchema)
+  607|       |    schema_cache: HashMap<String, crate::schema::MessageSchema>,
+  608|       |}
+  609|       |
+  610|       |impl<'a> BagDecodedMessageStream<'a> {
+  611|       |    /// Create a new decoded message stream.
+  612|      0|    fn new(
+  613|      0|        parser: &'a BagParser,
+  614|      0|        channels: &'a HashMap<u16, ChannelInfo>,
+  615|      0|        conn_id_map: &'a HashMap<u32, u16>,
+  616|      0|        decoder: Arc<CdrDecoder>,
+  617|      0|    ) -> Result<Self> {
+  618|      0|        Ok(Self {
+  619|      0|            raw_iter: BagRawIter::new(parser, channels, conn_id_map),
+  620|      0|            decoder,
+  621|      0|            schema_cache: HashMap::new(),
+  622|      0|        })
+  623|      0|    }
+  624|       |
+  625|       |    /// Get or parse a schema for the given message type.
+  626|      0|    fn get_or_parse_schema(
+  627|      0|        &mut self,
+  628|      0|        message_type: &str,
+  629|      0|        message_definition: &str,
+  630|      0|    ) -> std::result::Result<crate::schema::MessageSchema, CodecError> {
+  631|       |        // Check cache first
+  632|      0|        if let Some(schema) = self.schema_cache.get(message_type) {
+  633|      0|            return Ok(schema.clone());
+  634|      0|        }
+  635|       |
+  636|       |        // Parse the schema from the message definition
+  637|      0|        let schema = crate::schema::parse_schema(message_type, message_definition)
+  638|      0|            .map_err(|e| CodecError::parse(message_type, format!("Failed to parse schema: {e}")))?;
+  639|       |
+  640|       |        // Cache it
+  641|      0|        self.schema_cache
+  642|      0|            .insert(message_type.to_string(), schema.clone());
+  643|      0|        Ok(schema)
+  644|      0|    }
+  645|       |}
+  646|       |
+  647|       |impl<'a> Iterator for BagDecodedMessageStream<'a> {
+  648|       |    type Item = std::result::Result<(DecodedMessage, ChannelInfo), CodecError>;
+  649|       |
+  650|      0|    fn next(&mut self) -> Option<Self::Item> {
+  651|      0|        let (raw_msg, channel_info) = match self.raw_iter.next()? {
+  652|      0|            Ok(msg) => msg,
+  653|      0|            Err(e) => return Some(Err(e)),
+  654|       |        };
+  655|       |
+  656|       |        // Decode using ROS1 CDR deserialization
+  657|       |        // BAG files store message definitions in the connection's message_definition field
+  658|      0|        if let Some(schema) = &channel_info.schema {
+  659|      0|            let parsed_schema = match self.get_or_parse_schema(&channel_info.message_type, schema) {
+  660|      0|                Ok(s) => s,
+  661|      0|                Err(e) => return Some(Err(e)),
+  662|       |            };
+  663|       |
+  664|       |            // Use decode_headerless_ros1 for ROS1 bag messages
+  665|       |            // The BAG parser extracts just the CDR message data (without wrapper headers),
+  666|       |            // so we need to decode from byte 0 with ROS1 alignment rules.
+  667|      0|            match self.decoder.decode_headerless_ros1(
+  668|      0|                &parsed_schema,
+  669|      0|                &raw_msg.data,
+  670|      0|                Some(&channel_info.message_type),
+  671|      0|            ) {
+  672|      0|                Ok(msg) => Some(Ok((msg, channel_info))),
+  673|      0|                Err(e) => Some(Err(CodecError::parse(
+  674|      0|                    &channel_info.message_type,
+  675|      0|                    format!("Decode failed: {e}"),
+  676|      0|                ))),
+  677|       |            }
+  678|       |        } else {
+  679|      0|            Some(Err(CodecError::parse(
+  680|      0|                &channel_info.message_type,
+  681|      0|                "No schema available (message_definition not found in connection)",
+  682|      0|            )))
+  683|       |        }
+  684|      0|    }
+  685|       |}
+  686|       |
+  687|       |/// Iterator over decoded BAG messages with timestamps.
+  688|       |///
+  689|       |/// Yields `(TimestampedDecodedMessage, ChannelInfo)` tuples where each
+  690|       |/// message includes both the decoded field values and the log/publish timestamps.
+  691|       |pub struct BagDecodedMessageWithTimestampIter<'a> {
+  692|       |    parser: &'a BagParser,
+  693|       |    channels: &'a HashMap<u16, ChannelInfo>,
+  694|       |    conn_id_map: &'a HashMap<u32, u16>,
+  695|       |    decoder: Arc<CdrDecoder>,
+  696|       |}
+  697|       |
+  698|       |impl<'a> BagDecodedMessageWithTimestampIter<'a> {
+  699|       |    /// Create a new decoded message iterator with timestamps.
+  700|      4|    fn new(
+  701|      4|        parser: &'a BagParser,
+  702|      4|        channels: &'a HashMap<u16, ChannelInfo>,
+  703|      4|        conn_id_map: &'a HashMap<u32, u16>,
+  704|      4|    ) -> Self {
+  705|      4|        Self {
+  706|      4|            parser,
+  707|      4|            channels,
+  708|      4|            conn_id_map,
+  709|      4|            decoder: Arc::new(CdrDecoder::new()),
+  710|      4|        }
+  711|      4|    }
+  712|       |
+  713|       |    /// Get the channels for this iterator.
+  714|      0|    pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
+  715|      0|        self.channels
+  716|      0|    }
+  717|       |
+  718|       |    /// Create a proper streaming iterator over decoded messages with timestamps.
+  719|      4|    pub fn stream(&self) -> Result<BagDecodedMessageWithTimestampStream<'a>> {
+  720|      4|        BagDecodedMessageWithTimestampStream::new(
+  721|      4|            self.parser,
+  722|      4|            self.channels,
+  723|      4|            self.conn_id_map,
+  724|      4|            Arc::clone(&self.decoder),
+  725|       |        )
+  726|      4|    }
+  727|       |}
+  728|       |
+  729|       |impl<'a> Iterator for BagDecodedMessageWithTimestampIter<'a> {
+  730|       |    type Item = std::result::Result<(TimestampedDecodedMessage, ChannelInfo), CodecError>;
+  731|       |
+  732|      0|    fn next(&mut self) -> Option<Self::Item> {
+  733|       |        // Note: This placeholder implementation doesn't work properly
+  734|       |        // Use stream() instead to get a proper streaming iterator
+  735|      0|        None
+  736|      0|    }
+  737|       |}
+  738|       |
+  739|       |/// Streaming iterator over decoded BAG messages with timestamps.
+  740|       |pub struct BagDecodedMessageWithTimestampStream<'a> {
+  741|       |    raw_iter: BagRawIter<'a>,
+  742|       |    decoder: Arc<CdrDecoder>,
+  743|       |    /// Cache for parsed schemas (message_type -> MessageSchema)
+  744|       |    schema_cache: HashMap<String, crate::schema::MessageSchema>,
+  745|       |}
+  746|       |
+  747|       |impl<'a> BagDecodedMessageWithTimestampStream<'a> {
+  748|       |    /// Create a new decoded message stream with timestamps.
+  749|      4|    fn new(
+  750|      4|        parser: &'a BagParser,
+  751|      4|        channels: &'a HashMap<u16, ChannelInfo>,
+  752|      4|        conn_id_map: &'a HashMap<u32, u16>,
+  753|      4|        decoder: Arc<CdrDecoder>,
+  754|      4|    ) -> Result<Self> {
+  755|      4|        Ok(Self {
+  756|      4|            raw_iter: BagRawIter::new(parser, channels, conn_id_map),
+  757|      4|            decoder,
+  758|      4|            schema_cache: HashMap::new(),
+  759|      4|        })
+  760|      4|    }
+  761|       |
+  762|       |    /// Get or parse a schema for the given message type.
+  763|      7|    fn get_or_parse_schema(
+  764|      7|        &mut self,
+  765|      7|        message_type: &str,
+  766|      7|        message_definition: &str,
+  767|      7|    ) -> std::result::Result<crate::schema::MessageSchema, CodecError> {
+  768|       |        // Check cache first
+  769|      7|        if let Some(schema) = self.schema_cache.get(message_type) {
+                                  ^0
+  770|      0|            return Ok(schema.clone());
+  771|      7|        }
+  772|       |
+  773|       |        // Parse the schema from the message definition
+  774|      7|        let schema = crate::schema::parse_schema(message_type, message_definition)
+  775|      7|            .map_err(|e| CodecError::parse(message_type, format!("Failed to parse schema: {e}")))?;
+                                       ^0                ^0            ^0      ^0                              ^0
+  776|       |
+  777|       |        // Cache it
+  778|      7|        self.schema_cache
+  779|      7|            .insert(message_type.to_string(), schema.clone());
+  780|      7|        Ok(schema)
+  781|      7|    }
+  782|       |}
+  783|       |
+  784|       |impl<'a> Iterator for BagDecodedMessageWithTimestampStream<'a> {
+  785|       |    type Item = std::result::Result<(TimestampedDecodedMessage, ChannelInfo), CodecError>;
+  786|       |
+  787|      7|    fn next(&mut self) -> Option<Self::Item> {
+  788|      7|        let (raw_msg, channel_info) = match self.raw_iter.next()? {
+                                                                              ^0
+  789|      7|            Ok(msg) => msg,
+  790|      0|            Err(e) => return Some(Err(e)),
+  791|       |        };
+  792|       |
+  793|       |        // Decode using ROS1 CDR deserialization
+  794|       |        // BAG files store message definitions in the connection's message_definition field
+  795|      7|        if let Some(schema) = &channel_info.schema {
+  796|      7|            let parsed_schema = match self.get_or_parse_schema(&channel_info.message_type, schema) {
+  797|      7|                Ok(s) => s,
+  798|      0|                Err(e) => return Some(Err(e)),
+  799|       |            };
+  800|       |
+  801|       |            // Use decode_headerless_ros1 for ROS1 bag messages
+  802|       |            // The BAG parser extracts just the CDR message data (without wrapper headers),
+  803|       |            // so we need to decode from byte 0 with ROS1 alignment rules.
+  804|      7|            match self.decoder.decode_headerless_ros1(
+  805|      7|                &parsed_schema,
+  806|      7|                &raw_msg.data,
+  807|      7|                Some(&channel_info.message_type),
+  808|      7|            ) {
+  809|      2|                Ok(message) => Some(Ok((
+  810|      2|                    TimestampedDecodedMessage {
+  811|      2|                        message,
+  812|      2|                        log_time: raw_msg.log_time,
+  813|      2|                        publish_time: raw_msg.publish_time,
+  814|      2|                    },
+  815|      2|                    channel_info,
+  816|      2|                ))),
+  817|      5|                Err(e) => Some(Err(CodecError::parse(
+  818|      5|                    &channel_info.message_type,
+  819|      5|                    format!(
+  820|      5|                        "Decode failed for topic '{}' with log_time {}: {}",
+  821|      5|                        channel_info.topic, raw_msg.log_time, e
+  822|      5|                    ),
+  823|      5|                ))),
+  824|       |            }
+  825|       |        } else {
+  826|      0|            Some(Err(CodecError::parse(
+  827|      0|                &channel_info.message_type,
+  828|      0|                "No schema available (message_definition not found in connection)",
+  829|      0|            )))
+  830|       |        }
+  831|      7|    }
+  832|       |}
+  833|       |
+  834|       |#[cfg(test)]
+  835|       |mod tests {
+  836|       |    use super::*;
+  837|       |
+  838|       |    #[test]
+  839|      1|    fn test_bag_format() {
+  840|      1|        let _ = BagFormat;
+  841|      1|    }
+  842|       |
+  843|       |    #[test]
+  844|      1|    fn test_parallel_bag_reader_compile() {
+  845|       |        // This test just verifies that the type compiles correctly
+  846|      1|    }
+  847|       |
+  848|       |    #[test]
+  849|      1|    fn test_ros1_encoding_constant() {
+  850|       |        // Verify that we use "ros1" encoding for ROS1 bag files
+  851|       |        // This is important because "cdr" is for ROS2 and will cause
+  852|       |        // "Message encoding cdr with schema encoding 'ros1msg' is not supported" errors
+  853|      1|        let ros1_encoding = "ros1";
+  854|      1|        let ros1msg_schema_encoding = "ros1msg";
+  855|       |
+  856|       |        // These constants should match what's used in the reader
+  857|      1|        assert_eq!(ros1_encoding, "ros1");
+  858|      1|        assert_eq!(ros1msg_schema_encoding, "ros1msg");
+  859|       |
+  860|       |        // Verify they are compatible (ros1 encoding with ros1msg schema)
+  861|      1|        assert!(ros1_encoding.starts_with("ros1"));
+  862|      1|        assert!(ros1msg_schema_encoding.starts_with("ros1"));
+  863|      1|    }
+  864|       |}
+

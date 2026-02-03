@@ -1,0 +1,1649 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/transform/type_rename.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Message type renaming transformation with schema text rewriting.
+    6|       |
+    7|       |use std::collections::{HashMap, HashSet};
+    8|       |use std::fmt;
+    9|       |
+   10|       |use super::{ChannelInfo, McapTransform, TransformError};
+   11|       |
+   12|       |// =============================================================================
+   13|       |// Namespace Rewrite Types
+   14|       |// =============================================================================
+   15|       |
+   16|       |/// A namespace rewrite rule with wildcard support.
+   17|       |///
+   18|       |/// Represents a pattern like "genie_msgs/msg/*" -> "roboflow_msgs/msg/*"
+   19|       |/// and provides methods to rewrite type references in schemas.
+   20|       |#[derive(Debug, Clone, PartialEq, Eq)]
+   21|       |struct NamespaceRule {
+   22|       |    /// The prefix before the wildcard (e.g., "genie_msgs/msg/")
+   23|       |    source_prefix: String,
+   24|       |    /// The target prefix (e.g., "roboflow_msgs/msg/")
+   25|       |    target_prefix: String,
+   26|       |    /// Whether this rule has a wildcard suffix
+   27|       |    has_wildcard: bool,
+   28|       |}
+   29|       |
+   30|       |impl NamespaceRule {
+   31|       |    /// Parse a wildcard pattern string into a NamespaceRule.
+   32|       |    ///
+   33|       |    /// # Examples
+   34|       |    /// - "foo/msg/*" -> "bar/msg/*"
+   35|       |    /// - "baz.msg.*" -> "pux.*"
+   36|      3|    fn parse(pattern: &str, target: &str) -> Result<Self, String> {
+   37|       |        // Validate: both must end with * or neither
+   38|      3|        let pattern_has_wildcard = pattern.ends_with('*');
+   39|      3|        let target_has_wildcard = target.ends_with('*');
+   40|       |
+   41|      3|        if pattern_has_wildcard != target_has_wildcard {
+   42|      0|            return Err(format!(
+   43|      0|                "Invalid wildcard: pattern '{}' has {} but target '{}' has {}",
+   44|       |                pattern,
+   45|      0|                if pattern_has_wildcard {
+   46|      0|                    "wildcard"
+   47|       |                } else {
+   48|      0|                    "no wildcard"
+   49|       |                },
+   50|       |                target,
+   51|      0|                if target_has_wildcard {
+   52|      0|                    "wildcard"
+   53|       |                } else {
+   54|      0|                    "no wildcard"
+   55|       |                }
+   56|       |            ));
+   57|      3|        }
+   58|       |
+   59|       |        // Extract prefixes (remove trailing wildcard and separator)
+   60|      3|        let source_prefix = pattern
+   61|      3|            .trim_end_matches('*')
+   62|      3|            .trim_end_matches('/')
+   63|      3|            .trim_end_matches('.');
+   64|      3|        let target_prefix = target
+   65|      3|            .trim_end_matches('*')
+   66|      3|            .trim_end_matches('/')
+   67|      3|            .trim_end_matches('.');
+   68|       |
+   69|      3|        if source_prefix.is_empty() {
+   70|      0|            return Err("Wildcard pattern must have a prefix before *".to_string());
+   71|      3|        }
+   72|       |
+   73|      3|        Ok(Self {
+   74|      3|            source_prefix: source_prefix.to_string(),
+   75|      3|            target_prefix: target_prefix.to_string(),
+   76|      3|            has_wildcard: pattern_has_wildcard,
+   77|      3|        })
+   78|      3|    }
+   79|       |
+   80|       |    /// Check if a type name matches this rule's pattern.
+   81|      0|    fn matches(&self, type_name: &str) -> bool {
+   82|      0|        if self.has_wildcard {
+   83|       |            // Wildcard match: type name should start with source_prefix
+   84|       |            // Need to handle format differences (/, ::, .)
+   85|      0|            let type_normal = type_name.replace("::", "/").replace('.', "/");
+   86|      0|            let prefix_normal = self.source_prefix.replace("::", "/").replace('.', "/");
+   87|      0|            type_normal.starts_with(&prefix_normal)
+   88|       |        } else {
+   89|       |            // Exact match
+   90|      0|            type_name == self.source_prefix
+   91|       |        }
+   92|      0|    }
+   93|       |
+   94|       |    /// Apply this rule to a type name, returning the rewritten name.
+   95|      0|    fn apply(&self, type_name: &str) -> String {
+   96|      0|        if self.matches(type_name) {
+   97|      0|            if self.has_wildcard {
+   98|       |                // Replace the prefix portion
+   99|      0|                if type_name.starts_with(&self.source_prefix) {
+  100|      0|                    format!(
+  101|      0|                        "{}{}",
+  102|       |                        self.target_prefix,
+  103|      0|                        &type_name[self.source_prefix.len()..]
+  104|       |                    )
+  105|       |                } else {
+  106|       |                    // Handle format differences
+  107|      0|                    let type_normal = type_name.replace("::", "/").replace('.', "/");
+  108|      0|                    let prefix_normal = self.source_prefix.replace("::", "/").replace('.', "/");
+  109|      0|                    if type_normal.starts_with(&prefix_normal) {
+  110|       |                        // Preserve original separator format
+  111|      0|                        let remaining = &type_normal[prefix_normal.len()..];
+  112|      0|                        if type_name.contains("::") {
+  113|      0|                            format!(
+  114|      0|                                "{}::{}",
+  115|      0|                                self.target_prefix.replace('/', "::"),
+  116|      0|                                remaining.replace('/', "::")
+  117|       |                            )
+  118|      0|                        } else if type_name.contains('.') {
+  119|      0|                            format!(
+  120|      0|                                "{}.{}",
+  121|      0|                                self.target_prefix.replace('/', "."),
+  122|      0|                                remaining.replace('/', ".")
+  123|       |                            )
+  124|       |                        } else {
+  125|      0|                            format!("{}/{}", self.target_prefix, remaining)
+  126|       |                        }
+  127|       |                    } else {
+  128|      0|                        type_name.to_string()
+  129|       |                    }
+  130|       |                }
+  131|       |            } else {
+  132|      0|                self.target_prefix.clone()
+  133|       |            }
+  134|       |        } else {
+  135|      0|            type_name.to_string()
+  136|       |        }
+  137|      0|    }
+  138|       |}
+  139|       |
+  140|       |/// Compiled namespace replacement strategies for different formats.
+  141|       |///
+  142|       |/// Pre-computes all the string variants needed for schema rewriting
+  143|       |/// across different formats (IDL ::, ROS /, Proto .).
+  144|       |#[derive(Debug, Clone)]
+  145|       |struct NamespaceRewriteStrategy {
+  146|       |    /// Original namespace mapping (channel format)
+  147|       |    channel_mapping: (String, String),
+  148|       |    /// IDL format mappings (e.g., "genie_msgs::msg::" -> "roboflow_msgs::msg::")
+  149|       |    idl_mappings: Vec<(String, String)>,
+  150|       |    /// Dot-notation for schemas (e.g., "genie_msgs.msg." -> "roboflow_msgs.msg.")
+  151|       |    dot_mappings: Vec<(String, String)>,
+  152|       |    /// Module declaration rewrite (e.g., "module genie_msgs {" -> "module roboflow_msgs {")
+  153|       |    module_mapping: Option<(String, String)>,
+  154|       |}
+  155|       |
+  156|       |impl NamespaceRewriteStrategy {
+  157|       |    /// Build a rewrite strategy from a source and target prefix.
+  158|    223|    fn build(source_prefix: &str, target_prefix: &str) -> Self {
+  159|    223|        let mut idl_mappings = Vec::new();
+  160|    223|        let mut dot_mappings = Vec::new();
+  161|    223|        let mut module_mapping = None;
+  162|       |
+  163|       |        // Extract base package/module name
+  164|    223|        let source_module = extract_base_module(source_prefix);
+  165|    223|        let target_module = extract_base_module(target_prefix);
+  166|       |
+  167|    223|        if !source_module.is_empty() && source_module != target_module {
+  168|       |            // Module declaration: "module old {" -> "module new {"
+  169|    222|            module_mapping = Some((source_module.to_string(), target_module.to_string()));
+  170|       |
+  171|       |            // IDL format: "old_pkg/msg/Type" -> "old_pkg::msg::Type"
+  172|    222|            if source_prefix.contains('/') {
+  173|    177|                idl_mappings.push((
+  174|    177|                    source_prefix.replace('/', "::"),
+  175|    177|                    target_prefix.replace('/', "::"),
+  176|    177|                ));
+  177|    177|            } else if source_prefix.contains('.') {
+                                    ^45           ^45
+  178|      3|                idl_mappings.push((
+  179|      3|                    source_prefix.replace('.', "::"),
+  180|      3|                    target_prefix.replace('.', "::"),
+  181|      3|                ));
+  182|     42|            }
+  183|       |
+  184|       |            // Dot notation for schemas: "old_pkg.msg.Type" -> "new_pkg.msg.Type"
+  185|    222|            if source_prefix.contains('/') {
+  186|    177|                dot_mappings.push((
+  187|    177|                    source_prefix.replace('/', "."),
+  188|    177|                    target_prefix.replace('/', "."),
+  189|    177|                ));
+  190|    177|            } else if source_prefix.contains('.') {
+                                    ^45           ^45
+  191|      3|                // Already dot format
+  192|      3|                dot_mappings.push((source_prefix.to_string(), target_prefix.to_string()));
+  193|     42|            }
+  194|      1|        }
+  195|       |
+  196|    223|        Self {
+  197|    223|            channel_mapping: (source_prefix.to_string(), target_prefix.to_string()),
+  198|    223|            idl_mappings,
+  199|    223|            dot_mappings,
+  200|    223|            module_mapping,
+  201|    223|        }
+  202|    223|    }
+  203|       |
+  204|       |    /// Apply this strategy to schema text, replacing all occurrences.
+  205|     10|    fn apply_to_schema(&self, schema_text: &str) -> String {
+  206|     10|        let mut result = schema_text.to_string();
+  207|       |
+  208|       |        // Apply IDL format replacements (::)
+  209|     11|        for (old, new) in &self.idl_mappings {
+                           ^1   ^1
+  210|      1|            result = result.replace(old, new);
+  211|      1|        }
+  212|       |
+  213|       |        // Apply dot notation replacements (.)
+  214|     11|        for (old, new) in &self.dot_mappings {
+                           ^1   ^1
+  215|      1|            result = replace_type_reference(&result, old, new);
+  216|      1|        }
+  217|       |
+  218|       |        // Apply module declaration rewrite
+  219|     10|        if let Some((old_module, new_module)) = &self.module_mapping {
+  220|     10|            result = rewrite_module_declarations(&result, old_module, new_module);
+  221|     10|        }
+                      ^0
+  222|       |
+  223|     10|        result
+  224|     10|    }
+  225|       |}
+  226|       |
+  227|       |/// Namespace rewrite engine with wildcard support.
+  228|       |///
+  229|       |/// Pre-compiles exact type mappings and wildcard patterns into efficient
+  230|       |/// rewrite strategies, then applies them to schema text.
+  231|       |#[derive(Clone)]
+  232|       |pub struct NamespaceRewriter {
+  233|       |    /// Exact type mappings for direct replacement (source -> target)
+  234|       |    exact_mappings: Vec<(String, String)>,
+  235|       |    /// Compiled strategies for exact type namespace mappings
+  236|       |    exact_strategies: Vec<NamespaceRewriteStrategy>,
+  237|       |    /// Compiled wildcard rules for namespace-level rewriting
+  238|       |    wildcard_rules: Vec<NamespaceRule>,
+  239|       |    /// Wildcard strategies for namespace replacement
+  240|       |    wildcard_strategies: Vec<NamespaceRewriteStrategy>,
+  241|       |}
+  242|       |
+  243|       |impl NamespaceRewriter {
+  244|       |    /// Create a new rewriter from type mappings and wildcard patterns.
+  245|     60|    fn from_mappings(
+  246|     60|        exact_mappings: &HashMap<String, String>,
+  247|     60|        wildcard_patterns: &[(String, String)],
+  248|     60|    ) -> Self {
+  249|     60|        let mut exact_mappings_vec = Vec::new();
+  250|     60|        let mut exact_strategies = Vec::new();
+  251|     60|        let mut wildcard_rules = Vec::new();
+  252|     60|        let mut wildcard_strategies = Vec::new();
+  253|       |
+  254|       |        // Build strategies for exact mappings
+  255|    281|        for (source, target) in exact_mappings {
+                           ^221    ^221
+  256|    221|            let source_prefix = extract_namespace_prefix(source);
+  257|    221|            let target_prefix = extract_namespace_prefix(target);
+  258|    221|            if !source_prefix.is_empty() {
+  259|    220|                exact_strategies.push(NamespaceRewriteStrategy::build(
+  260|    220|                    &source_prefix,
+  261|    220|                    &target_prefix,
+  262|    220|                ));
+  263|    220|            }
+                          ^1
+  264|       |            // Also store the exact mapping for direct replacement
+  265|    221|            exact_mappings_vec.push((source.clone(), target.clone()));
+  266|       |        }
+  267|       |
+  268|       |        // Parse and build strategies for wildcard patterns
+  269|     63|        for (pattern, target) in wildcard_patterns {
+                           ^3       ^3
+  270|      3|            match NamespaceRule::parse(pattern, target) {
+  271|      3|                Ok(rule) => {
+  272|      3|                    let source_prefix = extract_namespace_prefix(pattern);
+  273|      3|                    let target_prefix = extract_namespace_prefix(target);
+  274|      3|                    if !source_prefix.is_empty() && rule.has_wildcard {
+  275|      3|                        wildcard_strategies.push(NamespaceRewriteStrategy::build(
+  276|      3|                            &source_prefix,
+  277|      3|                            &target_prefix,
+  278|      3|                        ));
+  279|      3|                    }
+                                  ^0
+  280|      3|                    wildcard_rules.push(rule);
+  281|       |                }
+  282|      0|                Err(e) => {
+  283|      0|                    tracing::warn!(
+  284|      0|                        "Failed to parse wildcard pattern '{}' -> '{}': {}. Skipping this pattern.",
+  285|       |                        pattern,
+  286|       |                        target,
+  287|       |                        e
+  288|       |                    );
+  289|       |                }
+  290|       |            }
+  291|       |        }
+  292|       |
+  293|       |        // Sort by prefix length (descending) for correct precedence
+  294|    474|        exact_strategies.sort_by_key(|s| std::cmp::Reverse(s.channel_mapping.0.len()));
+                      ^60              ^60
+  295|     60|        wildcard_strategies.sort_by_key(|s| std::cmp::Reverse(s.channel_mapping.0.len()));
+                                                                            ^0                  ^0
+  296|    968|        exact_mappings_vec.sort_by_key(|(k, _)| std::cmp::Reverse(k.len()));
+                      ^60                ^60
+  297|       |
+  298|     60|        Self {
+  299|     60|            exact_mappings: exact_mappings_vec,
+  300|     60|            exact_strategies,
+  301|     60|            wildcard_rules,
+  302|     60|            wildcard_strategies,
+  303|     60|        }
+  304|     60|    }
+  305|       |
+  306|       |    /// Rewrite schema text using all compiled rules.
+  307|     10|    pub fn rewrite_schema(&self, schema_text: &str) -> String {
+  308|     10|        let mut result = schema_text.to_string();
+  309|       |
+  310|       |        // Apply wildcard strategies first (broad namespace replacement)
+  311|     11|        for strategy in &self.wildcard_strategies {
+                          ^1
+  312|      1|            result = strategy.apply_to_schema(&result);
+  313|      1|        }
+  314|       |
+  315|       |        // Apply exact strategies (namespace-level for exact type mappings)
+  316|     19|        for strategy in &self.exact_strategies {
+                          ^9
+  317|      9|            result = strategy.apply_to_schema(&result);
+  318|      9|        }
+  319|       |
+  320|       |        // Apply exact type name replacements (e.g., "foo/Msg" -> "bar/Msg")
+  321|     19|        for (old_type, new_type) in &self.exact_mappings {
+                           ^9        ^9
+  322|       |            // Direct replacement in channel format
+  323|      9|            result = replace_type_reference(&result, old_type, new_type);
+  324|       |
+  325|       |            // Also handle schema format conversions
+  326|      9|            if old_type.contains('/') {
+  327|      9|                // Convert to double-colon notation (IDL)
+  328|      9|                let old_colon = old_type.replace('/', "::");
+  329|      9|                let new_colon = new_type.replace('/', "::");
+  330|      9|                result = replace_type_reference(&result, &old_colon, &new_colon);
+  331|      9|
+  332|      9|                // Convert to dot notation (proto-like)
+  333|      9|                let old_dot = old_type.replace("/msg/", ".").replace('/', ".");
+  334|      9|                let new_dot = new_type.replace("/msg/", ".").replace('/', ".");
+  335|      9|                result = replace_type_reference(&result, &old_dot, &new_dot);
+  336|      9|            }
+                          ^0
+  337|       |        }
+  338|       |
+  339|     10|        result
+  340|     10|    }
+  341|       |
+  342|       |    /// Rewrite a specific type name using the compiled rules.
+  343|      0|    pub fn rewrite_type(&self, type_name: &str) -> String {
+  344|       |        // Try wildcard rules first
+  345|      0|        for rule in &self.wildcard_rules {
+  346|      0|            if rule.matches(type_name) {
+  347|      0|                return rule.apply(type_name);
+  348|      0|            }
+  349|       |        }
+  350|       |
+  351|       |        // Try exact mappings
+  352|      0|        for (source, target) in &self.exact_mappings {
+  353|      0|            if type_name == source {
+  354|      0|                return target.clone();
+  355|      0|            }
+  356|       |        }
+  357|       |
+  358|      0|        type_name.to_string()
+  359|      0|    }
+  360|       |}
+  361|       |
+  362|       |impl fmt::Debug for NamespaceRewriter {
+  363|      0|    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+  364|      0|        f.debug_struct("NamespaceRewriter")
+  365|      0|            .field("exact_mappings", &self.exact_mappings.len())
+  366|      0|            .field("exact_strategies", &self.exact_strategies.len())
+  367|      0|            .field("wildcard_rules", &self.wildcard_rules.len())
+  368|      0|            .finish()
+  369|      0|    }
+  370|       |}
+  371|       |
+  372|       |/// Extract the namespace prefix from a type name.
+  373|       |///
+  374|       |/// Examples:
+  375|       |/// - "genie_msgs/msg/ArmState" -> "genie_msgs/msg"
+  376|       |/// - "nmx.msg.LowdimData" -> "nmx.msg"
+  377|       |/// - "sensor_msgs" -> "sensor_msgs"
+  378|    448|fn extract_namespace_prefix(type_name: &str) -> String {
+  379|    448|    if let Some(last_slash) = type_name.rfind('/') {
+                              ^255
+  380|    255|        type_name[..last_slash].to_string()
+  381|    193|    } else if let Some(last_dot) = type_name.rfind('.') {
+                                     ^191
+  382|    191|        type_name[..last_dot].to_string()
+  383|       |    } else {
+  384|      2|        String::new()
+  385|       |    }
+  386|    448|}
+  387|       |
+  388|       |/// Extract the base module/package name for module declarations.
+  389|       |///
+  390|       |/// Examples:
+  391|       |/// - "genie_msgs/msg" -> "genie_msgs"
+  392|       |/// - "nmx.msg" -> "nmx"
+  393|       |/// - "sensor_msgs" -> "sensor_msgs"
+  394|    446|fn extract_base_module(prefix: &str) -> String {
+  395|    446|    if let Some(first_slash) = prefix.find('/') {
+                              ^178
+  396|    178|        prefix[..first_slash].to_string()
+  397|    268|    } else if let Some(first_dot) = prefix.find('.') {
+                                     ^191
+  398|    191|        prefix[..first_dot].to_string()
+  399|       |    } else {
+  400|     77|        prefix.to_string()
+  401|       |    }
+  402|    446|}
+  403|       |
+  404|       |/// Rewrite schema text by replacing package names.
+  405|       |///
+  406|       |/// This is a shared helper function used by both `TypeRenameTransform` and
+  407|       |/// `TopicAwareTypeRenameTransform` to avoid code duplication.
+  408|       |///
+  409|       |/// # Arguments
+  410|       |///
+  411|       |/// * `old_type` - Original type name (e.g., "sensor_msgs/msg/JointState")
+  412|       |/// * `new_type` - New type name (e.g., "my_msgs/JointState")
+  413|       |/// * `schema_text` - Original schema text
+  414|       |///
+  415|       |/// # Returns
+  416|       |///
+  417|       |/// Rewritten schema text with package names replaced.
+  418|      2|fn rewrite_schema_package(old_type: &str, new_type: &str, schema_text: &str) -> String {
+  419|       |    // Extract package names from type names
+  420|      2|    let old_package = extract_package(old_type);
+  421|      2|    let new_package = extract_package(new_type);
+  422|       |
+  423|       |    // No change needed if packages are the same or empty
+  424|      2|    if old_package.is_empty() || new_package.is_empty() || old_package == new_package {
+  425|      2|        return schema_text.to_string();
+  426|      0|    }
+  427|       |
+  428|       |    // Replace package name patterns in schema text
+  429|      0|    let mut result = schema_text.to_string();
+  430|       |
+  431|       |    // Replace "old_pkg/Type" patterns (ROS2 style)
+  432|      0|    result = result.replace(&format!("{old_package}/"), &format!("{new_package}/"));
+  433|       |
+  434|       |    // Replace "old_pkg::Type" patterns (IDL style)
+  435|      0|    result = result.replace(&format!("{old_package}::"), &format!("{new_package}::"));
+  436|       |
+  437|       |    // For proto style (dots), handle nested type conversion
+  438|       |    // e.g., "old_pkg.nested.Type" -> "new_pkg.nested.Type"
+  439|      0|    result = result.replace(&format!("{old_package}."), &format!("{new_package}."));
+  440|       |
+  441|      0|    result
+  442|      2|}
+  443|       |
+  444|       |/// Rewrite IDL module declarations in schema text.
+  445|       |///
+  446|       |/// Replaces patterns like "module old_name {" with "module new_name {".
+  447|     10|fn rewrite_module_declarations(text: &str, old_module: &str, new_module: &str) -> String {
+  448|       |    // Match "module old_module {" patterns
+  449|     10|    let pattern = format!("module {old_module} {{");
+  450|     10|    let replacement = format!("module {new_module} {{");
+  451|       |
+  452|     10|    text.replace(&pattern, &replacement)
+  453|     10|}
+  454|       |
+  455|       |/// Replace type references in schema text with word boundary handling.
+  456|       |///
+  457|       |/// This ensures we only replace whole type references, not partial matches.
+  458|       |/// For example, "sensor_msgs/Header" should not match inside "my_sensor_msgs/Header".
+  459|     31|fn replace_type_reference(text: &str, old_type: &str, new_type: &str) -> String {
+  460|       |    // Common delimiters that surround type references in schemas
+  461|     31|    let delimiters = [
+  462|     31|        ' ', '\n', '\t', '\r', '<', '>', ',', '[', ']', '{', '}', '(', ')', ';',
+  463|     31|    ];
+  464|       |
+  465|     31|    let mut result = String::new();
+  466|     31|    let mut last_end = 0;
+  467|       |
+  468|       |    // Find all occurrences of old_type
+  469|     31|    let mut start = 0;
+  470|     35|    while let Some(pos) = text[start..].find(old_type) {
+                                 ^4
+  471|      4|        let abs_pos = start + pos;
+  472|       |
+  473|       |        // Check if this is a whole type reference (word boundary before)
+  474|      4|        let valid_before =
+  475|      4|            abs_pos == 0 || delimiters.contains(&text.chars().nth(abs_pos - 1).unwrap_or(' '));
+                                          ^1         ^1       ^1^1           ^1
+  476|       |
+  477|       |        // Check if this is a whole type reference (word boundary after)
+  478|      4|        let after_pos = abs_pos + old_type.len();
+  479|      4|        let valid_after = after_pos >= text.len()
+  480|      4|            || delimiters.contains(&text.chars().nth(after_pos).unwrap_or(' '));
+  481|       |
+  482|      4|        if valid_before && valid_after {
+  483|      4|            // Copy text before the match
+  484|      4|            result.push_str(&text[last_end..abs_pos]);
+  485|      4|            // Copy the replacement
+  486|      4|            result.push_str(new_type);
+  487|      4|            last_end = after_pos;
+  488|      4|        }
+                      ^0
+  489|       |
+  490|      4|        start = abs_pos + 1;
+  491|       |    }
+  492|       |
+  493|       |    // Copy remaining text
+  494|     31|    result.push_str(&text[last_end..]);
+  495|     31|    result
+  496|     31|}
+  497|       |
+  498|       |/// Extract the package name from a type name.
+  499|       |///
+  500|       |/// Handles different formats:
+  501|       |/// - ROS2: "sensor_msgs/msg/JointState" -> "sensor_msgs/msg"
+  502|       |/// - ROS1: "sensor_msgs/JointState" -> "sensor_msgs"
+  503|       |/// - Proto: "nmx.msg.LowdimData" -> "nmx.msg"
+  504|      4|fn extract_package(type_name: &str) -> String {
+  505|      4|    if let Some(last_slash) = type_name.rfind('/') {
+                              ^0
+  506|       |        // ROS style: "pkg/msg/Type" -> "pkg/msg" or "pkg/Type" -> "pkg"
+  507|      0|        let before_slash = &type_name[..last_slash];
+  508|      0|        if let Some(second_slash) = before_slash.rfind('/') {
+  509|       |            // Has /msg/ component
+  510|      0|            type_name[..second_slash].to_string()
+  511|       |        } else {
+  512|       |            // Simple "pkg/Type" format
+  513|      0|            before_slash.to_string()
+  514|       |        }
+  515|      4|    } else if let Some(last_dot) = type_name.rfind('.') {
+  516|       |        // Proto style: "pkg.nested.Type" -> "pkg.nested"
+  517|      4|        type_name[..last_dot].to_string()
+  518|       |    } else {
+  519|       |        // No package
+  520|      0|        String::new()
+  521|       |    }
+  522|      4|}
+  523|       |
+  524|       |/// Detect the encoding format from a type name.
+  525|       |#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+  526|       |pub enum TypeFormat {
+  527|       |    /// ROS2 format: "sensor_msgs/msg/JointState"
+  528|       |    Ros2,
+  529|       |    /// ROS1 format: "sensor_msgs/JointState"
+  530|       |    Ros1,
+  531|       |    /// Proto format: "nmx.msg.LowdimData"
+  532|       |    Proto,
+  533|       |    /// Unknown format
+  534|       |    Unknown,
+  535|       |}
+  536|       |
+  537|       |impl TypeFormat {
+  538|       |    /// Detect format from a type name string.
+  539|      0|    pub fn from_type_name(type_name: &str) -> Self {
+  540|      0|        if type_name.contains('/') {
+  541|      0|            if type_name.contains("/msg/") {
+  542|      0|                TypeFormat::Ros2
+  543|       |            } else {
+  544|      0|                TypeFormat::Ros1
+  545|       |            }
+  546|      0|        } else if type_name.contains('.') {
+  547|      0|            TypeFormat::Proto
+  548|       |        } else {
+  549|      0|            TypeFormat::Unknown
+  550|       |        }
+  551|      0|    }
+  552|       |
+  553|       |    /// Get the separator for this format.
+  554|      0|    pub fn separator(&self) -> &str {
+  555|      0|        match self {
+  556|      0|            TypeFormat::Ros2 => "/",
+  557|      0|            TypeFormat::Ros1 => "/",
+  558|      0|            TypeFormat::Proto => ".",
+  559|      0|            TypeFormat::Unknown => ".",
+  560|       |        }
+  561|      0|    }
+  562|       |
+  563|       |    /// Convert a type name from this format to another format.
+  564|      0|    pub fn convert_type_name(&self, type_name: &str, target_format: TypeFormat) -> String {
+  565|       |        // Extract components
+  566|      0|        let (package, msg_part) = Self::parse_type_name(type_name);
+  567|       |
+  568|      0|        match target_format {
+  569|       |            TypeFormat::Ros2 => {
+  570|       |                // Convert to "package/msg/Type" format
+  571|      0|                if package.contains('.') {
+  572|       |                    // Proto: "nmx.msg.Type" -> "nmx/msg/Type"
+  573|      0|                    let pkg = package.replace('.', "/");
+  574|      0|                    format!("{pkg}/msg/{msg_part}")
+  575|      0|                } else if !package.is_empty() && !package.contains('/') {
+  576|       |                    // Simple: "sensor_msgs" -> "sensor_msgs/msg/Type"
+  577|      0|                    format!("{package}/msg/{msg_part}")
+  578|      0|                } else if package.contains("/msg/") {
+  579|       |                    // Already ROS2
+  580|      0|                    format!("{package}/{msg_part}")
+  581|       |                } else {
+  582|      0|                    format!("{package}/{msg_part}")
+  583|       |                }
+  584|       |            }
+  585|       |            TypeFormat::Ros1 => {
+  586|       |                // Convert to "package/Type" format
+  587|      0|                if package.contains('.') {
+  588|       |                    // Proto: "nmx.msg.Type" -> "nmx/Type"
+  589|      0|                    let pkg = package.replace('.', "/");
+  590|      0|                    format!("{pkg}/{msg_part}")
+  591|      0|                } else if !package.is_empty() {
+  592|      0|                    format!("{package}/{msg_part}")
+  593|       |                } else {
+  594|      0|                    msg_part.to_string()
+  595|       |                }
+  596|       |            }
+  597|       |            TypeFormat::Proto => {
+  598|       |                // Convert to "package.Type" format
+  599|       |                // For nested types, use underscore: "camid_1.intrinsic" -> "camid_1_intrinsic"
+  600|      0|                if package.contains('/') {
+  601|       |                    // ROS: "sensor_msgs/msg" -> "sensor_msgs.msg"
+  602|      0|                    let pkg = package.replace('/', ".");
+  603|      0|                    format!("{pkg}.{msg_part}")
+  604|      0|                } else if !package.is_empty() {
+  605|      0|                    format!("{package}.{msg_part}")
+  606|       |                } else {
+  607|      0|                    msg_part.to_string()
+  608|       |                }
+  609|       |            }
+  610|      0|            TypeFormat::Unknown => type_name.to_string(),
+  611|       |        }
+  612|      0|    }
+  613|       |
+  614|       |    /// Parse a type name into (package, type_name) components.
+  615|      0|    fn parse_type_name(type_name: &str) -> (String, String) {
+  616|      0|        if let Some(last_slash) = type_name.rfind('/') {
+  617|      0|            (
+  618|      0|                type_name[..last_slash].to_string(),
+  619|      0|                type_name[last_slash + 1..].to_string(),
+  620|      0|            )
+  621|      0|        } else if let Some(last_dot) = type_name.rfind('.') {
+  622|      0|            (
+  623|      0|                type_name[..last_dot].to_string(),
+  624|      0|                type_name[last_dot + 1..].to_string(),
+  625|      0|            )
+  626|       |        } else {
+  627|      0|            (String::new(), type_name.to_string())
+  628|       |        }
+  629|      0|    }
+  630|       |}
+  631|       |
+  632|       |/// Message type renaming transformation with schema text rewriting.
+  633|       |///
+  634|       |/// Renames message types and updates the corresponding schema text
+  635|       |/// to match package name changes. Supports both exact mappings and wildcard patterns.
+  636|       |///
+  637|       |/// Schema rewriting uses wildcard namespace replacement, which recursively
+  638|       |/// rewrites ALL type references in the schema to ensure correctness.
+  639|       |///
+  640|       |/// # Example
+  641|       |///
+  642|       |/// ```no_run
+  643|       |/// use robocodec::transform::TypeRenameTransform;
+  644|       |///
+  645|       |/// # fn main() {
+  646|       |/// let mut rename = TypeRenameTransform::new();
+  647|       |/// rename.add_mapping("sensor_msgs/msg/JointState", "my_robot_msgs/JointState");
+  648|       |///
+  649|       |/// // Wildcard: rename all foo/* types to bar/*
+  650|       |/// rename.add_wildcard_mapping("foo/*", "bar/*");
+  651|       |/// # }
+  652|       |/// ```
+  653|       |#[derive(Debug, Clone)]
+  654|       |pub struct TypeRenameTransform {
+  655|       |    /// Type mappings: source -> target
+  656|       |    mappings: HashMap<String, String>,
+  657|       |    /// Wildcard patterns: "prefix/*" -> target_prefix
+  658|       |    wildcard_patterns: Vec<(String, String)>,
+  659|       |    /// Cache for rewritten schemas (using string keys for flexibility)
+  660|       |    schema_cache: HashMap<String, String>,
+  661|       |    /// Compiled namespace rewriter for wildcard schema rewriting
+  662|       |    namespace_rewriter: Option<NamespaceRewriter>,
+  663|       |}
+  664|       |
+  665|       |impl Default for TypeRenameTransform {
+  666|      0|    fn default() -> Self {
+  667|      0|        Self::new()
+  668|      0|    }
+  669|       |}
+  670|       |
+  671|       |impl TypeRenameTransform {
+  672|       |    /// Create a new empty type rename transform.
+  673|     32|    pub fn new() -> Self {
+  674|     32|        Self {
+  675|     32|            mappings: HashMap::new(),
+  676|     32|            wildcard_patterns: Vec::new(),
+  677|     32|            schema_cache: HashMap::new(),
+  678|     32|            namespace_rewriter: None,
+  679|     32|        }
+  680|     32|    }
+  681|       |
+  682|       |    /// Create a transform from a HashMap of mappings.
+  683|      6|    pub fn from_map(mappings: HashMap<String, String>) -> Self {
+  684|       |        // Pre-compile the namespace rewriter for immediate use
+  685|      6|        let namespace_rewriter = NamespaceRewriter::from_mappings(&mappings, &[]);
+  686|      6|        Self {
+  687|      6|            mappings,
+  688|      6|            wildcard_patterns: Vec::new(),
+  689|      6|            schema_cache: HashMap::new(),
+  690|      6|            namespace_rewriter: Some(namespace_rewriter),
+  691|      6|        }
+  692|      6|    }
+  693|       |
+  694|       |    /// Ensure the namespace rewriter is compiled.
+  695|       |    ///
+  696|       |    /// Lazily compiles the rewriter from exact mappings and wildcard patterns.
+  697|     11|    fn ensure_rewriter(&mut self) {
+  698|     11|        if self.namespace_rewriter.is_none() {
+  699|      0|            self.namespace_rewriter = Some(NamespaceRewriter::from_mappings(
+  700|      0|                &self.mappings,
+  701|      0|                &self.wildcard_patterns,
+  702|      0|            ));
+  703|     11|        }
+  704|     11|    }
+  705|       |
+  706|       |    /// Compile the namespace rewriter.
+  707|       |    ///
+  708|       |    /// Called whenever mappings change to pre-compile for immutable use.
+  709|     54|    fn compile_rewriter(&mut self) {
+  710|     54|        self.namespace_rewriter = Some(NamespaceRewriter::from_mappings(
+  711|     54|            &self.mappings,
+  712|     54|            &self.wildcard_patterns,
+  713|     54|        ));
+  714|     54|    }
+  715|       |
+  716|       |    /// Add a type rename mapping.
+  717|       |    ///
+  718|       |    /// # Arguments
+  719|       |    ///
+  720|       |    /// * `source` - Original type name (e.g., "sensor_msgs/msg/JointState")
+  721|       |    /// * `target` - New type name (e.g., "custom_msgs/JointState")
+  722|     51|    pub fn add_mapping(&mut self, source: impl Into<String>, target: impl Into<String>) {
+  723|     51|        self.mappings.insert(source.into(), target.into());
+  724|       |        // Clear cache and recompile rewriter when mappings change
+  725|     51|        self.schema_cache.clear();
+  726|     51|        self.compile_rewriter();
+  727|     51|    }
+  728|       |
+  729|       |    /// Get the number of mappings configured.
+  730|      3|    pub fn len(&self) -> usize {
+  731|      3|        self.mappings.len()
+  732|      3|    }
+  733|       |
+  734|       |    /// Check if any mappings are configured.
+  735|      1|    pub fn is_empty(&self) -> bool {
+  736|      1|        self.mappings.is_empty()
+  737|      1|    }
+  738|       |
+  739|       |    /// Get all mappings.
+  740|      0|    pub fn mappings(&self) -> &HashMap<String, String> {
+  741|      0|        &self.mappings
+  742|      0|    }
+  743|       |
+  744|       |    /// Add a wildcard type rename mapping.
+  745|       |    ///
+  746|       |    /// The wildcard `*` matches any type name suffix. For example:
+  747|       |    /// - `"foo/*"` → `"bar/*"` will rename:
+  748|       |    ///   - `"foo/TypeName"` → `"bar/TypeName"`
+  749|       |    ///   - `"foo/OtherType"` → `"bar/OtherType"`
+  750|       |    ///
+  751|       |    /// # Arguments
+  752|       |    ///
+  753|       |    /// * `pattern` - Wildcard pattern like "foo/*"
+  754|       |    /// * `target` - Target pattern like "bar/*"
+  755|      3|    pub fn add_wildcard_mapping(&mut self, pattern: impl Into<String>, target: impl Into<String>) {
+  756|      3|        self.wildcard_patterns.push((pattern.into(), target.into()));
+  757|       |        // Clear cache and recompile rewriter when mappings change
+  758|      3|        self.schema_cache.clear();
+  759|      3|        self.compile_rewriter();
+  760|      3|    }
+  761|       |
+  762|       |    /// Try to apply a wildcard pattern to a type name.
+  763|       |    ///
+  764|       |    /// Returns `Some(new_name)` if a wildcard pattern matches, `None` otherwise.
+  765|     27|    fn apply_wildcard_type(&self, type_name: &str) -> Option<String> {
+  766|     28|        for (pattern, target) in &self.wildcard_patterns {
+                           ^5       ^5
+  767|       |            // Both pattern and target should have the form "prefix/*"
+  768|      5|            if let Some(stripped_pattern) = pattern.strip_suffix('*') {
+  769|      5|                if let Some(suffix) = type_name.strip_prefix(stripped_pattern) {
+                                          ^4
+  770|      4|                    let new_target = if let Some(stripped_target) = target.strip_suffix('*') {
+  771|      4|                        format!("{stripped_target}{suffix}")
+  772|       |                    } else {
+  773|       |                        // Target doesn't end with *, just use it as-is
+  774|      0|                        target.clone()
+  775|       |                    };
+  776|      4|                    return Some(new_target);
+  777|      1|                }
+  778|      0|            }
+  779|       |        }
+  780|     23|        None
+  781|     27|    }
+  782|       |
+  783|       |    /// Apply the transformation to a type name.
+  784|       |    ///
+  785|       |    /// Returns the new type name, or the original if no mapping exists.
+  786|      9|    pub fn apply_type(&self, type_name: &str) -> String {
+  787|       |        // Check exact mappings first
+  788|      9|        if let Some(target) = self.mappings.get(type_name) {
+                                  ^4
+  789|      4|            return target.clone();
+  790|      5|        }
+  791|       |        // Check wildcard patterns
+  792|      5|        if let Some(target) = self.apply_wildcard_type(type_name) {
+                                  ^3
+  793|      3|            return target;
+  794|      2|        }
+  795|      2|        type_name.to_string()
+  796|      9|    }
+  797|       |
+  798|       |    /// Rewrite schema text using the namespace rewriter.
+  799|       |    ///
+  800|       |    /// This function performs namespace replacement in the schema text,
+  801|       |    /// applying both wildcard patterns and exact mappings to rewrite ALL
+  802|       |    /// type references in the schema.
+  803|      5|    fn rewrite_schema(&mut self, _old_type: &str, _new_type: &str, schema_text: &str) -> String {
+  804|      5|        self.ensure_rewriter();
+  805|       |
+  806|       |        // Use a hash of schema_text and all mappings as cache key
+  807|       |        use std::hash::{Hash, Hasher};
+  808|      5|        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+  809|      5|        schema_text.hash(&mut hasher);
+  810|      5|        for k in self.mappings.keys() {
+                          ^4
+  811|      4|            k.hash(&mut hasher);
+  812|      4|        }
+  813|      6|        for (p, _) in &self.wildcard_patterns {
+                           ^1
+  814|      1|            p.hash(&mut hasher);
+  815|      1|        }
+  816|      5|        let cache_key = format!("full:{}", hasher.finish());
+  817|       |
+  818|      5|        if let Some(cached) = self.schema_cache.get(&cache_key) {
+                                  ^0
+  819|      0|            return cached.clone();
+  820|      5|        }
+  821|       |
+  822|      5|        let rewriter = self.namespace_rewriter.as_ref().unwrap();
+  823|      5|        let rewritten = rewriter.rewrite_schema(schema_text);
+  824|      5|        self.schema_cache.insert(cache_key, rewritten.clone());
+  825|      5|        rewritten
+  826|      5|    }
+  827|       |
+  828|       |    /// Apply transformation to both type name and schema text.
+  829|      6|    pub fn apply(
+  830|      6|        &mut self,
+  831|      6|        type_name: &str,
+  832|      6|        schema_text: Option<&str>,
+  833|      6|    ) -> (String, Option<String>) {
+  834|      6|        self.ensure_rewriter();
+  835|       |
+  836|       |        // Check exact mappings first
+  837|      6|        if let Some(target) = self.mappings.get(type_name).cloned() {
+                                  ^5
+  838|      5|            let rewritten_schema = schema_text.map(|s| self.rewrite_schema(type_name, &target, s));
+                                                                     ^4   ^4             ^4         ^4       ^4
+  839|      5|            (target, rewritten_schema)
+  840|      1|        } else if let Some(target) = self.apply_wildcard_type(type_name) {
+  841|       |            // For wildcard, use the namespace rewriter for schema rewriting
+  842|       |            // Then also replace the specific type that was matched
+  843|      1|            let rewritten_schema = schema_text.map(|s| {
+  844|      1|                let mut result = self.rewrite_schema(type_name, &target, s);
+  845|       |                // Also replace the specific type that was matched
+  846|      1|                result = replace_type_reference(&result, type_name, &target);
+  847|       |                // Handle schema format conversions
+  848|      1|                if type_name.contains('/') {
+  849|      1|                    let old_colon = type_name.replace('/', "::");
+  850|      1|                    let new_colon = target.replace('/', "::");
+  851|      1|                    result = replace_type_reference(&result, &old_colon, &new_colon);
+  852|      1|                    let old_dot = type_name.replace("/msg/", ".").replace('/', ".");
+  853|      1|                    let new_dot = target.replace("/msg/", ".").replace('/', ".");
+  854|      1|                    result = replace_type_reference(&result, &old_dot, &new_dot);
+  855|      1|                }
+                              ^0
+  856|      1|                result
+  857|      1|            });
+  858|      1|            (target, rewritten_schema)
+  859|       |        } else {
+  860|      0|            (type_name.to_string(), schema_text.map(|s| s.to_string()))
+  861|       |        }
+  862|      6|    }
+  863|       |}
+  864|       |
+  865|       |impl McapTransform for TypeRenameTransform {
+  866|     28|    fn transform_topic(&self, topic: &str) -> Option<String> {
+  867|       |        // Type transform doesn't modify topics
+  868|     28|        Some(topic.to_string())
+  869|     28|    }
+  870|       |
+  871|     34|    fn transform_type(
+  872|     34|        &self,
+  873|     34|        type_name: &str,
+  874|     34|        schema_text: Option<&str>,
+  875|     34|    ) -> (String, Option<String>) {
+  876|       |        // Check exact mappings first
+  877|     34|        let mapping = self.mappings.get(type_name).cloned();
+  878|       |
+  879|     34|        if let Some(target) = mapping {
+                                  ^13
+  880|       |            // Use pre-compiled namespace rewriter for schema rewriting
+  881|     13|            let rewritten_schema = schema_text.and_then(|s| {
+                                                                          ^5
+  882|      5|                self.namespace_rewriter
+  883|      5|                    .as_ref()
+  884|      5|                    .map(|r| r.rewrite_schema(s))
+  885|      5|            });
+  886|       |            (
+  887|     13|                target,
+  888|     13|                rewritten_schema.or(schema_text.map(|s| s.to_string())),
+                                                                      ^5^5
+  889|       |            )
+  890|     21|        } else if let Some(target) = self.apply_wildcard_type(type_name) {
+                                         ^0
+  891|       |            // For wildcard patterns, use the namespace rewriter first
+  892|      0|            let rewritten_schema = self.namespace_rewriter.as_ref().and(schema_text).map(|s| {
+  893|      0|                let mut result = self.namespace_rewriter.as_ref().unwrap().rewrite_schema(s);
+  894|       |                // Also replace the specific type that was matched
+  895|      0|                result = replace_type_reference(&result, type_name, &target);
+  896|       |                // Handle schema format conversions
+  897|      0|                if type_name.contains('/') {
+  898|      0|                    let old_colon = type_name.replace('/', "::");
+  899|      0|                    let new_colon = target.replace('/', "::");
+  900|      0|                    result = replace_type_reference(&result, &old_colon, &new_colon);
+  901|      0|                    let old_dot = type_name.replace("/msg/", ".").replace('/', ".");
+  902|      0|                    let new_dot = target.replace("/msg/", ".").replace('/', ".");
+  903|      0|                    result = replace_type_reference(&result, &old_dot, &new_dot);
+  904|      0|                }
+  905|      0|                result
+  906|      0|            });
+  907|       |            (
+  908|      0|                target,
+  909|      0|                rewritten_schema.or(schema_text.map(|s| s.to_string())),
+  910|       |            )
+  911|       |        } else {
+  912|     21|            (type_name.to_string(), schema_text.map(|s| s.to_string()))
+                                                                      ^1^1
+  913|       |        }
+  914|     34|    }
+  915|       |
+  916|      8|    fn validate(&self, channels: &[ChannelInfo]) -> std::result::Result<(), TransformError> {
+  917|      8|        if self.mappings.is_empty() {
+  918|      1|            return Ok(());
+  919|      7|        }
+  920|       |
+  921|       |        // Collect all existing types
+  922|      7|        let existing_types: HashSet<&str> =
+  923|     10|            channels.iter().map(|c| c.message_type.as_str()).collect();
+                          ^7       ^7     ^7                               ^7
+  924|       |
+  925|       |        // Check that all source types exist
+  926|      9|        for source in self.mappings.keys() {
+                                    ^7            ^7
+  927|      9|            if !existing_types.contains(source.as_str()) {
+  928|      1|                return Err(TransformError::NotFound {
+  929|      1|                    name: source.clone(),
+  930|      1|                    kind: "type",
+  931|      1|                });
+  932|      8|            }
+  933|       |        }
+  934|       |
+  935|       |        // Build mapping from target type to source types
+  936|      6|        let mut target_to_sources: HashMap<&str, Vec<&str>> = HashMap::new();
+  937|       |
+  938|     14|        for (source, target) in &self.mappings {
+                           ^8      ^8
+  939|      8|            target_to_sources.entry(target).or_default().push(source);
+  940|      8|        }
+  941|       |
+  942|       |        // Check for collisions where multiple sources map to the same target
+  943|     10|        for (target, sources) in &target_to_sources {
+                           ^6      ^6
+  944|      6|            if sources.len() > 1 {
+  945|       |                // Check if schemas are identical
+  946|       |                use std::collections::HashSet;
+  947|      2|                let schemas: HashSet<&String> = sources
+  948|      2|                    .iter()
+  949|      4|                    .filter_map(|s| {
+                                   ^2
+  950|      4|                        channels
+  951|      4|                            .iter()
+  952|      6|                            .find(|c| c.message_type == *s)
+                                           ^4
+  953|      4|                            .and_then(|c| c.schema.as_ref())
+  954|      4|                    })
+  955|      2|                    .collect();
+  956|       |
+  957|       |                // If there's more than one unique schema, it's a collision
+  958|      2|                if schemas.len() > 1 {
+  959|       |                    return Err(TransformError::TypeCollision {
+  960|      2|                        sources: sources.iter().map(|s| s.to_string()).collect(),
+                                               ^1             ^1                     ^1
+  961|      1|                        target: target.to_string(),
+  962|       |                    });
+  963|      1|                }
+  964|      4|            }
+  965|       |
+  966|       |            // Check if target conflicts with an existing type that isn't one of the sources
+  967|      5|            if !sources.contains(target) && existing_types.contains(*target) {
+  968|       |                return Err(TransformError::TypeCollision {
+  969|      1|                    sources: sources.iter().map(|s| s.to_string()).collect(),
+  970|      1|                    target: target.to_string(),
+  971|       |                });
+  972|      4|            }
+  973|       |        }
+  974|       |
+  975|      4|        Ok(())
+  976|      8|    }
+  977|       |
+  978|      3|    fn modifies_types(&self) -> bool {
+  979|      3|        !self.mappings.is_empty()
+  980|      3|    }
+  981|       |
+  982|      3|    fn modifies_schemas(&self) -> bool {
+  983|      3|        !self.mappings.is_empty()
+  984|      3|    }
+  985|       |
+  986|     20|    fn as_any(&self) -> &dyn std::any::Any {
+  987|     20|        self
+  988|     20|    }
+  989|       |
+  990|      1|    fn box_clone(&self) -> Box<dyn McapTransform> {
+  991|      1|        Box::new(self.clone())
+  992|      1|    }
+  993|       |}
+  994|       |
+  995|       |/// Topic-aware type renaming transformation.
+  996|       |///
+  997|       |/// Unlike `TypeRenameTransform` which applies the same type mapping regardless of topic,
+  998|       |/// this transform allows different type transformations based on the channel topic.
+  999|       |///
+ 1000|       |/// This enables use cases like:
+ 1001|       |/// - `/lowdim/joint` with `nmx.msg.LowdimData` → `nmx.msg.JointStates`
+ 1002|       |/// - `/lowdim/tcp` with `nmx.msg.LowdimData` → `nmx.msg.eef_pose`
+ 1003|       |///
+ 1004|       |/// Schema rewriting always uses package-based replacement.
+ 1005|       |///
+ 1006|       |/// # Example
+ 1007|       |///
+ 1008|       |/// ```no_run
+ 1009|       |/// # fn main() {
+ 1010|       |/// use robocodec::transform::TopicAwareTypeRenameTransform;
+ 1011|       |///
+ 1012|       |/// let mut transform = TopicAwareTypeRenameTransform::new();
+ 1013|       |/// transform.add_mapping("/lowdim/joint", "nmx.msg.LowdimData", "nmx.msg.JointStates");
+ 1014|       |/// # }
+ 1015|       |/// ```
+ 1016|       |#[derive(Debug, Clone)]
+ 1017|       |pub struct TopicAwareTypeRenameTransform {
+ 1018|       |    /// Topic-specific type mappings: (topic, source_type) -> target_type
+ 1019|       |    mappings: HashMap<(String, String), String>,
+ 1020|       |}
+ 1021|       |
+ 1022|       |impl Default for TopicAwareTypeRenameTransform {
+ 1023|      0|    fn default() -> Self {
+ 1024|      0|        Self::new()
+ 1025|      0|    }
+ 1026|       |}
+ 1027|       |
+ 1028|       |impl TopicAwareTypeRenameTransform {
+ 1029|       |    /// Create a new empty topic-aware type rename transform.
+ 1030|     14|    pub fn new() -> Self {
+ 1031|     14|        Self {
+ 1032|     14|            mappings: HashMap::new(),
+ 1033|     14|        }
+ 1034|     14|    }
+ 1035|       |
+ 1036|       |    /// Add a topic-specific type rename mapping.
+ 1037|       |    ///
+ 1038|       |    /// # Arguments
+ 1039|       |    ///
+ 1040|       |    /// * `topic` - The topic pattern (exact match for now)
+ 1041|       |    /// * `source_type` - Original type name (e.g., "nmx.msg.LowdimData")
+ 1042|       |    /// * `target_type` - New type name (e.g., "nmx.msg.JointStates")
+ 1043|     30|    pub fn add_mapping(
+ 1044|     30|        &mut self,
+ 1045|     30|        topic: impl Into<String>,
+ 1046|     30|        source_type: impl Into<String>,
+ 1047|     30|        target_type: impl Into<String>,
+ 1048|     30|    ) {
+ 1049|     30|        self.mappings
+ 1050|     30|            .insert((topic.into(), source_type.into()), target_type.into());
+ 1051|     30|    }
+ 1052|       |
+ 1053|       |    /// Create a transform from a HashMap of mappings.
+ 1054|      0|    pub fn from_map(mappings: HashMap<(String, String), String>) -> Self {
+ 1055|      0|        Self { mappings }
+ 1056|      0|    }
+ 1057|       |
+ 1058|       |    /// Get the number of mappings configured.
+ 1059|      2|    pub fn len(&self) -> usize {
+ 1060|      2|        self.mappings.len()
+ 1061|      2|    }
+ 1062|       |
+ 1063|       |    /// Check if any mappings are configured.
+ 1064|      1|    pub fn is_empty(&self) -> bool {
+ 1065|      1|        self.mappings.is_empty()
+ 1066|      1|    }
+ 1067|       |
+ 1068|       |    /// Get all mappings.
+ 1069|      0|    pub fn mappings(&self) -> &HashMap<(String, String), String> {
+ 1070|      0|        &self.mappings
+ 1071|      0|    }
+ 1072|       |
+ 1073|       |    /// Apply the transformation for a specific topic and type.
+ 1074|       |    ///
+ 1075|       |    /// Returns the new type name, or the original if no mapping exists for this (topic, type) pair.
+ 1076|      6|    pub fn apply_for_topic(&self, topic: &str, type_name: &str) -> String {
+ 1077|      6|        if let Some(target) = self
+                                  ^4
+ 1078|      6|            .mappings
+ 1079|      6|            .get(&(topic.to_string(), type_name.to_string()))
+ 1080|       |        {
+ 1081|      4|            return target.clone();
+ 1082|      2|        }
+ 1083|      2|        type_name.to_string()
+ 1084|      6|    }
+ 1085|       |
+ 1086|       |    /// Apply transformation for a specific topic, type, and schema.
+ 1087|       |    ///
+ 1088|       |    /// This method can be called from both mutable and immutable references.
+ 1089|      2|    pub fn apply_for_topic_with_schema(
+ 1090|      2|        &self,
+ 1091|      2|        topic: &str,
+ 1092|      2|        type_name: &str,
+ 1093|      2|        schema_text: Option<&str>,
+ 1094|      2|    ) -> (String, Option<String>) {
+ 1095|      2|        if let Some(target) = self
+ 1096|      2|            .mappings
+ 1097|      2|            .get(&(topic.to_string(), type_name.to_string()))
+ 1098|       |        {
+ 1099|      2|            let rewritten_schema =
+ 1100|      2|                schema_text.map(|s| rewrite_schema_package(type_name, target, s));
+ 1101|      2|            (target.clone(), rewritten_schema)
+ 1102|       |        } else {
+ 1103|      0|            (type_name.to_string(), schema_text.map(|s| s.to_string()))
+ 1104|       |        }
+ 1105|      2|    }
+ 1106|       |
+ 1107|       |    /// Check if there's a mapping for a given source type across any topic.
+ 1108|       |    ///
+ 1109|       |    /// This is used to detect conflicts with global type mappings.
+ 1110|      3|    pub fn has_mapping_for_type(&self, type_name: &str) -> bool {
+ 1111|      3|        self.mappings.keys().any(|(_, source)| source == type_name)
+                                                             ^2        ^2
+ 1112|      3|    }
+ 1113|       |
+ 1114|       |    /// Get all topics that have a mapping for the given source type.
+ 1115|      1|    pub fn topics_for_type(&self, type_name: &str) -> Vec<&str> {
+ 1116|      1|        self.mappings
+ 1117|      1|            .keys()
+ 1118|      2|            .filter_map(|(topic, source)| {
+                           ^1
+ 1119|      2|                if source == type_name {
+ 1120|      2|                    Some(topic.as_str())
+ 1121|       |                } else {
+ 1122|      0|                    None
+ 1123|       |                }
+ 1124|      2|            })
+ 1125|      1|            .collect()
+ 1126|      1|    }
+ 1127|       |}
+ 1128|       |
+ 1129|       |impl McapTransform for TopicAwareTypeRenameTransform {
+ 1130|      0|    fn transform_topic(&self, topic: &str) -> Option<String> {
+ 1131|       |        // Topic transform doesn't modify topics
+ 1132|      0|        Some(topic.to_string())
+ 1133|      0|    }
+ 1134|       |
+ 1135|      1|    fn transform_type(
+ 1136|      1|        &self,
+ 1137|      1|        type_name: &str,
+ 1138|      1|        schema_text: Option<&str>,
+ 1139|      1|    ) -> (String, Option<String>) {
+ 1140|       |        // Without topic context, we can't apply topic-specific mappings
+ 1141|       |        // Return original - the topic-aware version should be used instead
+ 1142|      1|        (type_name.to_string(), schema_text.map(|s| s.to_string()))
+ 1143|      1|    }
+ 1144|       |
+ 1145|      2|    fn validate(&self, channels: &[ChannelInfo]) -> std::result::Result<(), TransformError> {
+ 1146|      2|        if self.mappings.is_empty() {
+ 1147|      0|            return Ok(());
+ 1148|      2|        }
+ 1149|       |
+ 1150|       |        // Collect existing (topic, type) pairs
+ 1151|      2|        let existing_pairs: HashSet<(&str, &str)> = channels
+ 1152|      2|            .iter()
+ 1153|      2|            .map(|c| (c.topic.as_str(), c.message_type.as_str()))
+ 1154|      2|            .collect();
+ 1155|       |
+ 1156|       |        // Check that all (topic, source_type) pairs exist
+ 1157|      2|        for (topic, source_type) in self.mappings.keys() {
+ 1158|      2|            if !existing_pairs.contains(&(topic.as_str(), source_type.as_str())) {
+ 1159|      1|                return Err(TransformError::NotFound {
+ 1160|      1|                    name: format!("{source_type}@{topic}"),
+ 1161|      1|                    kind: "topic-type pair",
+ 1162|      1|                });
+ 1163|      1|            }
+ 1164|       |        }
+ 1165|       |
+ 1166|      1|        Ok(())
+ 1167|      2|    }
+ 1168|       |
+ 1169|      0|    fn modifies_types(&self) -> bool {
+ 1170|      0|        !self.mappings.is_empty()
+ 1171|      0|    }
+ 1172|       |
+ 1173|      0|    fn modifies_schemas(&self) -> bool {
+ 1174|      0|        !self.mappings.is_empty()
+ 1175|      0|    }
+ 1176|       |
+ 1177|      0|    fn as_any(&self) -> &dyn std::any::Any {
+ 1178|      0|        self
+ 1179|      0|    }
+ 1180|       |
+ 1181|      0|    fn box_clone(&self) -> Box<dyn McapTransform> {
+ 1182|      0|        Box::new(self.clone())
+ 1183|      0|    }
+ 1184|       |}
+ 1185|       |
+ 1186|       |#[cfg(test)]
+ 1187|       |mod tests {
+ 1188|       |    use super::*;
+ 1189|       |
+ 1190|      9|    fn make_channel(id: u16, msg_type: &str, schema: Option<&str>) -> ChannelInfo {
+ 1191|      9|        ChannelInfo::new(
+ 1192|      9|            id,
+ 1193|      9|            "/test".to_string(),
+ 1194|      9|            msg_type.to_string(),
+ 1195|      9|            "cdr".to_string(),
+ 1196|      9|            schema.map(|s| s.to_string()),
+                                         ^7^7
+ 1197|      9|            Some("ros2msg".to_string()),
+ 1198|       |        )
+ 1199|      9|    }
+ 1200|       |
+ 1201|       |    #[test]
+ 1202|      1|    fn test_new() {
+ 1203|      1|        let transform = TypeRenameTransform::new();
+ 1204|      1|        assert!(transform.is_empty());
+ 1205|      1|        assert_eq!(transform.len(), 0);
+ 1206|      1|    }
+ 1207|       |
+ 1208|       |    #[test]
+ 1209|      1|    fn test_add_mapping() {
+ 1210|      1|        let mut transform = TypeRenameTransform::new();
+ 1211|      1|        transform.add_mapping("old_pkg/Msg", "new_pkg/Msg");
+ 1212|      1|        assert_eq!(transform.len(), 1);
+ 1213|      1|    }
+ 1214|       |
+ 1215|       |    #[test]
+ 1216|      1|    fn test_from_map() {
+ 1217|      1|        let mut map = HashMap::new();
+ 1218|      1|        map.insert("a/A".to_string(), "b/A".to_string());
+ 1219|       |
+ 1220|      1|        let transform = TypeRenameTransform::from_map(map);
+ 1221|      1|        assert_eq!(transform.len(), 1);
+ 1222|      1|    }
+ 1223|       |
+ 1224|       |    #[test]
+ 1225|      1|    fn test_apply_type() {
+ 1226|      1|        let mut transform = TypeRenameTransform::new();
+ 1227|      1|        transform.add_mapping("old/Msg", "new/Msg");
+ 1228|       |
+ 1229|      1|        assert_eq!(transform.apply_type("old/Msg"), "new/Msg");
+ 1230|      1|        assert_eq!(transform.apply_type("other/Msg"), "other/Msg");
+ 1231|      1|    }
+ 1232|       |
+ 1233|       |    #[test]
+ 1234|      1|    fn test_apply_no_schema() {
+ 1235|      1|        let mut transform = TypeRenameTransform::new();
+ 1236|      1|        transform.add_mapping("old/Msg", "new/Msg");
+ 1237|       |
+ 1238|      1|        let (new_type, schema) = transform.apply("old/Msg", None);
+ 1239|      1|        assert_eq!(new_type, "new/Msg");
+ 1240|      1|        assert_eq!(schema, None);
+ 1241|      1|    }
+ 1242|       |
+ 1243|       |    #[test]
+ 1244|      1|    fn test_apply_with_schema_no_rewrite() {
+ 1245|      1|        let mut transform = TypeRenameTransform::new();
+ 1246|      1|        transform.add_mapping("old/Msg", "new/Msg");
+ 1247|       |
+ 1248|      1|        let (new_type, schema) = transform.apply("old/Msg", Some("old/Header field"));
+ 1249|      1|        assert_eq!(new_type, "new/Msg");
+ 1250|      1|        assert_eq!(schema, Some("old/Header field".to_string()));
+ 1251|      1|    }
+ 1252|       |
+ 1253|       |    #[test]
+ 1254|      1|    fn test_apply_with_schema_rewrite_exact_type() {
+ 1255|      1|        let mut transform = TypeRenameTransform::new();
+ 1256|      1|        transform.add_mapping("old/Msg", "new/Msg");
+ 1257|       |
+ 1258|       |        // The schema contains the exact type being renamed - it should be rewritten
+ 1259|      1|        let (new_type, schema) = transform.apply("old/Msg", Some("old/Msg field\nold/Msg another"));
+ 1260|      1|        assert_eq!(new_type, "new/Msg");
+ 1261|       |        // Only exact matches of "old/Msg" get rewritten, not "old/Type"
+ 1262|      1|        let rewritten = schema.unwrap();
+ 1263|      1|        assert!(rewritten.contains("new/Msg field"));
+ 1264|      1|        assert!(rewritten.contains("new/Msg another"));
+ 1265|      1|        assert!(!rewritten.contains("old/Msg"));
+ 1266|      1|    }
+ 1267|       |
+ 1268|       |    #[test]
+ 1269|      1|    fn test_apply_with_schema_module_declaration() {
+ 1270|      1|        let mut transform = TypeRenameTransform::new();
+ 1271|      1|        transform.add_mapping("sensor_msgs/msg/Image", "my_msgs/msg/Image");
+ 1272|       |
+ 1273|       |        // Module declarations should be rewritten
+ 1274|      1|        let schema = "module sensor_msgs {\n  struct Header {\n    int32 x;\n  };\n};";
+ 1275|      1|        let (_new_type, rewritten_schema) = transform.apply("sensor_msgs/msg/Image", Some(schema));
+ 1276|       |
+ 1277|      1|        let rewritten = rewritten_schema.unwrap();
+ 1278|      1|        assert!(rewritten.contains("module my_msgs {"));
+ 1279|      1|        assert!(!rewritten.contains("module sensor_msgs {"));
+ 1280|      1|    }
+ 1281|       |
+ 1282|       |    #[test]
+ 1283|      1|    fn test_apply_with_schema_double_colon_exact_match() {
+ 1284|      1|        let mut transform = TypeRenameTransform::new();
+ 1285|      1|        transform.add_mapping("sensor_msgs/Image", "my_msgs/Image");
+ 1286|       |
+ 1287|       |        // The schema contains the exact type in double-colon format
+ 1288|      1|        let schema = "sensor_msgs::Image img\nsensor_msgs::Header header";
+ 1289|      1|        let (_new_type, rewritten_schema) = transform.apply("sensor_msgs/Image", Some(schema));
+ 1290|       |
+ 1291|      1|        let rewritten = rewritten_schema.unwrap();
+ 1292|       |        // Exact type match gets rewritten (with :: conversion)
+ 1293|      1|        assert!(rewritten.contains("my_msgs::Image img"));
+ 1294|       |        // Header is NOT in mappings, so it stays unchanged
+ 1295|      1|        assert!(rewritten.contains("sensor_msgs::Header"));
+ 1296|      1|    }
+ 1297|       |
+ 1298|       |    #[test]
+ 1299|      1|    fn test_validate_empty() {
+ 1300|      1|        let transform = TypeRenameTransform::new();
+ 1301|      1|        let channels = vec![make_channel(1, "std_msgs/String", None)];
+ 1302|      1|        assert!(transform.validate(&channels).is_ok());
+ 1303|      1|    }
+ 1304|       |
+ 1305|       |    #[test]
+ 1306|      1|    fn test_validate_success() {
+ 1307|      1|        let mut transform = TypeRenameTransform::new();
+ 1308|      1|        transform.add_mapping("std_msgs/String", "my_msgs/String");
+ 1309|       |
+ 1310|      1|        let channels = vec![make_channel(1, "std_msgs/String", Some("data"))];
+ 1311|      1|        assert!(transform.validate(&channels).is_ok());
+ 1312|      1|    }
+ 1313|       |
+ 1314|       |    #[test]
+ 1315|      1|    fn test_validate_not_found() {
+ 1316|      1|        let mut transform = TypeRenameTransform::new();
+ 1317|      1|        transform.add_mapping("nonexistent/Msg", "new/Msg");
+ 1318|       |
+ 1319|      1|        let channels = vec![make_channel(1, "std_msgs/String", None)];
+ 1320|      1|        let result = transform.validate(&channels);
+ 1321|      1|        assert!(result.is_err());
+ 1322|      1|        match result.unwrap_err() {
+ 1323|      1|            TransformError::NotFound { name, .. } => assert_eq!(name, "nonexistent/Msg"),
+ 1324|      0|            _ => panic!("Expected NotFound error"),
+ 1325|       |        }
+ 1326|      1|    }
+ 1327|       |
+ 1328|       |    #[test]
+ 1329|      1|    fn test_validate_collision() {
+ 1330|      1|        let mut transform = TypeRenameTransform::new();
+ 1331|      1|        transform.add_mapping("a/Msg", "c/Msg");
+ 1332|      1|        transform.add_mapping("b/Msg", "c/Msg");
+ 1333|       |
+ 1334|      1|        let channels = vec![
+ 1335|      1|            make_channel(1, "a/Msg", Some("schema a")),
+ 1336|      1|            make_channel(2, "b/Msg", Some("schema b")),
+ 1337|       |        ];
+ 1338|      1|        let result = transform.validate(&channels);
+ 1339|      1|        assert!(result.is_err());
+ 1340|      1|        match result.unwrap_err() {
+ 1341|      1|            TransformError::TypeCollision { sources, target } => {
+ 1342|      1|                assert_eq!(target, "c/Msg");
+ 1343|      1|                assert!(sources.contains(&"a/Msg".to_string()));
+ 1344|      1|                assert!(sources.contains(&"b/Msg".to_string()));
+ 1345|       |            }
+ 1346|      0|            _ => panic!("Expected TypeCollision error"),
+ 1347|       |        }
+ 1348|      1|    }
+ 1349|       |
+ 1350|       |    #[test]
+ 1351|      1|    fn test_validate_collision_with_same_schema_ok() {
+ 1352|      1|        let mut transform = TypeRenameTransform::new();
+ 1353|      1|        transform.add_mapping("a/Msg", "c/Msg");
+ 1354|      1|        transform.add_mapping("b/Msg", "c/Msg");
+ 1355|       |
+ 1356|       |        // Same schema is OK - can merge types
+ 1357|      1|        let channels = vec![
+ 1358|      1|            make_channel(1, "a/Msg", Some("same schema")),
+ 1359|      1|            make_channel(2, "b/Msg", Some("same schema")),
+ 1360|       |        ];
+ 1361|      1|        match transform.validate(&channels) {
+ 1362|      1|            Ok(()) => {}
+ 1363|      0|            Err(e) => panic!("Validation failed: {e}"),
+ 1364|       |        }
+ 1365|      1|    }
+ 1366|       |
+ 1367|       |    #[test]
+ 1368|      1|    fn test_validate_conflicts_with_existing() {
+ 1369|      1|        let mut transform = TypeRenameTransform::new();
+ 1370|      1|        transform.add_mapping("a/Msg", "c/Msg");
+ 1371|       |
+ 1372|      1|        let channels = vec![
+ 1373|      1|            make_channel(1, "a/Msg", Some("schema a")),
+ 1374|      1|            make_channel(2, "c/Msg", Some("schema c")),
+ 1375|       |        ];
+ 1376|      1|        let result = transform.validate(&channels);
+ 1377|      1|        assert!(result.is_err());
+ 1378|      1|        match result.unwrap_err() {
+ 1379|      1|            TransformError::TypeCollision { .. } => {}
+ 1380|      0|            _ => panic!("Expected TypeCollision error"),
+ 1381|       |        }
+ 1382|      1|    }
+ 1383|       |
+ 1384|       |    #[test]
+ 1385|      1|    fn test_transform_topic_passthrough() {
+ 1386|      1|        let transform = TypeRenameTransform::new();
+ 1387|      1|        assert_eq!(
+ 1388|      1|            transform.transform_topic("/test"),
+ 1389|      1|            Some("/test".to_string())
+ 1390|       |        );
+ 1391|      1|    }
+ 1392|       |
+ 1393|       |    #[test]
+ 1394|      1|    fn test_transform_type() {
+ 1395|      1|        let mut transform = TypeRenameTransform::new();
+ 1396|      1|        transform.add_mapping("old/Msg", "new/Msg");
+ 1397|       |
+ 1398|      1|        let (new_type, schema) = transform.transform_type("old/Msg", Some("schema"));
+ 1399|      1|        assert_eq!(new_type, "new/Msg");
+ 1400|      1|        assert_eq!(schema, Some("schema".to_string()));
+ 1401|      1|    }
+ 1402|       |
+ 1403|       |    #[test]
+ 1404|      1|    fn test_modifies_types() {
+ 1405|      1|        let mut transform = TypeRenameTransform::new();
+ 1406|      1|        assert!(!transform.modifies_types());
+ 1407|       |
+ 1408|      1|        transform.add_mapping("a/A", "b/A");
+ 1409|      1|        assert!(transform.modifies_types());
+ 1410|      1|    }
+ 1411|       |
+ 1412|       |    #[test]
+ 1413|      1|    fn test_modifies_schemas() {
+ 1414|      1|        let transform = TypeRenameTransform::new();
+ 1415|      1|        assert!(!transform.modifies_schemas());
+ 1416|       |
+ 1417|       |        // With new behavior, any mapping means schemas will be modified
+ 1418|      1|        let mut transform = TypeRenameTransform::new();
+ 1419|      1|        transform.add_mapping("a/A", "b/A");
+ 1420|      1|        assert!(transform.modifies_schemas());
+ 1421|      1|    }
+ 1422|       |
+ 1423|       |    #[test]
+ 1424|      1|    fn test_wildcard_matching() {
+ 1425|      1|        let mut transform = TypeRenameTransform::new();
+ 1426|      1|        transform.add_wildcard_mapping("foo/*", "bar/*");
+ 1427|       |
+ 1428|       |        // Should match and rename
+ 1429|      1|        assert_eq!(transform.apply_type("foo/TypeA"), "bar/TypeA");
+ 1430|      1|        assert_eq!(transform.apply_type("foo/TypeB"), "bar/TypeB");
+ 1431|       |
+ 1432|       |        // Should not match
+ 1433|      1|        assert_eq!(transform.apply_type("baz/TypeA"), "baz/TypeA");
+ 1434|      1|    }
+ 1435|       |
+ 1436|       |    #[test]
+ 1437|      1|    fn test_wildcard_with_schema_rewrite() {
+ 1438|      1|        let mut transform = TypeRenameTransform::new();
+ 1439|      1|        transform.add_wildcard_mapping("foo/*", "bar/*");
+ 1440|       |
+ 1441|       |        // The type itself gets rewritten by wildcard
+ 1442|      1|        let (new_type, schema) = transform.apply("foo/Msg", Some("foo/Msg field"));
+ 1443|      1|        assert_eq!(new_type, "bar/Msg");
+ 1444|       |        // Schema contains exact type match, so it gets rewritten
+ 1445|      1|        assert_eq!(schema, Some("bar/Msg field".to_string()));
+ 1446|      1|    }
+ 1447|       |
+ 1448|       |    #[test]
+ 1449|      1|    fn test_wildcard_exact_takes_precedence() {
+ 1450|      1|        let mut transform = TypeRenameTransform::new();
+ 1451|      1|        transform.add_mapping("foo/Specific", "exact/Target");
+ 1452|      1|        transform.add_wildcard_mapping("foo/*", "wildcard/*");
+ 1453|       |
+ 1454|       |        // Exact mapping should take precedence
+ 1455|      1|        assert_eq!(transform.apply_type("foo/Specific"), "exact/Target");
+ 1456|       |        // Other types use wildcard
+ 1457|      1|        assert_eq!(transform.apply_type("foo/Other"), "wildcard/Other");
+ 1458|      1|    }
+ 1459|       |}
+ 1460|       |
+ 1461|       |#[cfg(test)]
+ 1462|       |mod topic_aware_tests {
+ 1463|       |    use super::*;
+ 1464|       |
+ 1465|      2|    fn make_channel(id: u16, topic: &str, msg_type: &str) -> ChannelInfo {
+ 1466|      2|        ChannelInfo::new(
+ 1467|      2|            id,
+ 1468|      2|            topic.to_string(),
+ 1469|      2|            msg_type.to_string(),
+ 1470|      2|            "cdr".to_string(),
+ 1471|      2|            Some("schema text".to_string()),
+ 1472|      2|            Some("ros2msg".to_string()),
+ 1473|       |        )
+ 1474|      2|    }
+ 1475|       |
+ 1476|       |    #[test]
+ 1477|      1|    fn test_topic_aware_new() {
+ 1478|      1|        let transform = TopicAwareTypeRenameTransform::new();
+ 1479|      1|        assert!(transform.is_empty());
+ 1480|      1|        assert_eq!(transform.len(), 0);
+ 1481|      1|    }
+ 1482|       |
+ 1483|       |    #[test]
+ 1484|      1|    fn test_topic_aware_add_mapping() {
+ 1485|      1|        let mut transform = TopicAwareTypeRenameTransform::new();
+ 1486|      1|        transform.add_mapping("/lowdim/joint", "nmx.msg.LowdimData", "nmx.msg.JointStates");
+ 1487|      1|        assert_eq!(transform.len(), 1);
+ 1488|      1|    }
+ 1489|       |
+ 1490|       |    #[test]
+ 1491|      1|    fn test_topic_aware_apply_for_topic() {
+ 1492|      1|        let mut transform = TopicAwareTypeRenameTransform::new();
+ 1493|      1|        transform.add_mapping("/lowdim/joint", "nmx.msg.LowdimData", "nmx.msg.JointStates");
+ 1494|       |
+ 1495|       |        // Should match topic and type
+ 1496|      1|        assert_eq!(
+ 1497|      1|            transform.apply_for_topic("/lowdim/joint", "nmx.msg.LowdimData"),
+ 1498|       |            "nmx.msg.JointStates"
+ 1499|       |        );
+ 1500|       |
+ 1501|       |        // Different topic - no match
+ 1502|      1|        assert_eq!(
+ 1503|      1|            transform.apply_for_topic("/lowdim/tcp", "nmx.msg.LowdimData"),
+ 1504|       |            "nmx.msg.LowdimData"
+ 1505|       |        );
+ 1506|       |
+ 1507|       |        // Different type - no match
+ 1508|      1|        assert_eq!(
+ 1509|      1|            transform.apply_for_topic("/lowdim/joint", "nmx.msg.OtherType"),
+ 1510|       |            "nmx.msg.OtherType"
+ 1511|       |        );
+ 1512|      1|    }
+ 1513|       |
+ 1514|       |    #[test]
+ 1515|      1|    fn test_topic_aware_apply_with_schema_no_rewrite() {
+ 1516|      1|        let mut transform = TopicAwareTypeRenameTransform::new();
+ 1517|      1|        transform.add_mapping("/lowdim/joint", "nmx.msg.LowdimData", "nmx.msg.JointStates");
+ 1518|       |
+ 1519|      1|        let (new_type, schema) = transform.apply_for_topic_with_schema(
+ 1520|      1|            "/lowdim/joint",
+ 1521|      1|            "nmx.msg.LowdimData",
+ 1522|      1|            Some("original schema"),
+ 1523|      1|        );
+ 1524|      1|        assert_eq!(new_type, "nmx.msg.JointStates");
+ 1525|      1|        assert_eq!(schema, Some("original schema".to_string()));
+ 1526|      1|    }
+ 1527|       |
+ 1528|       |    #[test]
+ 1529|      1|    fn test_topic_aware_apply_with_schema_rewrite_package() {
+ 1530|      1|        let mut transform = TopicAwareTypeRenameTransform::new();
+ 1531|      1|        transform.add_mapping("/lowdim/joint", "nmx.msg.LowdimData", "nmx.msg.JointStates");
+ 1532|       |
+ 1533|      1|        let (new_type, schema) = transform.apply_for_topic_with_schema(
+ 1534|      1|            "/lowdim/joint",
+ 1535|      1|            "nmx.msg.LowdimData",
+ 1536|      1|            Some("nmx.msg/Header field"),
+ 1537|      1|        );
+ 1538|      1|        assert_eq!(new_type, "nmx.msg.JointStates");
+ 1539|      1|        assert_eq!(schema, Some("nmx.msg/Header field".to_string()));
+ 1540|      1|    }
+ 1541|       |
+ 1542|       |    #[test]
+ 1543|      1|    fn test_topic_aware_has_mapping_for_type() {
+ 1544|      1|        let mut transform = TopicAwareTypeRenameTransform::new();
+ 1545|      1|        assert!(!transform.has_mapping_for_type("nmx.msg.LowdimData"));
+ 1546|       |
+ 1547|      1|        transform.add_mapping("/lowdim/joint", "nmx.msg.LowdimData", "nmx.msg.JointStates");
+ 1548|      1|        assert!(transform.has_mapping_for_type("nmx.msg.LowdimData"));
+ 1549|      1|        assert!(!transform.has_mapping_for_type("nmx.msg.Other"));
+ 1550|      1|    }
+ 1551|       |
+ 1552|       |    #[test]
+ 1553|      1|    fn test_topic_aware_topics_for_type() {
+ 1554|      1|        let mut transform = TopicAwareTypeRenameTransform::new();
+ 1555|      1|        transform.add_mapping("/lowdim/joint", "nmx.msg.LowdimData", "nmx.msg.JointStates");
+ 1556|      1|        transform.add_mapping("/lowdim/tcp", "nmx.msg.LowdimData", "nmx.msg.eef_pose");
+ 1557|       |
+ 1558|      1|        let topics = transform.topics_for_type("nmx.msg.LowdimData");
+ 1559|      1|        assert_eq!(topics.len(), 2);
+ 1560|      1|        assert!(topics.contains(&"/lowdim/joint"));
+ 1561|      1|        assert!(topics.contains(&"/lowdim/tcp"));
+ 1562|      1|    }
+ 1563|       |
+ 1564|       |    #[test]
+ 1565|      1|    fn test_topic_aware_validate_success() {
+ 1566|      1|        let mut transform = TopicAwareTypeRenameTransform::new();
+ 1567|      1|        transform.add_mapping("/lowdim/joint", "nmx.msg.LowdimData", "nmx.msg.JointStates");
+ 1568|       |
+ 1569|      1|        let channels = vec![make_channel(1, "/lowdim/joint", "nmx.msg.LowdimData")];
+ 1570|      1|        assert!(transform.validate(&channels).is_ok());
+ 1571|      1|    }
+ 1572|       |
+ 1573|       |    #[test]
+ 1574|      1|    fn test_topic_aware_validate_not_found() {
+ 1575|      1|        let mut transform = TopicAwareTypeRenameTransform::new();
+ 1576|      1|        transform.add_mapping(
+ 1577|       |            "/nonexistent/topic",
+ 1578|       |            "nmx.msg.LowdimData",
+ 1579|       |            "nmx.msg.JointStates",
+ 1580|       |        );
+ 1581|       |
+ 1582|      1|        let channels = vec![make_channel(1, "/lowdim/joint", "nmx.msg.LowdimData")];
+ 1583|      1|        let result = transform.validate(&channels);
+ 1584|      1|        assert!(result.is_err());
+ 1585|      1|    }
+ 1586|       |
+ 1587|       |    #[test]
+ 1588|      1|    fn test_topic_aware_transform_type_without_topic() {
+ 1589|      1|        let transform = TopicAwareTypeRenameTransform::new();
+ 1590|       |        // Without topic context, returns original
+ 1591|      1|        let (new_type, schema) = transform.transform_type("nmx.msg.LowdimData", Some("schema"));
+ 1592|      1|        assert_eq!(new_type, "nmx.msg.LowdimData");
+ 1593|      1|        assert_eq!(schema, Some("schema".to_string()));
+ 1594|      1|    }
+ 1595|       |}
+

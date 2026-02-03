@@ -1,0 +1,1006 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/rewriter/mcap.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! MCAP file rewriter using decode-encode-write flow.
+    6|       |//!
+    7|       |//! This module provides functionality to normalize MCAP files by:
+    8|       |//! 1. Reading messages from the source MCAP
+    9|       |//! 2. Decoding each message (handles any CDR header issues)
+   10|       |//! 3. Re-encoding with proper CDR headers using schema-driven encoding
+   11|       |//! 4. Writing to a new MCAP file
+   12|       |//! 5. Optionally applying transformations (topic/type renaming, schema rewriting)
+   13|       |//!
+   14|       |//! This ensures consistent CDR formatting across all messages.
+   15|       |//!
+   16|       |//! **Note:** This implementation uses a custom MCAP writer with no external dependencies.
+   17|       |
+   18|       |use std::collections::HashMap;
+   19|       |use std::fs::File;
+   20|       |use std::io::BufWriter;
+   21|       |use std::path::Path;
+   22|       |
+   23|       |use tracing::warn;
+   24|       |
+   25|       |use crate::core::{CodecError, Result};
+   26|       |use crate::encoding::{CdrDecoder, CdrEncoder};
+   27|       |use crate::io::formats::mcap::reader::McapReader;
+   28|       |use crate::io::formats::mcap::writer::ParallelMcapWriter;
+   29|       |use crate::rewriter::{FormatRewriter, RewriteOptions, RewriteStats};
+   30|       |use crate::schema::{parse_schema, MessageSchema};
+   31|       |use crate::transform::ChannelInfo as TransformChannelInfo;
+   32|       |
+   33|       |/// MCAP file rewriter.
+   34|       |///
+   35|       |/// Performs a full decode-encode-write cycle to normalize MCAP files.
+   36|       |/// Can optionally apply transformations to rename topics, message types,
+   37|       |/// and rewrite schema definitions.
+   38|       |pub struct McapRewriter {
+   39|       |    /// Options for rewriting
+   40|       |    options: RewriteOptions,
+   41|       |    /// Cached schemas indexed by type name (transformed type name if transforms applied)
+   42|       |    schemas: HashMap<String, MessageSchema>,
+   43|       |    /// Statistics
+   44|       |    stats: RewriteStats,
+   45|       |    /// Sequence numbers per channel
+   46|       |    sequences: HashMap<u16, u32>,
+   47|       |}
+   48|       |
+   49|       |impl McapRewriter {
+   50|       |    /// Create a new rewriter with default options.
+   51|      6|    pub fn new() -> Self {
+   52|      6|        Self::with_options(RewriteOptions::default())
+   53|      6|    }
+   54|       |
+   55|       |    /// Create a new rewriter with custom options.
+   56|     12|    pub fn with_options(options: RewriteOptions) -> Self {
+   57|     12|        Self {
+   58|     12|            options,
+   59|     12|            schemas: HashMap::new(),
+   60|     12|            stats: RewriteStats::default(),
+   61|     12|            sequences: HashMap::new(),
+   62|     12|        }
+   63|     12|    }
+   64|       |
+   65|       |    /// Rewrite an MCAP file to a new location.
+   66|       |    ///
+   67|       |    /// # Arguments
+   68|       |    ///
+   69|       |    /// * `input_path` - Path to the input MCAP file
+   70|       |    /// * `output_path` - Path to the output MCAP file
+   71|       |    ///
+   72|       |    /// # Returns
+   73|       |    ///
+   74|       |    /// Statistics about the rewrite operation
+   75|       |    ///
+   76|       |    /// # Example
+   77|       |    ///
+   78|       |    /// ```no_run
+   79|       |    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+   80|       |    /// use robocodec::rewriter::mcap::McapRewriter;
+   81|       |    /// use robocodec::transform::TransformBuilder;
+   82|       |    /// use robocodec::rewriter::RewriteOptions;
+   83|       |    ///
+   84|       |    /// // With transformations
+   85|       |    /// let options = RewriteOptions::default().with_transforms(
+   86|       |    ///     TransformBuilder::new()
+   87|       |    ///         .with_topic_rename("/old_camera", "/camera")
+   88|       |    ///         .with_type_rename("foo/JointState", "bar/JointState")
+   89|       |    ///         .build()
+   90|       |    /// );
+   91|       |    ///
+   92|       |    /// let mut rewriter = McapRewriter::with_options(options);
+   93|       |    /// let stats = rewriter.rewrite("input.mcap", "output.mcap")?;
+   94|       |    /// # Ok(())
+   95|       |    /// # }
+   96|       |    /// ```
+   97|      4|    pub fn rewrite<P1, P2>(&mut self, input_path: P1, output_path: P2) -> Result<RewriteStats>
+   98|      4|    where
+   99|      4|        P1: AsRef<Path>,
+  100|      4|        P2: AsRef<Path>,
+  101|       |    {
+  102|       |        // Reset statistics and sequences
+  103|      4|        self.stats = RewriteStats::default();
+  104|      4|        self.sequences = HashMap::new();
+  105|       |
+  106|       |        // Open input MCAP
+  107|      4|        let reader = McapReader::open(input_path)?;
+                          ^3                                   ^1
+  108|      3|        self.stats.channel_count = reader.channels().len() as u64;
+  109|       |
+  110|       |        // Validate transformations if configured
+  111|      3|        if let Some(ref pipeline) = self.options.transforms {
+                                  ^0
+  112|      0|            let transform_channels: Vec<TransformChannelInfo> = reader
+  113|      0|                .channels()
+  114|      0|                .values()
+  115|      0|                .map(TransformChannelInfo::from_reader_info)
+  116|      0|                .collect();
+  117|      0|            pipeline
+  118|      0|                .validate(&transform_channels)
+  119|      0|                .map_err(|e| CodecError::encode("Transform", e.to_string()))?;
+  120|      3|        }
+  121|       |
+  122|       |        // Create output file
+  123|      3|        let output_file = File::create(output_path).map_err(|e| {
+                          ^2                                                  ^1
+  124|      1|            CodecError::encode("MCAP", format!("Failed to create output file: {e}"))
+  125|      1|        })?;
+  126|       |
+  127|      2|        let mut mcap_writer =
+  128|      2|            ParallelMcapWriter::new(BufWriter::new(output_file)).map_err(|e| {
+                                                                                           ^0
+  129|      0|                CodecError::encode("MCAP", format!("Failed to create MCAP writer: {e}"))
+  130|      0|            })?;
+  131|       |
+  132|       |        // Pre-parse all schemas with transformations applied
+  133|      2|        if self.options.validate_schemas {
+  134|      1|            self.cache_schemas(&reader)?;
+                                                     ^0
+  135|      1|        }
+  136|       |
+  137|       |        // Build schema ID and channel ID mappings with transformations
+  138|      2|        let mut schema_ids: HashMap<String, u16> = HashMap::new();
+  139|      2|        let mut channel_map: HashMap<u16, u16> = HashMap::new();
+  140|      2|        let mut topic_counter: HashMap<String, u32> = HashMap::new();
+  141|       |
+  142|       |        // Get reference to pipeline for use in closures
+  143|      2|        let pipeline = self.options.transforms.as_ref();
+  144|       |
+  145|       |        // First pass: add all schemas (with transformations applied)
+  146|     12|        for (_channel_id, channel) in reader.channels().iter() {
+                                                    ^2                ^2
+  147|       |            // Apply transformations to get the target type name and schema
+  148|     12|            let (transformed_type, transformed_schema) = if let Some(p) = pipeline {
+                                                                                   ^0
+  149|      0|                p.transform_type(&channel.message_type, channel.schema.as_deref())
+  150|       |            } else {
+  151|     12|                (channel.message_type.clone(), channel.schema.clone())
+  152|       |            };
+  153|       |
+  154|     12|            if !schema_ids.contains_key(&transformed_type) {
+  155|      4|                let schema_bytes = transformed_schema
+  156|      4|                    .as_ref()
+  157|      4|                    .map(|s| s.as_bytes())
+  158|      4|                    .or_else(|| channel.schema.as_ref().map(|s| s.as_bytes()));
+                                              ^0             ^0       ^0      ^0^0
+  159|       |
+  160|      4|                if let Some(bytes) = schema_bytes {
+  161|      4|                    let schema_id = mcap_writer
+  162|      4|                        .add_schema(
+  163|      4|                            &transformed_type,
+  164|      4|                            channel.schema_encoding.as_deref().unwrap_or("ros2msg"),
+  165|      4|                            bytes,
+  166|       |                        )
+  167|      4|                        .map_err(|e| {
+                                                   ^0
+  168|      0|                            CodecError::encode("MCAP", format!("Failed to add schema: {e}"))
+  169|      0|                        })?;
+  170|      4|                    schema_ids.insert(transformed_type.clone(), schema_id);
+  171|      0|                } else {
+  172|      0|                    schema_ids.insert(transformed_type.clone(), 0);
+  173|      0|                }
+  174|      8|            }
+  175|       |        }
+  176|       |
+  177|       |        // Second pass: add all channels (with transformations applied)
+  178|     12|        for (old_channel_id, channel) in reader.channels() {
+                                                       ^2     ^2
+  179|     12|            let (transformed_type, _) = if let Some(p) = pipeline {
+                                                                  ^0
+  180|      0|                p.transform_type(&channel.message_type, None)
+  181|       |            } else {
+  182|     12|                (channel.message_type.clone(), None)
+  183|       |            };
+  184|       |
+  185|     12|            let schema_id = schema_ids.get(&transformed_type).copied().unwrap_or(0);
+  186|       |
+  187|       |            // Apply transformations to topic name
+  188|     12|            let mut transformed_topic = if let Some(p) = pipeline {
+                                                                  ^0
+  189|      0|                p.transform_topic(&channel.topic)
+  190|      0|                    .unwrap_or_else(|| channel.topic.clone())
+  191|       |            } else {
+  192|     12|                channel.topic.clone()
+  193|       |            };
+  194|       |
+  195|       |            // Handle topic name collisions with numeric suffixes
+  196|     12|            if let Some(count) = topic_counter.get_mut(&transformed_topic) {
+                                      ^0
+  197|      0|                *count += 1;
+  198|      0|                transformed_topic = format!("{transformed_topic}_{count}");
+  199|      0|                warn!(
+  200|       |                    context = "topic_collision",
+  201|       |                    original_topic = %channel.topic,
+  202|       |                    new_topic = %transformed_topic,
+  203|      0|                    "Topic collision detected and renamed"
+  204|       |                );
+  205|       |            } else {
+  206|       |                // Check if this topic name already exists as-is
+  207|     12|                let exists = reader
+  208|     12|                    .channels()
+  209|     12|                    .values()
+  210|     72|                    .any(|c| c.topic == transformed_topic && c.id != *old_channel_id);
+                                   ^12                                     ^12
+  211|     12|                if exists {
+  212|      0|                    topic_counter.insert(transformed_topic.clone(), 1);
+  213|     12|                }
+  214|       |            }
+  215|       |
+  216|     12|            let new_channel_id = mcap_writer
+  217|     12|                .add_channel(
+  218|     12|                    schema_id,
+  219|     12|                    &transformed_topic,
+  220|     12|                    &channel.encoding,
+  221|     12|                    &HashMap::new(),
+  222|       |                )
+  223|     12|                .map_err(|e| CodecError::encode("MCAP", format!("Failed to add channel: {e}")))?;
+                                           ^0                         ^0      ^0                             ^0
+  224|       |
+  225|     12|            channel_map.insert(*old_channel_id, new_channel_id);
+  226|       |
+  227|       |            // Track transformation statistics
+  228|     12|            if let Some(p) = pipeline {
+                                      ^0
+  229|      0|                if p.transform_topic(&channel.topic).as_deref() != Some(&channel.topic) {
+  230|      0|                    self.stats.topics_renamed += 1;
+  231|      0|                }
+  232|      0|                if p.transform_type(&channel.message_type, None).0 != channel.message_type {
+  233|      0|                    self.stats.types_renamed += 1;
+  234|      0|                }
+  235|     12|            }
+  236|       |        }
+  237|       |
+  238|       |        // Process messages
+  239|      2|        let messages = reader.iter_raw()?;
+                                                      ^0
+  240|      2|        let mut stream = messages.stream()?;
+                                                        ^0
+  241|       |
+  242|       |        // Clone schemas for use in closure
+  243|      2|        let schemas = self.schemas.clone();
+  244|       |
+  245|       |        // Build a map of original channel_id -> transformed message type for schema lookup
+  246|      2|        let pipeline = self.options.transforms.as_ref();
+  247|      2|        let channel_type_map: HashMap<u16, String> = reader
+  248|      2|            .channels()
+  249|      2|            .iter()
+  250|     12|            .map(|(id, ch)| {
+                           ^2
+  251|     12|                let transformed = if let Some(p) = pipeline {
+                                                            ^0
+  252|      0|                    p.transform_type(&ch.message_type, None).0
+  253|       |                } else {
+  254|     12|                    ch.message_type.clone()
+  255|       |                };
+  256|     12|                (*id, transformed)
+  257|     12|            })
+  258|      2|            .collect();
+  259|       |
+  260|       |        // Extract boolean flags (can't clone RewriteOptions due to MultiTransform)
+  261|      2|        let _skip_decode_failures = self.options.skip_decode_failures;
+  262|      2|        let passthrough_non_cdr = self.options.passthrough_non_cdr;
+  263|       |
+  264|       |        // Process each message
+  265|     14|        for result in &mut stream {
+                          ^12
+  266|     12|            let (msg, channel_info) = match result {
+  267|     12|                Ok(m) => m,
+  268|      0|                Err(e) => {
+  269|      0|                    warn!(
+  270|       |                        context = "message_read",
+  271|       |                        error = %e,
+  272|      0|                        "Failed to read message"
+  273|       |                    );
+  274|      0|                    continue;
+  275|       |                }
+  276|       |            };
+  277|       |
+  278|     12|            self.stats.message_count += 1;
+  279|     12|            let new_channel_id = channel_map
+  280|     12|                .get(&msg.channel_id)
+  281|     12|                .copied()
+  282|     12|                .unwrap_or(msg.channel_id);
+  283|       |
+  284|       |            // Only rewrite CDR messages
+  285|     12|            if channel_info.encoding != "cdr"
+  286|      0|                && channel_info.encoding != "ros2"
+  287|      0|                && channel_info.encoding != "ros2msg"
+  288|       |            {
+  289|       |                // Pass through non-CDR messages
+  290|      0|                if passthrough_non_cdr {
+  291|      0|                    self.write_message_raw(&mut mcap_writer, &msg, new_channel_id)?;
+  292|      0|                    self.stats.passthrough_count += 1;
+  293|      0|                }
+  294|      0|                continue;
+  295|     12|            }
+  296|       |
+  297|       |            // Get the transformed message type for schema lookup
+  298|     12|            let transformed_type = channel_type_map
+  299|     12|                .get(&msg.channel_id)
+  300|     12|                .unwrap_or(&channel_info.message_type);
+  301|       |
+  302|       |            // Get or parse schema (using transformed type)
+  303|     12|            let schema_opt = schemas.get(transformed_type);
+  304|       |
+  305|       |            // Decode and re-encode CDR messages
+  306|     12|            if let Some(schema) = schema_opt {
+                                      ^6
+  307|      6|                self.rewrite_cdr_message(
+  308|      6|                    &mut mcap_writer,
+  309|      6|                    &msg,
+  310|      6|                    schema,
+  311|      6|                    new_channel_id,
+  312|      6|                    &channel_info.topic,
+  313|      0|                )?;
+  314|       |            } else {
+  315|       |                // No schema available, pass through as-is
+  316|      6|                self.write_message_raw(&mut mcap_writer, &msg, new_channel_id)?;
+                                                                                            ^0
+  317|      6|                self.stats.passthrough_count += 1;
+  318|       |            }
+  319|       |        }
+  320|       |
+  321|       |        // Finish the MCAP writer
+  322|      2|        mcap_writer
+  323|      2|            .finish()
+  324|      2|            .map_err(|e| CodecError::encode("MCAP", format!("Failed to finish MCAP: {e}")))?;
+                                       ^0                         ^0      ^0                             ^0
+  325|       |
+  326|      2|        Ok(self.stats.clone())
+  327|      4|    }
+  328|       |
+  329|       |    /// Cache all schemas from the MCAP file, applying transformations if configured.
+  330|      1|    fn cache_schemas(&mut self, reader: &McapReader) -> Result<()> {
+  331|      1|        let pipeline = self.options.transforms.as_ref();
+  332|       |
+  333|      6|        for channel in reader.channels().values() {
+                                     ^1                ^1
+  334|       |            // Apply transformations to get target type
+  335|      6|            let (target_type, _target_schema) = if let Some(p) = pipeline {
+                                                                          ^0
+  336|      0|                p.transform_type(&channel.message_type, channel.schema.as_deref())
+  337|       |            } else {
+  338|      6|                (channel.message_type.clone(), channel.schema.clone())
+  339|       |            };
+  340|       |
+  341|       |            // Only cache if not already cached under the target type
+  342|      6|            if !self.schemas.contains_key(&target_type) {
+  343|       |                // Use original schema for parsing (before text transformation)
+  344|      2|                let schema_to_parse = channel.schema.as_ref();
+  345|       |
+  346|      2|                if let Some(schema_text) = schema_to_parse {
+  347|      2|                    match parse_schema(&channel.message_type, schema_text) {
+  348|      2|                        Ok(mut schema) => {
+  349|       |                            // Apply package renaming to the parsed schema's internal types
+  350|      2|                            if target_type != channel.message_type {
+  351|       |                                // Extract package names from old and new type names
+  352|      0|                                let old_package =
+  353|      0|                                    channel.message_type.split('/').next().unwrap_or("");
+  354|      0|                                let new_package = target_type.split('/').next().unwrap_or("");
+  355|       |
+  356|       |                                // Only rename if packages differ
+  357|      0|                                if !old_package.is_empty()
+  358|      0|                                    && !new_package.is_empty()
+  359|      0|                                    && old_package != new_package
+  360|      0|                                {
+  361|      0|                                    schema.rename_package(old_package, new_package);
+  362|      0|                                }
+  363|       |
+  364|       |                                // Update the schema's main name
+  365|      0|                                schema.name = target_type.clone();
+  366|      0|                                if schema.package.as_deref() == Some(old_package) {
+  367|      0|                                    schema.package = Some(new_package.to_string());
+  368|      0|                                }
+  369|      2|                            }
+  370|       |
+  371|      2|                            self.schemas.insert(target_type.clone(), schema);
+  372|       |                        }
+  373|      0|                        Err(e) => {
+  374|      0|                            if self.options.validate_schemas {
+  375|      0|                                return Err(CodecError::encode(
+  376|      0|                                    "MCAP",
+  377|      0|                                    format!(
+  378|      0|                                        "Failed to parse schema for {} (from {}): {}",
+  379|      0|                                        target_type, channel.message_type, e
+  380|      0|                                    ),
+  381|      0|                                ));
+  382|      0|                            }
+  383|       |                            // Non-validating mode: continue without schema
+  384|       |                        }
+  385|       |                    }
+  386|      0|                }
+  387|      4|            }
+  388|       |        }
+  389|      1|        Ok(())
+  390|      1|    }
+  391|       |
+  392|       |    /// Rewrite a CDR message by decoding and re-encoding.
+  393|      6|    fn rewrite_cdr_message(
+  394|      6|        &mut self,
+  395|      6|        mcap_writer: &mut ParallelMcapWriter<BufWriter<File>>,
+  396|      6|        msg: &crate::mcap::reader::RawMessage,
+  397|      6|        schema: &MessageSchema,
+  398|      6|        channel_id: u16,
+  399|      6|        topic: &str,
+  400|      6|    ) -> Result<()> {
+  401|       |        // Decode the message (handles CDR header internally)
+  402|      6|        let decoder = CdrDecoder::new();
+  403|      6|        let decoded = match decoder.decode(schema, &msg.data, Some(&schema.name)) {
+  404|      6|            Ok(d) => d,
+  405|      0|            Err(e) => {
+  406|      0|                warn!(
+  407|       |                    context = "cdr_decode",
+  408|       |                    error = %e,
+  409|       |                    schema = %schema.name,
+  410|       |                    topic = %topic,
+  411|      0|                    "Failed to decode CDR message"
+  412|       |                );
+  413|      0|                self.stats.decode_failures += 1;
+  414|      0|                if self.options.skip_decode_failures {
+  415|       |                    // Skip this message entirely (message will be lost)
+  416|      0|                    return Ok(());
+  417|      0|                }
+  418|       |                // Pass through original data on decode failure
+  419|      0|                self.write_message_raw(mcap_writer, msg, channel_id)?;
+  420|      0|                return Ok(());
+  421|       |            }
+  422|       |        };
+  423|       |
+  424|       |        // Re-encode with proper CDR header
+  425|      6|        let mut encoder = CdrEncoder::new();
+  426|      6|        match encoder.encode_message(&decoded, schema, &schema.name) {
+  427|      6|            Ok(()) => {}
+  428|      0|            Err(e) => {
+  429|      0|                warn!(
+  430|       |                    context = "cdr_encode",
+  431|       |                    error = %e,
+  432|       |                    schema = %schema.name,
+  433|       |                    topic = %topic,
+  434|      0|                    "Failed to encode CDR message (passing through original data)"
+  435|       |                );
+  436|      0|                self.stats.encode_failures += 1;
+  437|       |                // Pass through original data on encode failure
+  438|      0|                self.write_message_raw(mcap_writer, msg, channel_id)?;
+  439|      0|                return Ok(());
+  440|       |            }
+  441|       |        }
+  442|       |
+  443|      6|        let encoded_data = encoder.finish();
+  444|       |
+  445|       |        // Write the re-encoded message using custom writer
+  446|      6|        mcap_writer
+  447|      6|            .write_message(channel_id, msg.log_time, msg.publish_time, &encoded_data)
+  448|      6|            .map_err(|e| CodecError::encode("MCAP", format!("Failed to write message: {e}")))?;
+                                       ^0                         ^0      ^0                               ^0
+  449|       |
+  450|      6|        self.stats.reencoded_count += 1;
+  451|      6|        Ok(())
+  452|      6|    }
+  453|       |
+  454|       |    /// Write a raw message without re-encoding.
+  455|      6|    fn write_message_raw(
+  456|      6|        &mut self,
+  457|      6|        mcap_writer: &mut ParallelMcapWriter<BufWriter<File>>,
+  458|      6|        msg: &crate::mcap::reader::RawMessage,
+  459|      6|        channel_id: u16,
+  460|      6|    ) -> Result<()> {
+  461|      6|        mcap_writer
+  462|      6|            .write_message(channel_id, msg.log_time, msg.publish_time, &msg.data)
+  463|      6|            .map_err(|e| CodecError::encode("MCAP", format!("Failed to write message: {e}")))?;
+                                       ^0                         ^0      ^0                               ^0
+  464|       |
+  465|      6|        Ok(())
+  466|      6|    }
+  467|       |
+  468|       |    /// Get the options used for rewriting.
+  469|      3|    pub fn options(&self) -> &RewriteOptions {
+  470|      3|        &self.options
+  471|      3|    }
+  472|       |}
+  473|       |
+  474|       |impl FormatRewriter for McapRewriter {
+  475|      0|    fn rewrite<P1, P2>(&mut self, input_path: P1, output_path: P2) -> Result<RewriteStats>
+  476|      0|    where
+  477|      0|        P1: AsRef<Path>,
+  478|      0|        P2: AsRef<Path>,
+  479|       |    {
+  480|      0|        self.rewrite(input_path, output_path)
+  481|      0|    }
+  482|       |
+  483|      0|    fn options(&self) -> &RewriteOptions {
+  484|      0|        self.options()
+  485|      0|    }
+  486|       |
+  487|      0|    fn as_any(&self) -> &dyn std::any::Any {
+  488|      0|        self
+  489|      0|    }
+  490|       |}
+  491|       |
+  492|       |impl Default for McapRewriter {
+  493|      1|    fn default() -> Self {
+  494|      1|        Self::new()
+  495|      1|    }
+  496|       |}
+  497|       |
+  498|       |/// Convenience function to rewrite an MCAP file.
+  499|       |///
+  500|       |/// # Arguments
+  501|       |///
+  502|       |/// * `input_path` - Path to the input MCAP file
+  503|       |/// * `output_path` - Path to the output MCAP file
+  504|       |///
+  505|       |/// # Example
+  506|       |///
+  507|       |/// ```no_run
+  508|       |/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+  509|       |/// use robocodec::rewriter::mcap::rewrite_mcap;
+  510|       |///
+  511|       |/// let stats = rewrite_mcap("input.mcap", "output.mcap")?;
+  512|       |/// println!("Processed {} messages", stats.message_count);
+  513|       |/// # Ok(())
+  514|       |/// # }
+  515|       |/// ```
+  516|      0|pub fn rewrite_mcap<P1, P2>(input_path: P1, output_path: P2) -> Result<RewriteStats>
+  517|      0|where
+  518|      0|    P1: AsRef<Path>,
+  519|      0|    P2: AsRef<Path>,
+  520|       |{
+  521|      0|    let mut rewriter = McapRewriter::new();
+  522|      0|    rewriter.rewrite(input_path, output_path)
+  523|      0|}
+  524|       |
+  525|       |#[cfg(test)]
+  526|       |mod tests {
+  527|       |    use super::*;
+  528|       |    use crate::transform::{MultiTransform, TransformBuilder};
+  529|       |    use std::path::PathBuf;
+  530|       |
+  531|       |    /// Get the fixtures directory path
+  532|      9|    fn fixtures_dir() -> PathBuf {
+  533|       |        // Use CARGO_MANIFEST_DIR to get the robocodec crate root,
+  534|       |        // then go up to workspace root to access shared fixtures
+  535|      9|        let manifest_dir =
+  536|      9|            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| String::from("."));
+                                                                                 ^0
+  537|      9|        PathBuf::from(manifest_dir)
+  538|      9|            .parent()
+  539|      9|            .expect("manifest dir should have parent")
+  540|      9|            .join("tests")
+  541|      9|            .join("fixtures")
+  542|      9|    }
+  543|       |
+  544|       |    /// Get a temporary file path for test output
+  545|      1|    fn temp_output(name: &str) -> PathBuf {
+  546|      1|        let random = std::time::SystemTime::now()
+  547|      1|            .duration_since(std::time::UNIX_EPOCH)
+  548|      1|            .unwrap()
+  549|      1|            .subsec_nanos();
+  550|      1|        std::env::temp_dir().join(format!("roboflow_mcap_test_{random}_{name}"))
+  551|      1|    }
+  552|       |
+  553|       |    /// Check if a fixture file exists
+  554|      9|    fn fixture_exists(name: &str) -> bool {
+  555|      9|        fixtures_dir().join(name).exists()
+  556|      9|    }
+  557|       |
+  558|       |    // =========================================================================
+  559|       |    // Construction Tests
+  560|       |    // =========================================================================
+  561|       |
+  562|       |    #[test]
+  563|      1|    fn test_rewriter_new_creates_with_default_options() {
+  564|      1|        let rewriter = McapRewriter::new();
+  565|      1|        assert!(rewriter.options.validate_schemas);
+  566|      1|        assert!(rewriter.options.skip_decode_failures);
+  567|      1|        assert!(rewriter.options.passthrough_non_cdr);
+  568|      1|        assert!(!rewriter.options.has_transforms());
+  569|      1|    }
+  570|       |
+  571|       |    #[test]
+  572|      1|    fn test_rewriter_default() {
+  573|      1|        let rewriter = McapRewriter::default();
+  574|      1|        assert!(rewriter.options.validate_schemas);
+  575|      1|    }
+  576|       |
+  577|       |    #[test]
+  578|      1|    fn test_rewriter_with_custom_options() {
+  579|      1|        let opts = RewriteOptions {
+  580|      1|            validate_schemas: false,
+  581|      1|            skip_decode_failures: false,
+  582|      1|            passthrough_non_cdr: false,
+  583|      1|            transforms: None,
+  584|      1|        };
+  585|      1|        let rewriter = McapRewriter::with_options(opts);
+  586|      1|        assert!(!rewriter.options.validate_schemas);
+  587|      1|        assert!(!rewriter.options.skip_decode_failures);
+  588|      1|        assert!(!rewriter.options.passthrough_non_cdr);
+  589|      1|    }
+  590|       |
+  591|       |    #[test]
+  592|      1|    fn test_rewriter_with_options_has_empty_caches() {
+  593|      1|        let rewriter = McapRewriter::new();
+  594|      1|        assert!(rewriter.schemas.is_empty());
+  595|      1|        assert_eq!(rewriter.stats.message_count, 0);
+  596|      1|        assert!(rewriter.sequences.is_empty());
+  597|      1|    }
+  598|       |
+  599|       |    #[test]
+  600|      1|    fn test_rewriter_options_returns_reference() {
+  601|      1|        let rewriter = McapRewriter::new();
+  602|      1|        let opts = rewriter.options();
+  603|      1|        assert!(opts.validate_schemas);
+  604|      1|    }
+  605|       |
+  606|       |    // =========================================================================
+  607|       |    // RewriteOptions Tests
+  608|       |    // =========================================================================
+  609|       |
+  610|       |    #[test]
+  611|      1|    fn test_rewrite_options_default() {
+  612|      1|        let opts = RewriteOptions::default();
+  613|      1|        assert!(opts.validate_schemas);
+  614|      1|        assert!(opts.skip_decode_failures);
+  615|      1|        assert!(opts.passthrough_non_cdr);
+  616|      1|        assert!(!opts.has_transforms());
+  617|      1|    }
+  618|       |
+  619|       |    #[test]
+  620|      1|    fn test_rewrite_options_with_transforms() {
+  621|      1|        let pipeline = TransformBuilder::new()
+  622|      1|            .with_topic_rename("/old", "/new")
+  623|      1|            .build();
+  624|      1|        let opts = RewriteOptions {
+  625|      1|            validate_schemas: true,
+  626|      1|            skip_decode_failures: false,
+  627|      1|            passthrough_non_cdr: true,
+  628|      1|            transforms: Some(pipeline),
+  629|      1|        };
+  630|      1|        assert!(opts.has_transforms());
+  631|      1|    }
+  632|       |
+  633|       |    // =========================================================================
+  634|       |    // RewriteStats Tests
+  635|       |    // =========================================================================
+  636|       |
+  637|       |    #[test]
+  638|      1|    fn test_rewrite_stats_default() {
+  639|      1|        let stats = RewriteStats::default();
+  640|      1|        assert_eq!(stats.message_count, 0);
+  641|      1|        assert_eq!(stats.channel_count, 0);
+  642|      1|        assert_eq!(stats.topics_renamed, 0);
+  643|      1|        assert_eq!(stats.types_renamed, 0);
+  644|      1|        assert_eq!(stats.reencoded_count, 0);
+  645|      1|        assert_eq!(stats.passthrough_count, 0);
+  646|      1|        assert_eq!(stats.decode_failures, 0);
+  647|      1|        assert_eq!(stats.encode_failures, 0);
+  648|      1|    }
+  649|       |
+  650|       |    #[test]
+  651|      1|    fn test_rewrite_stats_can_be_updated() {
+  652|      1|        let stats = RewriteStats {
+  653|      1|            message_count: 100,
+  654|      1|            channel_count: 5,
+  655|      1|            topics_renamed: 2,
+  656|      1|            types_renamed: 1,
+  657|      1|            reencoded_count: 95,
+  658|      1|            passthrough_count: 5,
+  659|      1|            decode_failures: 1,
+  660|      1|            encode_failures: 0,
+  661|      1|        };
+  662|       |
+  663|      1|        assert_eq!(stats.message_count, 100);
+  664|      1|        assert_eq!(stats.channel_count, 5);
+  665|      1|        assert_eq!(stats.topics_renamed, 2);
+  666|      1|        assert_eq!(stats.types_renamed, 1);
+  667|      1|        assert_eq!(stats.reencoded_count, 95);
+  668|      1|        assert_eq!(stats.passthrough_count, 5);
+  669|      1|        assert_eq!(stats.decode_failures, 1);
+  670|      1|    }
+  671|       |
+  672|       |    // =========================================================================
+  673|       |    // FormatRewriter Trait Tests
+  674|       |    // =========================================================================
+  675|       |
+  676|       |    #[test]
+  677|      1|    fn test_mcap_rewriter_implements_format_rewriter_methods() {
+  678|      1|        let rewriter = McapRewriter::new();
+  679|       |        // Directly test the trait methods are accessible
+  680|      1|        assert!(rewriter.options().validate_schemas);
+  681|      1|        assert!(rewriter.options().skip_decode_failures);
+  682|      1|    }
+  683|       |
+  684|       |    // =========================================================================
+  685|       |    // Error Handling Tests
+  686|       |    // =========================================================================
+  687|       |
+  688|       |    #[test]
+  689|      1|    fn test_rewriter_returns_error_for_nonexistent_input() {
+  690|      1|        let mut rewriter = McapRewriter::new();
+  691|      1|        let input_path = PathBuf::from("/nonexistent/path/to/file.mcap");
+  692|      1|        let output_path = temp_output("error_output");
+  693|       |
+  694|      1|        let result = rewriter.rewrite(&input_path, &output_path);
+  695|      1|        assert!(result.is_err());
+  696|      1|    }
+  697|       |
+  698|       |    #[test]
+  699|      1|    fn test_rewriter_returns_error_for_invalid_output_path() {
+  700|      1|        if !fixture_exists("robocodec_test_0.mcap") {
+  701|      1|            return;
+  702|      0|        }
+  703|       |
+  704|      0|        let mut rewriter = McapRewriter::new();
+  705|      0|        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+  706|      0|        let output_path = PathBuf::from("/nonexistent/directory/cannot_create/file.mcap");
+  707|       |
+  708|      0|        let result = rewriter.rewrite(&input_path, &output_path);
+  709|      0|        assert!(result.is_err());
+  710|      1|    }
+  711|       |
+  712|       |    // =========================================================================
+  713|       |    // Integration Tests with Fixtures
+  714|       |    // =========================================================================
+  715|       |
+  716|       |    #[test]
+  717|      1|    fn test_rewriter_processes_mcap_file() {
+  718|      1|        if !fixture_exists("robocodec_test_0.mcap") {
+  719|      1|            return;
+  720|      0|        }
+  721|       |
+  722|      0|        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+  723|      0|        let output_path = temp_output("processed.mcap");
+  724|       |
+  725|      0|        let mut rewriter = McapRewriter::new();
+  726|      0|        let result = rewriter.rewrite(&input_path, &output_path);
+  727|       |
+  728|      0|        assert!(result.is_ok(), "Rewrite should succeed: {:?}", result.err());
+  729|       |
+  730|      0|        let stats = result.unwrap();
+  731|       |        // Verify the output file was created
+  732|      0|        assert!(output_path.exists());
+  733|       |        // Should have processed some data
+  734|      0|        assert!(stats.message_count > 0 || stats.channel_count > 0);
+  735|       |
+  736|       |        // Cleanup
+  737|      0|        let _ = std::fs::remove_file(&output_path);
+  738|      1|    }
+  739|       |
+  740|       |    #[test]
+  741|      1|    fn test_rewriter_tracks_statistics() {
+  742|      1|        if !fixture_exists("robocodec_test_0.mcap") {
+  743|      1|            return;
+  744|      0|        }
+  745|       |
+  746|      0|        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+  747|      0|        let output_path = temp_output("stats.mcap");
+  748|       |
+  749|      0|        let mut rewriter = McapRewriter::new();
+  750|      0|        let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+  751|       |
+  752|       |        // Verify rewrite completed successfully
+  753|      0|        assert!(output_path.exists());
+  754|       |        // Verify stats are tracked
+  755|      0|        assert!(stats.channel_count > 0, "Expected at least one channel");
+  756|       |
+  757|       |        // Cleanup
+  758|      0|        let _ = std::fs::remove_file(&output_path);
+  759|      1|    }
+  760|       |
+  761|       |    #[test]
+  762|      1|    fn test_rewriter_with_transform_pipeline() {
+  763|      1|        if !fixture_exists("robocodec_test_0.mcap") {
+  764|      1|            return;
+  765|      0|        }
+  766|       |
+  767|      0|        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+  768|      0|        let output_path = temp_output("transformed.mcap");
+  769|       |
+  770|      0|        let transforms = TransformBuilder::new()
+  771|      0|            .with_topic_rename("/old_topic", "/new_topic")
+  772|      0|            .with_type_rename("old/OldType", "new/NewType")
+  773|      0|            .build();
+  774|       |
+  775|      0|        let options = RewriteOptions {
+  776|      0|            validate_schemas: false,
+  777|      0|            skip_decode_failures: true,
+  778|      0|            passthrough_non_cdr: true,
+  779|      0|            transforms: Some(transforms),
+  780|      0|        };
+  781|       |
+  782|      0|        let mut rewriter = McapRewriter::with_options(options);
+  783|      0|        let result = rewriter.rewrite(&input_path, &output_path);
+  784|       |
+  785|       |        // Should succeed even if transformations don't match anything
+  786|       |        // or if there's a validation issue - we just check it doesn't crash
+  787|      0|        if result.is_err() {
+  788|      0|            // Some MCAP files may have validation issues, that's OK for this test
+  789|      0|            // Just verify the rewriter can be constructed with transforms
+  790|      0|        } else {
+  791|      0|            assert!(output_path.exists());
+  792|       |            // Cleanup
+  793|      0|            let _ = std::fs::remove_file(&output_path);
+  794|       |        }
+  795|      1|    }
+  796|       |
+  797|       |    #[test]
+  798|      1|    fn test_rewriter_with_skip_decode_failures() {
+  799|      1|        if !fixture_exists("robocodec_test_0.mcap") {
+  800|      1|            return;
+  801|      0|        }
+  802|       |
+  803|      0|        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+  804|      0|        let output_path = temp_output("skip_decode.mcap");
+  805|       |
+  806|      0|        let options = RewriteOptions {
+  807|      0|            validate_schemas: false,
+  808|      0|            skip_decode_failures: true,
+  809|      0|            passthrough_non_cdr: true,
+  810|      0|            transforms: None,
+  811|      0|        };
+  812|       |
+  813|      0|        let mut rewriter = McapRewriter::with_options(options);
+  814|      0|        let result = rewriter.rewrite(&input_path, &output_path);
+  815|       |
+  816|      0|        assert!(result.is_ok());
+  817|      0|        assert!(output_path.exists());
+  818|       |
+  819|       |        // Cleanup
+  820|      0|        let _ = std::fs::remove_file(&output_path);
+  821|      1|    }
+  822|       |
+  823|       |    #[test]
+  824|      1|    fn test_rewriter_with_passthrough_non_cdr() {
+  825|      1|        if !fixture_exists("robocodec_test_0.mcap") {
+  826|      1|            return;
+  827|      0|        }
+  828|       |
+  829|      0|        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+  830|      0|        let output_path = temp_output("passthrough.mcap");
+  831|       |
+  832|      0|        let options = RewriteOptions {
+  833|      0|            validate_schemas: false,
+  834|      0|            skip_decode_failures: true,
+  835|      0|            passthrough_non_cdr: true,
+  836|      0|            transforms: None,
+  837|      0|        };
+  838|       |
+  839|      0|        let mut rewriter = McapRewriter::with_options(options);
+  840|      0|        let result = rewriter.rewrite(&input_path, &output_path);
+  841|       |
+  842|      0|        assert!(result.is_ok());
+  843|      0|        assert!(output_path.exists());
+  844|       |
+  845|       |        // Cleanup
+  846|      0|        let _ = std::fs::remove_file(&output_path);
+  847|      1|    }
+  848|       |
+  849|       |    // =========================================================================
+  850|       |    // Convenience Function Tests
+  851|       |    // =========================================================================
+  852|       |
+  853|       |    #[test]
+  854|      1|    fn test_rewrite_mcap_function() {
+  855|      1|        if !fixture_exists("robocodec_test_0.mcap") {
+  856|      1|            return;
+  857|      0|        }
+  858|       |
+  859|      0|        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+  860|      0|        let output_path = temp_output("convenience.mcap");
+  861|       |
+  862|      0|        let result = rewrite_mcap(&input_path, &output_path);
+  863|       |
+  864|      0|        assert!(result.is_ok());
+  865|      0|        assert!(output_path.exists());
+  866|       |
+  867|       |        // Cleanup
+  868|      0|        let _ = std::fs::remove_file(&output_path);
+  869|      1|    }
+  870|       |
+  871|       |    // =========================================================================
+  872|       |    // Multiple Rewrite Tests
+  873|       |    // =========================================================================
+  874|       |
+  875|       |    #[test]
+  876|      1|    fn test_multiple_rewrites_are_independent() {
+  877|      1|        if !fixture_exists("robocodec_test_0.mcap") {
+  878|      1|            return;
+  879|      0|        }
+  880|       |
+  881|      0|        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+  882|      0|        let output_path1 = temp_output("multi1.mcap");
+  883|      0|        let output_path2 = temp_output("multi2.mcap");
+  884|       |
+  885|      0|        let mut rewriter = McapRewriter::new();
+  886|       |
+  887|       |        // First rewrite
+  888|      0|        let stats1 = rewriter.rewrite(&input_path, &output_path1).unwrap();
+  889|       |
+  890|       |        // Second rewrite should have fresh statistics
+  891|      0|        let stats2 = rewriter.rewrite(&input_path, &output_path2).unwrap();
+  892|       |
+  893|       |        // Both should succeed
+  894|      0|        assert!(output_path1.exists());
+  895|      0|        assert!(output_path2.exists());
+  896|       |
+  897|       |        // Second rewrite should have similar stats (same input)
+  898|      0|        assert_eq!(stats1.channel_count, stats2.channel_count);
+  899|       |
+  900|       |        // Cleanup
+  901|      0|        let _ = std::fs::remove_file(&output_path1);
+  902|      0|        let _ = std::fs::remove_file(&output_path2);
+  903|      1|    }
+  904|       |
+  905|       |    // =========================================================================
+  906|       |    // Transform Pipeline Tests
+  907|       |    // =========================================================================
+  908|       |
+  909|       |    #[test]
+  910|      1|    fn test_rewriter_with_empty_transform_pipeline() {
+  911|      1|        let rewriter = McapRewriter::with_options(RewriteOptions {
+  912|      1|            validate_schemas: false,
+  913|      1|            skip_decode_failures: false,
+  914|      1|            passthrough_non_cdr: false,
+  915|      1|            transforms: Some(MultiTransform::new()),
+  916|      1|        });
+  917|       |
+  918|       |        // Empty pipeline has transforms field set but reports as empty
+  919|      1|        assert!(!rewriter.options.has_transforms());
+  920|      1|        assert!(rewriter.options.transforms.is_some());
+  921|      1|    }
+  922|       |
+  923|       |    #[test]
+  924|      1|    fn test_rewriter_preserves_all_options() {
+  925|      1|        let pipeline = TransformBuilder::new()
+  926|      1|            .with_topic_rename("/from", "/to")
+  927|      1|            .build();
+  928|       |
+  929|      1|        let opts = RewriteOptions {
+  930|      1|            validate_schemas: false,
+  931|      1|            skip_decode_failures: true,
+  932|      1|            passthrough_non_cdr: false,
+  933|      1|            transforms: Some(pipeline),
+  934|      1|        };
+  935|       |
+  936|      1|        let rewriter = McapRewriter::with_options(opts);
+  937|       |
+  938|      1|        assert!(!rewriter.options.validate_schemas);
+  939|      1|        assert!(rewriter.options.skip_decode_failures);
+  940|      1|        assert!(!rewriter.options.passthrough_non_cdr);
+  941|      1|        assert!(rewriter.options.has_transforms());
+  942|      1|    }
+  943|       |
+  944|       |    // =========================================================================
+  945|       |    // Round-trip Tests
+  946|       |    // =========================================================================
+  947|       |
+  948|       |    #[test]
+  949|      1|    fn test_rewriter_round_trip_preserves_messages() {
+  950|      1|        if !fixture_exists("robocodec_test_0.mcap") {
+  951|      1|            return;
+  952|      0|        }
+  953|       |
+  954|      0|        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+  955|      0|        let output_path = temp_output("roundtrip.mcap");
+  956|       |
+  957|      0|        let mut rewriter = McapRewriter::new();
+  958|      0|        let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+  959|       |
+  960|       |        // All messages should be processed (either re-encoded or passed through)
+  961|      0|        let total_processed = stats.reencoded_count + stats.passthrough_count;
+  962|      0|        assert!(
+  963|      0|            total_processed >= stats.message_count,
+  964|      0|            "Processed count should be at least message_count: reencoded={}, passthrough={}, message_count={}",
+  965|       |            stats.reencoded_count,
+  966|       |            stats.passthrough_count,
+  967|       |            stats.message_count
+  968|       |        );
+  969|       |
+  970|       |        // Cleanup
+  971|      0|        let _ = std::fs::remove_file(&output_path);
+  972|      1|    }
+  973|       |}
+

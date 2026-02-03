@@ -1,0 +1,472 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/transform/mod.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! MCAP transformation system.
+    6|       |//!
+    7|       |//! This module provides a trait-based transformation system for normalizing
+    8|       |//! MCAP files. Transformations can rename topics, message types, and rewrite
+    9|       |//! schema definitions.
+   10|       |//!
+   11|       |//! # Example
+   12|       |//!
+   13|       |//! ```no_run
+   14|       |//! # fn main() {
+   15|       |//! use robocodec::transform::{TopicRenameTransform, MultiTransform};
+   16|       |//!
+   17|       |//! let mut topic_rename = TopicRenameTransform::new();
+   18|       |//! topic_rename.add_mapping("/old_topic", "/new_topic");
+   19|       |//!
+   20|       |//! let mut pipeline = MultiTransform::new();
+   21|       |//! pipeline.add_transform(Box::new(topic_rename));
+   22|       |//!
+   23|       |//! // Use pipeline with McapRewriter...
+   24|       |//! # }
+   25|       |//! ```
+   26|       |
+   27|       |pub mod normalization;
+   28|       |pub mod pipeline;
+   29|       |pub mod topic_rename;
+   30|       |pub mod type_rename;
+   31|       |
+   32|       |use std::collections::HashMap;
+   33|       |use std::fmt;
+   34|       |
+   35|       |pub use normalization::TypeNormalization;
+   36|       |pub use pipeline::MultiTransform;
+   37|       |pub use topic_rename::TopicRenameTransform;
+   38|       |pub use type_rename::{TopicAwareTypeRenameTransform, TypeRenameTransform};
+   39|       |
+   40|       |/// Information about a channel in an MCAP file.
+   41|       |///
+   42|       |/// This is a simplified version of ChannelInfo for use in transforms.
+   43|       |#[derive(Debug, Clone)]
+   44|       |pub struct ChannelInfo {
+   45|       |    /// Channel ID
+   46|       |    pub id: u16,
+   47|       |    /// Topic name (e.g., "/joint_states")
+   48|       |    pub topic: String,
+   49|       |    /// Message type (e.g., "sensor_msgs/msg/JointState")
+   50|       |    pub message_type: String,
+   51|       |    /// Encoding (e.g., "cdr", "protobuf", "json")
+   52|       |    pub encoding: String,
+   53|       |    /// Schema definition (message definition text)
+   54|       |    pub schema: Option<String>,
+   55|       |    /// Schema encoding (e.g., "ros2msg", "protobuf")
+   56|       |    pub schema_encoding: Option<String>,
+   57|       |}
+   58|       |
+   59|       |/// Result of applying a transform to a channel.
+   60|       |#[derive(Debug, Clone)]
+   61|       |pub struct TransformedChannel {
+   62|       |    /// Original channel ID
+   63|       |    pub original_id: u16,
+   64|       |    /// Transformed topic name
+   65|       |    pub topic: String,
+   66|       |    /// Transformed message type name
+   67|       |    pub message_type: String,
+   68|       |    /// Transformed schema text (if modified)
+   69|       |    pub schema: Option<String>,
+   70|       |    /// Encoding (unchanged)
+   71|       |    pub encoding: String,
+   72|       |    /// Schema encoding (unchanged)
+   73|       |    pub schema_encoding: Option<String>,
+   74|       |}
+   75|       |
+   76|       |impl ChannelInfo {
+   77|       |    /// Create a new ChannelInfo.
+   78|     24|    pub fn new(
+   79|     24|        id: u16,
+   80|     24|        topic: String,
+   81|     24|        message_type: String,
+   82|     24|        encoding: String,
+   83|     24|        schema: Option<String>,
+   84|     24|        schema_encoding: Option<String>,
+   85|     24|    ) -> Self {
+   86|     24|        Self {
+   87|     24|            id,
+   88|     24|            topic,
+   89|     24|            message_type,
+   90|     24|            encoding,
+   91|     24|            schema,
+   92|     24|            schema_encoding,
+   93|     24|        }
+   94|     24|    }
+   95|       |
+   96|       |    /// Convert from the unified ChannelInfo.
+   97|      0|    pub fn from_reader_info(info: &crate::io::ChannelInfo) -> Self {
+   98|      0|        Self {
+   99|      0|            id: info.id,
+  100|      0|            topic: info.topic.clone(),
+  101|      0|            message_type: info.message_type.clone(),
+  102|      0|            encoding: info.encoding.clone(),
+  103|      0|            schema: info.schema.clone(),
+  104|      0|            schema_encoding: info.schema_encoding.clone(),
+  105|      0|        }
+  106|      0|    }
+  107|       |}
+  108|       |
+  109|       |/// Error types for transformations.
+  110|       |#[derive(Debug, Clone)]
+  111|       |pub enum TransformError {
+  112|       |    /// Topic name collision detected
+  113|       |    TopicCollision {
+  114|       |        /// Original topic names that map to the same target
+  115|       |        sources: Vec<String>,
+  116|       |        /// Target topic name
+  117|       |        target: String,
+  118|       |    },
+  119|       |
+  120|       |    /// Type name collision detected
+  121|       |    TypeCollision {
+  122|       |        /// Original type names that map to the same target
+  123|       |        sources: Vec<String>,
+  124|       |        /// Target type name
+  125|       |        target: String,
+  126|       |    },
+  127|       |
+  128|       |    /// Invalid transformation rule
+  129|       |    InvalidRule {
+  130|       |        /// Description of the rule
+  131|       |        rule: String,
+  132|       |        /// Reason why it's invalid
+  133|       |        reason: String,
+  134|       |    },
+  135|       |
+  136|       |    /// Schema text transformation failed
+  137|       |    SchemaTransformError {
+  138|       |        /// Type name being transformed
+  139|       |        type_name: String,
+  140|       |        /// Error description
+  141|       |        reason: String,
+  142|       |    },
+  143|       |
+  144|       |    /// Source topic or type not found in MCAP
+  145|       |    NotFound {
+  146|       |        /// Name that wasn't found
+  147|       |        name: String,
+  148|       |        /// Whether this is a topic or type
+  149|       |        kind: &'static str,
+  150|       |    },
+  151|       |}
+  152|       |
+  153|       |impl fmt::Display for TransformError {
+  154|      1|    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+  155|      1|        match self {
+  156|      1|            TransformError::TopicCollision { sources, target } => write!(
+  157|      1|                f,
+  158|      1|                "Topic rename collision: multiple topics map to '{target}': {sources:?}"
+  159|       |            ),
+  160|      0|            TransformError::TypeCollision { sources, target } => write!(
+  161|      0|                f,
+  162|      0|                "Type rename collision: multiple types map to '{target}': {sources:?}"
+  163|       |            ),
+  164|      0|            TransformError::InvalidRule { rule, reason } => {
+  165|      0|                write!(f, "Invalid rule '{rule}': {reason}")
+  166|       |            }
+  167|      0|            TransformError::SchemaTransformError { type_name, reason } => {
+  168|      0|                write!(f, "Schema transform error for '{type_name}': {reason}")
+  169|       |            }
+  170|      0|            TransformError::NotFound { name, kind } => {
+  171|      0|                write!(f, "Cannot rename {kind} '{name}': not found in MCAP")
+  172|       |            }
+  173|       |        }
+  174|      1|    }
+  175|       |}
+  176|       |
+  177|       |impl std::error::Error for TransformError {}
+  178|       |
+  179|       |impl From<TransformError> for crate::CodecError {
+  180|      0|    fn from(err: TransformError) -> Self {
+  181|      0|        crate::CodecError::encode("Transform", err.to_string())
+  182|      0|    }
+  183|       |}
+  184|       |
+  185|       |/// Core transformation trait for MCAP metadata.
+  186|       |///
+  187|       |/// Each transformation can modify topic names, message types, or schema text.
+  188|       |/// Transformations are applied in sequence during rewrite.
+  189|       |///
+  190|       |/// # Example
+  191|       |///
+  192|       |/// ```no_run
+  193|       |/// # use robocodec::transform::{McapTransform, TransformError, ChannelInfo};
+  194|       |/// # use std::any::Any;
+  195|       |/// struct MyTransform;
+  196|       |///
+  197|       |/// impl McapTransform for MyTransform {
+  198|       |///     fn transform_topic(&self, topic: &str) -> Option<String> {
+  199|       |///         Some(topic.to_uppercase())
+  200|       |///     }
+  201|       |///
+  202|       |///     fn transform_type(&self, type_name: &str, schema_text: Option<&str>)
+  203|       |///         -> (String, Option<String>)
+  204|       |///     {
+  205|       |///         (type_name.to_string(), schema_text.map(|s| s.to_string()))
+  206|       |///     }
+  207|       |///
+  208|       |///     fn validate(&self, channels: &[ChannelInfo]) -> Result<(), TransformError> {
+  209|       |///         Ok(()) // or Err(TransformError::...)
+  210|       |///     }
+  211|       |///
+  212|       |///     fn as_any(&self) -> &dyn Any { self }
+  213|       |///
+  214|       |///     fn box_clone(&self) -> Box<dyn McapTransform> {
+  215|       |///         Box::new(MyTransform)
+  216|       |///     }
+  217|       |/// }
+  218|       |/// ```
+  219|       |pub trait McapTransform: Send + Sync + 'static {
+  220|       |    /// Transform a topic name.
+  221|       |    ///
+  222|       |    /// Returns `None` if the topic should be dropped (not implemented by default transforms).
+  223|      0|    fn transform_topic(&self, topic: &str) -> Option<String> {
+  224|      0|        Some(topic.to_string())
+  225|      0|    }
+  226|       |
+  227|       |    /// Transform a message type name and optionally its schema text.
+  228|       |    ///
+  229|       |    /// Returns a tuple of (new_type_name, new_schema_text).
+  230|       |    /// The schema text is `Some(rewritten)` if modified, `Some(original)` if unchanged,
+  231|       |    /// or `None` if there was no schema.
+  232|       |    fn transform_type(
+  233|       |        &self,
+  234|       |        type_name: &str,
+  235|       |        schema_text: Option<&str>,
+  236|       |    ) -> (String, Option<String>);
+  237|       |
+  238|       |    /// Validate that the transformation won't cause collisions or other issues.
+  239|       |    ///
+  240|       |    /// This is called before the rewrite begins to fail fast on invalid configurations.
+  241|       |    fn validate(&self, channels: &[ChannelInfo]) -> std::result::Result<(), TransformError>;
+  242|       |
+  243|       |    /// Check if this transform modifies topics.
+  244|      0|    fn modifies_topics(&self) -> bool {
+  245|      0|        false
+  246|      0|    }
+  247|       |
+  248|       |    /// Check if this transform modifies types.
+  249|      0|    fn modifies_types(&self) -> bool {
+  250|      0|        false
+  251|      0|    }
+  252|       |
+  253|       |    /// Check if this transform modifies schemas.
+  254|      0|    fn modifies_schemas(&self) -> bool {
+  255|      0|        false
+  256|      0|    }
+  257|       |
+  258|       |    /// Get a reference as `Any` for downcasting to concrete transform types.
+  259|       |    ///
+  260|       |    /// This enables runtime type checking for specialized transform behavior,
+  261|       |    /// such as topic-aware type transformations.
+  262|       |    ///
+  263|       |    /// Each concrete transform type must implement this method.
+  264|       |    fn as_any(&self) -> &dyn std::any::Any;
+  265|       |
+  266|       |    /// Clone this transform into a boxed trait object.
+  267|       |    ///
+  268|       |    /// This enables cloning of `MultiTransform` which contains
+  269|       |    /// `Vec<Box<dyn McapTransform>>`. Each concrete transform type
+  270|       |    /// must implement this method to support batch processing with transforms.
+  271|       |    fn box_clone(&self) -> Box<dyn McapTransform>;
+  272|       |}
+  273|       |
+  274|       |/// Builder helper for creating common transformations.
+  275|       |pub struct TransformBuilder {
+  276|       |    topic_mappings: HashMap<String, String>,
+  277|       |    /// Wildcard topic mappings: (pattern, target) where pattern is like "/foo/*"
+  278|       |    topic_wildcards: Vec<(String, String)>,
+  279|       |    type_mappings: HashMap<String, String>,
+  280|       |    /// Wildcard type mappings: (pattern, target) where pattern is like "foo/*"
+  281|       |    type_wildcards: Vec<(String, String)>,
+  282|       |    /// Topic-specific type mappings: (topic, source_type) -> target_type
+  283|       |    topic_type_mappings: HashMap<(String, String), String>,
+  284|       |}
+  285|       |
+  286|       |impl Default for TransformBuilder {
+  287|      0|    fn default() -> Self {
+  288|      0|        Self::new()
+  289|      0|    }
+  290|       |}
+  291|       |
+  292|       |impl TransformBuilder {
+  293|       |    /// Create a new builder with no mappings.
+  294|      9|    pub fn new() -> Self {
+  295|      9|        Self {
+  296|      9|            topic_mappings: HashMap::new(),
+  297|      9|            topic_wildcards: Vec::new(),
+  298|      9|            type_mappings: HashMap::new(),
+  299|      9|            type_wildcards: Vec::new(),
+  300|      9|            topic_type_mappings: HashMap::new(),
+  301|      9|        }
+  302|      9|    }
+  303|       |
+  304|       |    /// Add a topic rename mapping.
+  305|      5|    pub fn with_topic_rename(mut self, from: impl Into<String>, to: impl Into<String>) -> Self {
+  306|      5|        self.topic_mappings.insert(from.into(), to.into());
+  307|      5|        self
+  308|      5|    }
+  309|       |
+  310|       |    /// Add a wildcard topic rename mapping.
+  311|       |    ///
+  312|       |    /// The wildcard `*` matches any topic suffix. For example:
+  313|       |    /// - `"/foo/*"` → `"/roboflow/*"` will rename all topics starting with "/foo/"
+  314|       |    ///
+  315|       |    /// # Arguments
+  316|       |    ///
+  317|       |    /// * `pattern` - Wildcard pattern like "/foo/*"
+  318|       |    /// * `target` - Target pattern like "/bar/*"
+  319|      0|    pub fn with_topic_rename_wildcard(
+  320|      0|        mut self,
+  321|      0|        pattern: impl Into<String>,
+  322|      0|        target: impl Into<String>,
+  323|      0|    ) -> Self {
+  324|      0|        self.topic_wildcards.push((pattern.into(), target.into()));
+  325|      0|        self
+  326|      0|    }
+  327|       |
+  328|       |    /// Add a type rename mapping.
+  329|      5|    pub fn with_type_rename(mut self, from: impl Into<String>, to: impl Into<String>) -> Self {
+  330|      5|        self.type_mappings.insert(from.into(), to.into());
+  331|      5|        self
+  332|      5|    }
+  333|       |
+  334|       |    /// Add a wildcard type rename mapping.
+  335|       |    ///
+  336|       |    /// The wildcard `*` matches any type name suffix. For example:
+  337|       |    /// - `"foo/*"` → `"bar/*"` will rename all types starting with "foo/" to "bar/"
+  338|       |    ///
+  339|       |    /// # Arguments
+  340|       |    ///
+  341|       |    /// * `pattern` - Wildcard pattern like "foo/*"
+  342|       |    /// * `target` - Target pattern like "bar/*"
+  343|      0|    pub fn with_type_rename_wildcard(
+  344|      0|        mut self,
+  345|      0|        pattern: impl Into<String>,
+  346|      0|        target: impl Into<String>,
+  347|      0|    ) -> Self {
+  348|      0|        self.type_wildcards.push((pattern.into(), target.into()));
+  349|      0|        self
+  350|      0|    }
+  351|       |
+  352|       |    /// Add a topic-specific type rename mapping.
+  353|       |    ///
+  354|       |    /// This allows the same source type to map to different target types based on the topic.
+  355|       |    ///
+  356|       |    /// # Arguments
+  357|       |    ///
+  358|       |    /// * `topic` - The topic name (exact match)
+  359|       |    /// * `source_type` - Original type name (e.g., "nmx.msg.LowdimData")
+  360|       |    /// * `target_type` - New type name (e.g., "nmx.msg.JointStates")
+  361|       |    ///
+  362|       |    /// # Example
+  363|       |    ///
+  364|       |    /// ```no_run
+  365|       |    /// # fn main() {
+  366|       |    /// use robocodec::transform::TransformBuilder;
+  367|       |    ///
+  368|       |    /// let pipeline = TransformBuilder::new()
+  369|       |    ///     .with_topic_type_rename(
+  370|       |    ///         "/lowdim/joint",
+  371|       |    ///         "nmx.msg.LowdimData",
+  372|       |    ///         "nmx.msg.JointStates"
+  373|       |    ///     )
+  374|       |    ///     .build();
+  375|       |    /// # }
+  376|       |    /// ```
+  377|      0|    pub fn with_topic_type_rename(
+  378|      0|        mut self,
+  379|      0|        topic: impl Into<String>,
+  380|      0|        source_type: impl Into<String>,
+  381|      0|        target_type: impl Into<String>,
+  382|      0|    ) -> Self {
+  383|      0|        self.topic_type_mappings
+  384|      0|            .insert((topic.into(), source_type.into()), target_type.into());
+  385|      0|        self
+  386|      0|    }
+  387|       |
+  388|       |    /// Build a MultiTransform from this builder.
+  389|      9|    pub fn build(self) -> MultiTransform {
+  390|      9|        let mut pipeline = MultiTransform::new();
+  391|       |
+  392|       |        // Add topic rename transform (exact + wildcard)
+  393|      9|        if !self.topic_mappings.is_empty() || !self.topic_wildcards.is_empty() {
+                                                            ^4
+  394|      5|            pipeline.add_transform(Box::new(
+  395|      5|                TopicRenameTransform::with_wildcards(self.topic_mappings, self.topic_wildcards)
+  396|      5|                    .map_err(|e| TransformError::InvalidRule {
+  397|      0|                        rule: "topic wildcard pattern".to_string(),
+  398|      0|                        reason: format!("Failed to compile regex: {}", e),
+  399|      0|                    })
+  400|      5|                    .expect("Invalid topic wildcard pattern in TransformBuilder"),
+  401|       |            ));
+  402|      4|        }
+  403|       |
+  404|       |        // Add type rename transform (exact + wildcard)
+  405|      9|        if !self.type_mappings.is_empty() || !self.type_wildcards.is_empty() {
+                                                           ^4
+  406|      5|            let mut type_transform = TypeRenameTransform::from_map(self.type_mappings);
+  407|      5|            for (pattern, target) in self.type_wildcards {
+                               ^0       ^0
+  408|      0|                type_transform.add_wildcard_mapping(pattern, target);
+  409|      0|            }
+  410|      5|            pipeline.add_transform(Box::new(type_transform));
+  411|      4|        }
+  412|       |
+  413|      9|        if !self.topic_type_mappings.is_empty() {
+  414|      0|            pipeline.add_transform(Box::new(TopicAwareTypeRenameTransform::from_map(
+  415|      0|                self.topic_type_mappings,
+  416|      0|            )));
+  417|      9|        }
+  418|       |
+  419|      9|        pipeline
+  420|      9|    }
+  421|       |}
+  422|       |
+  423|       |#[cfg(test)]
+  424|       |mod tests {
+  425|       |    use super::*;
+  426|       |
+  427|       |    #[test]
+  428|      1|    fn test_transform_error_display() {
+  429|      1|        let err = TransformError::TopicCollision {
+  430|      1|            sources: vec!["/a".to_string(), "/b".to_string()],
+  431|      1|            target: "/c".to_string(),
+  432|      1|        };
+  433|      1|        assert!(err.to_string().contains("Topic rename collision"));
+  434|      1|    }
+  435|       |
+  436|       |    #[test]
+  437|      1|    fn test_channel_info_new() {
+  438|      1|        let info = ChannelInfo::new(
+  439|       |            1,
+  440|      1|            "/test".to_string(),
+  441|      1|            "std_msgs/String".to_string(),
+  442|      1|            "cdr".to_string(),
+  443|      1|            Some("string data".to_string()),
+  444|      1|            Some("ros2msg".to_string()),
+  445|       |        );
+  446|      1|        assert_eq!(info.id, 1);
+  447|      1|        assert_eq!(info.topic, "/test");
+  448|      1|        assert_eq!(info.message_type, "std_msgs/String");
+  449|      1|    }
+  450|       |
+  451|       |    #[test]
+  452|      1|    fn test_transform_builder_empty() {
+  453|      1|        let pipeline = TransformBuilder::new().build();
+  454|      1|        assert_eq!(pipeline.transform_count(), 0);
+  455|      1|    }
+  456|       |
+  457|       |    #[test]
+  458|      1|    fn test_transform_builder_with_mappings() {
+  459|      1|        let pipeline = TransformBuilder::new()
+  460|      1|            .with_topic_rename("/old", "/new")
+  461|      1|            .with_type_rename("old_pkg/Msg", "new_pkg/Msg")
+  462|      1|            .build();
+  463|      1|        assert_eq!(pipeline.transform_count(), 2);
+  464|      1|    }
+  465|       |}
+

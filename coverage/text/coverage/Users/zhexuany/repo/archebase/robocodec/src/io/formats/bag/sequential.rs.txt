@@ -1,0 +1,818 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/io/formats/bag/sequential.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Sequential BAG reader using rosbag crate as reference.
+    6|       |//!
+    7|       |//! This module provides `SequentialBagReader` for reading ROS1 bag files
+    8|       |//! sequentially using the rosbag crate as the underlying implementation.
+    9|       |//!
+   10|       |//! Use this reader as the reference implementation to verify the correctness
+   11|       |//! of the parallel BAG reader.
+   12|       |
+   13|       |use std::collections::{HashMap, HashSet};
+   14|       |use std::path::Path;
+   15|       |
+   16|       |use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
+   17|       |use crate::io::traits::FormatReader;
+   18|       |use crate::{CodecError, Result};
+   19|       |
+   20|       |/// Sequential BAG reader format.
+   21|       |pub struct BagSequentialFormat;
+   22|       |
+   23|       |impl BagSequentialFormat {
+   24|       |    /// Open a BAG file and return a sequential reader.
+   25|      1|    pub fn open<P: AsRef<Path>>(path: P) -> Result<SequentialBagReader> {
+   26|      1|        SequentialBagReader::open(path)
+   27|      1|    }
+   28|       |}
+   29|       |
+   30|       |/// Sequential BAG reader using rosbag crate.
+   31|       |///
+   32|       |/// This reader uses the rosbag crate for reliable BAG file reading.
+   33|       |/// It's suitable for:
+   34|       |/// - Reference implementation for testing
+   35|       |/// - Sequential processing workflows
+   36|       |/// - Rewriting operations
+   37|       |pub struct SequentialBagReader {
+   38|       |    /// File path
+   39|       |    path: String,
+   40|       |    /// Channel information indexed by channel ID
+   41|       |    channels: HashMap<u16, ChannelInfo>,
+   42|       |    /// Connection ID to channel ID mapping
+   43|       |    conn_id_map: HashMap<u32, u16>,
+   44|       |    /// Total message count
+   45|       |    message_count: u64,
+   46|       |    /// Start timestamp (nanoseconds)
+   47|       |    start_time: Option<u64>,
+   48|       |    /// End timestamp (nanoseconds)
+   49|       |    end_time: Option<u64>,
+   50|       |}
+   51|       |
+   52|       |impl SequentialBagReader {
+   53|       |    /// Open a BAG file for sequential reading.
+   54|     23|    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+   55|     23|        let path_ref = path.as_ref();
+   56|     23|        let path_str = path_ref.to_string_lossy().to_string();
+   57|       |
+   58|       |        // Open the bag file using rosbag crate
+   59|     23|        let bag = rosbag::RosBag::new(path_ref).map_err(|e| {
+                          ^22                                             ^1
+   60|      1|            CodecError::encode("SequentialBagReader", format!("Failed to open bag: {e}"))
+   61|      1|        })?;
+   62|       |
+   63|     22|        let mut channels = HashMap::new();
+   64|     22|        let mut conn_id_map = HashMap::new();
+   65|     22|        let mut next_channel_id: u16 = 0;
+   66|     22|        let mut connections_seen: HashSet<u32> = HashSet::new();
+   67|       |
+   68|       |        // Collect connections from index section
+   69|    323|        for record in bag.index_records() {
+                                    ^22 ^22
+   70|    323|            let record = record.map_err(|e| {
+                                                          ^0
+   71|      0|                CodecError::encode("SequentialBagReader", format!("Failed to read index: {e}"))
+   72|      0|            })?;
+   73|    323|            if let rosbag::IndexRecord::Connection(conn) = record {
+                                                                 ^219
+   74|    219|                if connections_seen.insert(conn.id) {
+   75|    219|                    let channel_id = next_channel_id;
+   76|    219|                    next_channel_id = next_channel_id.wrapping_add(1);
+   77|       |
+   78|    219|                    channels.insert(
+   79|    219|                        channel_id,
+   80|       |                        ChannelInfo {
+   81|    219|                            id: channel_id,
+   82|    219|                            topic: conn.topic.to_string(),
+   83|    219|                            message_type: conn.tp.to_string(),
+   84|    219|                            encoding: "ros1".to_string(), // ROS1 serialization format
+   85|    219|                            schema: Some(conn.message_definition.to_string()),
+   86|    219|                            schema_data: None,
+   87|    219|                            schema_encoding: Some("ros1msg".to_string()),
+   88|       |                            message_count: 0,
+   89|    219|                            callerid: if conn.caller_id.is_empty() {
+   90|      0|                                None
+   91|       |                            } else {
+   92|    219|                                Some(conn.caller_id.to_string())
+   93|       |                            },
+   94|       |                        },
+   95|       |                    );
+   96|    219|                    conn_id_map.insert(conn.id, channel_id);
+   97|      0|                }
+   98|    104|            }
+   99|       |        }
+  100|       |
+  101|       |        // Also check chunk section for connections not in index
+  102|    317|        for record in bag.chunk_records() {
+                                    ^22 ^22
+  103|    317|            let record = record.map_err(|e| {
+                                                          ^0
+  104|      0|                CodecError::encode("SequentialBagReader", format!("Failed to read chunk: {e}"))
+  105|      0|            })?;
+  106|    317|            if let rosbag::ChunkRecord::Chunk(chunk) = record {
+                                                            ^104
+  107|    435|                for msg_result in chunk.messages() {
+                                                ^104  ^104
+  108|    435|                    let msg_result = msg_result.map_err(|e| {
+                                                                          ^0
+  109|      0|                        CodecError::encode(
+  110|       |                            "SequentialBagReader",
+  111|      0|                            format!("Failed to read message: {e}"),
+  112|       |                        )
+  113|      0|                    })?;
+  114|    435|                    if let rosbag::MessageRecord::Connection(conn) = msg_result {
+                                                                           ^213
+  115|    213|                        if connections_seen.insert(conn.id) {
+  116|      0|                            let channel_id = next_channel_id;
+  117|      0|                            next_channel_id = next_channel_id.wrapping_add(1);
+  118|       |
+  119|      0|                            channels.insert(
+  120|      0|                                channel_id,
+  121|       |                                ChannelInfo {
+  122|      0|                                    id: channel_id,
+  123|      0|                                    topic: conn.topic.to_string(),
+  124|      0|                                    message_type: conn.tp.to_string(),
+  125|      0|                                    encoding: "ros1".to_string(), // ROS1 serialization format
+  126|      0|                                    schema: Some(conn.message_definition.to_string()),
+  127|      0|                                    schema_data: None,
+  128|      0|                                    schema_encoding: Some("ros1msg".to_string()),
+  129|       |                                    message_count: 0,
+  130|      0|                                    callerid: if conn.caller_id.is_empty() {
+  131|      0|                                        None
+  132|       |                                    } else {
+  133|      0|                                        Some(conn.caller_id.to_string())
+  134|       |                                    },
+  135|       |                                },
+  136|       |                            );
+  137|      0|                            conn_id_map.insert(conn.id, channel_id);
+  138|    213|                        }
+  139|    222|                    }
+  140|       |                }
+  141|    213|            }
+  142|       |        }
+  143|       |
+  144|     22|        Ok(Self {
+  145|     22|            path: path_str,
+  146|     22|            channels,
+  147|     22|            conn_id_map,
+  148|     22|            message_count: 0,
+  149|     22|            start_time: None,
+  150|     22|            end_time: None,
+  151|     22|        })
+  152|     23|    }
+  153|       |
+  154|       |    /// Create a raw message iterator.
+  155|      7|    pub fn iter_raw(&self) -> Result<SequentialBagRawIter> {
+  156|      7|        SequentialBagRawIter::new(&self.path, &self.channels, &self.conn_id_map)
+  157|      7|    }
+  158|       |
+  159|       |    /// Get the connection ID to channel ID mapping.
+  160|      1|    pub fn conn_id_map(&self) -> &HashMap<u32, u16> {
+  161|      1|        &self.conn_id_map
+  162|      1|    }
+  163|       |}
+  164|       |
+  165|       |impl FormatReader for SequentialBagReader {
+  166|      5|    fn channels(&self) -> &HashMap<u16, ChannelInfo> {
+  167|      5|        &self.channels
+  168|      5|    }
+  169|       |
+  170|      1|    fn message_count(&self) -> u64 {
+  171|      1|        self.message_count
+  172|      1|    }
+  173|       |
+  174|      1|    fn start_time(&self) -> Option<u64> {
+  175|      1|        self.start_time
+  176|      1|    }
+  177|       |
+  178|      1|    fn end_time(&self) -> Option<u64> {
+  179|      1|        self.end_time
+  180|      1|    }
+  181|       |
+  182|      6|    fn path(&self) -> &str {
+  183|      6|        &self.path
+  184|      6|    }
+  185|       |
+  186|      5|    fn format(&self) -> FileFormat {
+  187|      5|        FileFormat::Bag
+  188|      5|    }
+  189|       |
+  190|      5|    fn file_size(&self) -> u64 {
+  191|      5|        std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0)
+  192|      5|    }
+  193|       |
+  194|      2|    fn as_any(&self) -> &dyn std::any::Any {
+  195|      2|        self
+  196|      2|    }
+  197|       |
+  198|      0|    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+  199|      0|        self
+  200|      0|    }
+  201|       |}
+  202|       |
+  203|       |/// Raw message iterator for BAG files using rosbag crate.
+  204|       |///
+  205|       |/// This iterator uses the rosbag crate to read messages sequentially.
+  206|       |pub struct SequentialBagRawIter {
+  207|       |    /// Bag file reader
+  208|       |    bag: rosbag::RosBag,
+  209|       |    /// Channel information
+  210|       |    channels: HashMap<u16, ChannelInfo>,
+  211|       |    /// Connection ID to channel ID mapping
+  212|       |    conn_id_map: HashMap<u32, u16>,
+  213|       |    /// Chunk records collected upfront
+  214|       |    chunk_records: Vec<Vec<rosbag::record_types::MessageData<'static>>>,
+  215|       |    /// Current messages being processed
+  216|       |    current_messages: Option<Vec<rosbag::record_types::MessageData<'static>>>,
+  217|       |    /// Current index within current_messages
+  218|       |    current_index: usize,
+  219|       |    /// Current chunk index
+  220|       |    chunk_index: usize,
+  221|       |}
+  222|       |
+  223|       |impl SequentialBagRawIter {
+  224|       |    /// Create a new raw message iterator for a bag file.
+  225|      8|    pub fn new(
+  226|      8|        path: &str,
+  227|      8|        channels: &HashMap<u16, ChannelInfo>,
+  228|      8|        conn_id_map: &HashMap<u32, u16>,
+  229|      8|    ) -> Result<Self> {
+  230|      8|        let bag = rosbag::RosBag::new(Path::new(path)).map_err(|e| {
+                                                                                 ^0
+  231|      0|            CodecError::encode("SequentialBagRawIter", format!("Failed to open bag: {e}"))
+  232|      0|        })?;
+  233|       |
+  234|      8|        Ok(Self {
+  235|      8|            bag,
+  236|      8|            channels: channels.clone(),
+  237|      8|            conn_id_map: conn_id_map.clone(),
+  238|      8|            chunk_records: Vec::new(),
+  239|      8|            current_messages: None,
+  240|      8|            current_index: 0,
+  241|      8|            chunk_index: 0,
+  242|      8|        })
+  243|      8|    }
+  244|       |
+  245|       |    /// Load the next chunk's messages.
+  246|     21|    fn load_next_chunk(&mut self) -> Result<bool> {
+  247|       |        // Collect all chunk records on first access
+  248|     21|        if self.chunk_index == 0 && self.chunk_records.is_empty() {
+                                                  ^5                 ^5
+  249|     65|            for record in self.bag.chunk_records() {
+                                        ^5       ^5
+  250|     65|                let record = record.map_err(|e| {
+                                                              ^0
+  251|      0|                    CodecError::encode(
+  252|       |                        "SequentialBagRawIter",
+  253|      0|                        format!("Failed to read record: {e}"),
+  254|       |                    )
+  255|      0|                })?;
+  256|       |
+  257|     65|                if let rosbag::ChunkRecord::Chunk(chunk) = record {
+                                                                ^25
+  258|     25|                    let mut messages = Vec::new();
+  259|     80|                    for msg_result in chunk.messages() {
+                                                    ^25   ^25
+  260|     80|                        let msg_result = msg_result.map_err(|e| {
+                                                                              ^0
+  261|      0|                            CodecError::encode(
+  262|       |                                "SequentialBagRawIter",
+  263|      0|                                format!("Failed to read message: {e}"),
+  264|       |                            )
+  265|      0|                        })?;
+  266|     80|                        if let rosbag::MessageRecord::MessageData(msg) = msg_result {
+                                                                                ^40
+  267|     40|                            // SAFETY: We extend the lifetime to 'static for storage.
+  268|     40|                            // This is safe because we own the RosBag which owns the data.
+  269|     40|                            let extended = unsafe {
+  270|     40|                                std::mem::transmute::<
+  271|     40|                                    rosbag::record_types::MessageData<'_>,
+  272|     40|                                    rosbag::record_types::MessageData<'static>,
+  273|     40|                                >(msg)
+  274|     40|                            };
+  275|     40|                            messages.push(extended);
+  276|     40|                        }
+  277|       |                    }
+  278|     25|                    if !messages.is_empty() {
+  279|     25|                        self.chunk_records.push(messages);
+  280|     25|                    }
+                                  ^0
+  281|     40|                }
+  282|       |            }
+  283|     16|        }
+  284|       |
+  285|     21|        if self.chunk_index >= self.chunk_records.len() {
+  286|      4|            return Ok(false);
+  287|     17|        }
+  288|       |
+  289|     17|        self.current_messages = Some(self.chunk_records[self.chunk_index].clone());
+  290|     17|        self.current_index = 0;
+  291|     17|        self.chunk_index += 1;
+  292|     17|        Ok(true)
+  293|     21|    }
+  294|       |}
+  295|       |
+  296|       |impl Iterator for SequentialBagRawIter {
+  297|       |    type Item = Result<(RawMessage, ChannelInfo)>;
+  298|       |
+  299|     22|    fn next(&mut self) -> Option<Self::Item> {
+  300|       |        loop {
+  301|       |            // Load current messages if needed
+  302|     62|            if self.current_messages.is_none() {
+  303|     21|                match self.load_next_chunk() {
+  304|     17|                    Ok(true) => continue,
+  305|      4|                    Ok(false) => return None,
+  306|      0|                    Err(e) => return Some(Err(e)),
+  307|       |                }
+  308|     41|            }
+  309|       |
+  310|     41|            let messages = self.current_messages.as_ref().unwrap();
+  311|     41|            if self.current_index >= messages.len() {
+  312|     15|                self.current_messages = None;
+  313|     15|                continue;
+  314|     26|            }
+  315|       |
+  316|     26|            let msg_data = &messages[self.current_index];
+  317|     26|            self.current_index += 1;
+  318|       |
+  319|       |            // Map connection ID to channel ID
+  320|     26|            let channel_id = match self.conn_id_map.get(&msg_data.conn_id) {
+                              ^18
+  321|     18|                Some(&id) => id,
+  322|      8|                None => continue, // Skip unknown connection IDs
+  323|       |            };
+  324|       |
+  325|       |            // Get channel info
+  326|     18|            let channel_info = match self.channels.get(&channel_id) {
+  327|     18|                Some(info) => info.clone(),
+  328|      0|                None => continue, // Skip unknown channel IDs
+  329|       |            };
+  330|       |
+  331|       |            // Return raw message
+  332|     18|            return Some(Ok((
+  333|     18|                RawMessage {
+  334|     18|                    channel_id,
+  335|     18|                    log_time: msg_data.time,
+  336|     18|                    publish_time: msg_data.time,
+  337|     18|                    data: msg_data.data.to_vec(),
+  338|     18|                    sequence: None,
+  339|     18|                },
+  340|     18|                channel_info,
+  341|     18|            )));
+  342|       |        }
+  343|     22|    }
+  344|       |}
+  345|       |
+  346|       |#[cfg(test)]
+  347|       |mod tests {
+  348|       |    use super::*;
+  349|       |
+  350|       |    /// Helper to get fixture path
+  351|     22|    fn fixture_path(name: &str) -> std::path::PathBuf {
+  352|     22|        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+                                                                                                ^0  ^0
+  353|     22|        std::path::PathBuf::from(manifest_dir)
+  354|     22|            .join("tests")
+  355|     22|            .join("fixtures")
+  356|     22|            .join(name)
+  357|     22|    }
+  358|       |
+  359|       |    /// Test opening a valid BAG file
+  360|       |    #[test]
+  361|      1|    fn test_sequential_bag_reader_open_valid() {
+  362|      1|        let path = fixture_path("robocodec_test_15.bag");
+  363|      1|        if !path.exists() {
+  364|      0|            return; // Skip if fixture not available
+  365|      1|        }
+  366|       |
+  367|      1|        let result = SequentialBagReader::open(&path);
+  368|      1|        assert!(
+  369|      1|            result.is_ok(),
+  370|      0|            "SequentialBagReader::open should succeed: {:?}",
+  371|      0|            result.err()
+  372|       |        );
+  373|      1|    }
+  374|       |
+  375|       |    /// Test opening a nonexistent file
+  376|       |    #[test]
+  377|      1|    fn test_sequential_bag_reader_open_nonexistent() {
+  378|      1|        let result = SequentialBagReader::open("/nonexistent/file.bag");
+  379|      1|        assert!(result.is_err(), "should fail for nonexistent file");
+                                               ^0
+  380|      1|    }
+  381|       |
+  382|       |    /// Test FormatReader trait methods
+  383|       |    #[test]
+  384|      1|    fn test_sequential_bag_reader_format_reader_trait() {
+  385|      1|        let path = fixture_path("robocodec_test_15.bag");
+  386|      1|        if !path.exists() {
+  387|      0|            return;
+  388|      1|        }
+  389|       |
+  390|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  391|       |
+  392|       |        // Test channels()
+  393|      1|        let channels = reader.channels();
+  394|      1|        assert!(!channels.is_empty(), "should have channels");
+                                                    ^0
+  395|       |
+  396|       |        // Test path()
+  397|      1|        assert!(!reader.path().is_empty(), "path should not be empty");
+                                                         ^0
+  398|       |
+  399|       |        // Test format()
+  400|      1|        assert_eq!(reader.format(), FileFormat::Bag);
+  401|       |
+  402|       |        // Test file_size()
+  403|      1|        assert!(reader.file_size() > 0, "file_size should be positive");
+                                                      ^0
+  404|      1|    }
+  405|       |
+  406|       |    /// Test channel information extraction
+  407|       |    #[test]
+  408|      1|    fn test_sequential_bag_reader_channels() {
+  409|      1|        let path = fixture_path("robocodec_test_15.bag");
+  410|      1|        if !path.exists() {
+  411|      0|            return;
+  412|      1|        }
+  413|       |
+  414|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  415|      1|        let channels = reader.channels();
+  416|       |
+  417|       |        // Should have at least one channel
+  418|      1|        assert!(!channels.is_empty(), "should discover channels");
+                                                    ^0
+  419|       |
+  420|       |        // Verify channel structure
+  421|      9|        for (id, channel) in channels {
+                           ^8  ^8
+  422|      8|            assert_eq!(channel.id, *id, "channel id should match key");
+                                                      ^0
+  423|      8|            assert!(!channel.topic.is_empty(), "topic should not be empty");
+                                                             ^0
+  424|      8|            assert_eq!(channel.encoding, "ros1", "encoding should be ros1");
+                                                               ^0
+  425|      8|            assert_eq!(
+  426|       |                channel.schema_encoding,
+  427|      8|                Some("ros1msg".to_string()),
+  428|      0|                "schema encoding should be ros1msg"
+  429|       |            );
+  430|       |        }
+  431|      1|    }
+  432|       |
+  433|       |    /// Test conn_id_map accessor
+  434|       |    #[test]
+  435|      1|    fn test_sequential_bag_reader_conn_id_map() {
+  436|      1|        let path = fixture_path("robocodec_test_15.bag");
+  437|      1|        if !path.exists() {
+  438|      0|            return;
+  439|      1|        }
+  440|       |
+  441|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  442|      1|        let conn_map = reader.conn_id_map();
+  443|       |
+  444|       |        // Should have connection mappings
+  445|      1|        assert!(!conn_map.is_empty(), "should have connection id mappings");
+                                                    ^0
+  446|      1|    }
+  447|       |
+  448|       |    /// Test iter_raw creation
+  449|       |    #[test]
+  450|      1|    fn test_sequential_bag_reader_iter_raw() {
+  451|      1|        let path = fixture_path("robocodec_test_15.bag");
+  452|      1|        if !path.exists() {
+  453|      0|            return;
+  454|      1|        }
+  455|       |
+  456|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  457|      1|        let result = reader.iter_raw();
+  458|       |
+  459|      1|        assert!(result.is_ok(), "iter_raw should succeed");
+                                              ^0
+  460|      1|    }
+  461|       |
+  462|       |    /// Test SequentialBagRawIter reads messages
+  463|       |    #[test]
+  464|      1|    fn test_sequential_bag_raw_iter_messages() {
+  465|      1|        let path = fixture_path("robocodec_test_15.bag");
+  466|      1|        if !path.exists() {
+  467|      0|            return;
+  468|      1|        }
+  469|       |
+  470|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  471|      1|        let mut iter = reader.iter_raw().unwrap();
+  472|       |
+  473|       |        // Should be able to read at least one message
+  474|      1|        let first = iter.next();
+  475|      1|        assert!(first.is_some(), "should have at least one message");
+                                               ^0
+  476|       |
+  477|      1|        if let Some(Ok((msg, channel))) = first {
+  478|      1|            assert!(!msg.data.is_empty(), "message data should not be empty");
+                                                        ^0
+  479|      1|            assert!(
+  480|      1|                !channel.topic.is_empty(),
+  481|      0|                "channel topic should not be empty"
+  482|       |            );
+  483|      1|            assert_eq!(channel.encoding, "ros1");
+  484|      0|        }
+  485|      1|    }
+  486|       |
+  487|       |    /// Test reading all messages from a file
+  488|       |    #[test]
+  489|      1|    fn test_sequential_bag_read_all_messages() {
+  490|      1|        let path = fixture_path("robocodec_test_15.bag");
+  491|      1|        if !path.exists() {
+  492|      0|            return;
+  493|      1|        }
+  494|       |
+  495|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  496|      1|        let iter = reader.iter_raw().unwrap();
+  497|       |
+  498|      8|        let count = iter.filter_map(|r| r.ok()).count();
+                          ^1      ^1   ^1                     ^1
+  499|      1|        assert!(count > 0, "should read multiple messages");
+                                         ^0
+  500|      1|    }
+  501|       |
+  502|       |    /// Test as_any trait method
+  503|       |    #[test]
+  504|      1|    fn test_sequential_bag_reader_as_any() {
+  505|      1|        let path = fixture_path("robocodec_test_15.bag");
+  506|      1|        if !path.exists() {
+  507|      0|            return;
+  508|      1|        }
+  509|       |
+  510|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  511|       |
+  512|       |        // Test as_any
+  513|      1|        let any = reader.as_any();
+  514|      1|        assert!(any.is::<SequentialBagReader>());
+  515|       |
+  516|       |        // Test as_any_mut
+  517|      1|        let any_mut = reader.as_any();
+  518|      1|        assert!(any_mut.is::<SequentialBagReader>());
+  519|      1|    }
+  520|       |
+  521|       |    /// Test start_time and end_time
+  522|       |    #[test]
+  523|      1|    fn test_sequential_bag_reader_time_range() {
+  524|      1|        let path = fixture_path("robocodec_test_15.bag");
+  525|      1|        if !path.exists() {
+  526|      0|            return;
+  527|      1|        }
+  528|       |
+  529|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  530|       |
+  531|       |        // These are currently not set (None)
+  532|      1|        assert_eq!(reader.start_time(), None);
+  533|      1|        assert_eq!(reader.end_time(), None);
+  534|      1|    }
+  535|       |
+  536|       |    /// Test message_count (currently 0)
+  537|       |    #[test]
+  538|      1|    fn test_sequential_bag_reader_message_count() {
+  539|      1|        let path = fixture_path("robocodec_test_15.bag");
+  540|      1|        if !path.exists() {
+  541|      0|            return;
+  542|      1|        }
+  543|       |
+  544|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  545|      1|        assert_eq!(
+  546|      1|            reader.message_count(),
+  547|       |            0,
+  548|      0|            "message count is not implemented"
+  549|       |        );
+  550|      1|    }
+  551|       |
+  552|       |    /// Test with multiple fixture files
+  553|       |    #[test]
+  554|      1|    fn test_sequential_bag_reader_multiple_fixtures() {
+  555|      5|        for i in [15, 17, 18, 19] {
+                          ^4
+  556|      4|            let path = fixture_path(&format!("robocodec_test_{}.bag", i));
+  557|      4|            if !path.exists() {
+  558|      0|                continue;
+  559|      4|            }
+  560|       |
+  561|      4|            let result = SequentialBagReader::open(&path);
+  562|      4|            if let Ok(reader) = result {
+  563|       |                // Verify basic properties
+  564|      4|                assert!(!reader.path().is_empty());
+  565|      4|                assert_eq!(reader.format(), FileFormat::Bag);
+  566|      4|                assert!(reader.file_size() > 0);
+  567|      0|            }
+  568|       |        }
+  569|      1|    }
+  570|       |
+  571|       |    /// Test BagSequentialFormat wrapper
+  572|       |    #[test]
+  573|      1|    fn test_bag_sequential_format_open() {
+  574|      1|        let path = fixture_path("robocodec_test_15.bag");
+  575|      1|        if !path.exists() {
+  576|      0|            return;
+  577|      1|        }
+  578|       |
+  579|      1|        let result = BagSequentialFormat::open(&path);
+  580|      1|        assert!(
+  581|      1|            result.is_ok(),
+  582|      0|            "BagSequentialFormat::open should succeed: {:?}",
+  583|      0|            result.err()
+  584|       |        );
+  585|      1|    }
+  586|       |
+  587|       |    /// Test ROS1 encoding constants
+  588|       |    #[test]
+  589|      1|    fn test_ros1_encoding_constant() {
+  590|       |        // Verify that we use "ros1" encoding for ROS1 bag files
+  591|      1|        let ros1_encoding = "ros1";
+  592|      1|        let ros1msg_schema_encoding = "ros1msg";
+  593|       |
+  594|      1|        assert_eq!(ros1_encoding, "ros1");
+  595|      1|        assert_eq!(ros1msg_schema_encoding, "ros1msg");
+  596|      1|        assert!(ros1_encoding.starts_with("ros1"));
+  597|      1|        assert!(ros1msg_schema_encoding.starts_with("ros1"));
+  598|      1|    }
+  599|       |
+  600|       |    /// Compile-time checks for trait bounds
+  601|       |    #[test]
+  602|      1|    fn test_sequential_bag_raw_iter_send() {
+  603|      1|        fn assert_send<T: Send>() {}
+  604|      1|        assert_send::<SequentialBagRawIter>();
+  605|      1|    }
+  606|       |
+  607|       |    #[test]
+  608|      1|    fn test_sequential_bag_reader_format_trait_bound() {
+  609|      1|        fn assert_format_reader<T: FormatReader>() {}
+  610|      1|        assert_format_reader::<SequentialBagReader>();
+  611|      1|    }
+  612|       |
+  613|       |    /// Test that iter_raw can be called multiple times
+  614|       |    #[test]
+  615|      1|    fn test_sequential_bag_reader_iter_raw_multiple() {
+  616|      1|        let path = fixture_path("robocodec_test_15.bag");
+  617|      1|        if !path.exists() {
+  618|      0|            return;
+  619|      1|        }
+  620|       |
+  621|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  622|       |
+  623|       |        // Can create multiple iterators
+  624|      1|        let iter1 = reader.iter_raw();
+  625|      1|        assert!(iter1.is_ok());
+  626|       |
+  627|      1|        let iter2 = reader.iter_raw();
+  628|      1|        assert!(iter2.is_ok());
+  629|      1|    }
+  630|       |
+  631|       |    /// Test channel info structure
+  632|       |    #[test]
+  633|      1|    fn test_sequential_bag_channel_info_structure() {
+  634|      1|        let path = fixture_path("robocodec_test_15.bag");
+  635|      1|        if !path.exists() {
+  636|      0|            return;
+  637|      1|        }
+  638|       |
+  639|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  640|       |
+  641|      8|        for channel in reader.channels().values() {
+                                     ^1                ^1
+  642|       |            // Verify all fields are accessible
+  643|      8|            let _ = &channel.topic;
+  644|      8|            let _ = &channel.message_type;
+  645|      8|            let _ = &channel.encoding;
+  646|      8|            let _ = &channel.schema;
+  647|      8|            let _ = &channel.schema_data;
+  648|      8|            let _ = &channel.schema_encoding;
+  649|      8|            let _ = &channel.callerid;
+  650|       |
+  651|       |            // Verify ROS1-specific fields
+  652|      8|            assert_eq!(channel.encoding, "ros1");
+  653|      8|            assert_eq!(channel.schema_encoding, Some("ros1msg".to_string()));
+  654|       |        }
+  655|      1|    }
+  656|       |
+  657|       |    /// Test that callerid is properly extracted
+  658|       |    #[test]
+  659|      1|    fn test_sequential_bag_callerid_extraction() {
+  660|      1|        let path = fixture_path("robocodec_test_15.bag");
+  661|      1|        if !path.exists() {
+  662|      0|            return;
+  663|      1|        }
+  664|       |
+  665|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  666|       |
+  667|      8|        for channel in reader.channels().values() {
+                                     ^1                ^1
+  668|      8|            // callerid may be Some or None depending on the bag file
+  669|      8|            let _callerid = &channel.callerid;
+  670|      8|            // Just verify we can access it
+  671|      8|        }
+  672|      1|    }
+  673|       |
+  674|       |    /// Test handling of messages with unknown connection IDs
+  675|       |    #[test]
+  676|      1|    fn test_sequential_bag_iter_unknown_connection() {
+  677|      1|        let path = fixture_path("robocodec_test_15.bag");
+  678|      1|        if !path.exists() {
+  679|      0|            return;
+  680|      1|        }
+  681|       |
+  682|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  683|       |
+  684|       |        // Create an iterator with empty connection map to test unknown connection handling
+  685|      1|        let empty_conn_map = HashMap::new();
+  686|      1|        let empty_channels = HashMap::new();
+  687|      1|        let result = SequentialBagRawIter::new(reader.path(), &empty_channels, &empty_conn_map);
+  688|       |
+  689|       |        // Even with empty maps, should create iterator
+  690|      1|        assert!(result.is_ok());
+  691|       |
+  692|      1|        let mut iter = result.unwrap();
+  693|       |        // All messages should be skipped due to unknown connection
+  694|      1|        let first = iter.next();
+  695|       |        // Either None (no messages) or continues skipping
+  696|      0|        if let Some(Ok(_)) = first {
+  697|      0|            // If we got a message, it should have gone through the channel lookup
+  698|      1|        }
+  699|      1|    }
+  700|       |
+  701|       |    /// Test message data integrity
+  702|       |    #[test]
+  703|      1|    fn test_sequential_bag_message_data_integrity() {
+  704|      1|        let path = fixture_path("robocodec_test_15.bag");
+  705|      1|        if !path.exists() {
+  706|      0|            return;
+  707|      1|        }
+  708|       |
+  709|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  710|      1|        let mut iter = reader.iter_raw().unwrap();
+  711|       |
+  712|      1|        if let Some(Ok((msg, channel))) = iter.next() {
+  713|       |            // Verify message structure
+  714|      1|            assert!(msg.channel_id > 0, "channel_id should be positive");
+                                                      ^0
+  715|      1|            assert!(!msg.data.is_empty(), "data should not be empty");
+                                                        ^0
+  716|      1|            assert_eq!(
+  717|       |                msg.log_time, msg.publish_time,
+  718|      0|                "ROS1 bags have same log/publish time"
+  719|       |            );
+  720|      1|            assert_eq!(msg.sequence, None, "ROS1 bags don't have sequence numbers");
+                                                         ^0
+  721|      1|            assert!(!channel.topic.is_empty());
+  722|      1|            assert!(!channel.message_type.is_empty());
+  723|      0|        }
+  724|      1|    }
+  725|       |
+  726|       |    /// Test iterator exhausted after reading all messages
+  727|       |    #[test]
+  728|      1|    fn test_sequential_bag_iter_exhausted() {
+  729|      1|        let path = fixture_path("robocodec_test_15.bag");
+  730|      1|        if !path.exists() {
+  731|      0|            return;
+  732|      1|        }
+  733|       |
+  734|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  735|      1|        let mut iter = reader.iter_raw().unwrap();
+  736|       |
+  737|       |        // Consume all messages
+  738|      1|        let count = iter.by_ref().count();
+  739|       |
+  740|       |        // Should return None after exhaustion
+  741|      1|        assert!(iter.next().is_none(), "iterator should be exhausted");
+                                                     ^0
+  742|       |
+  743|       |        // Verify we read at least some messages
+  744|      1|        assert!(count > 0, "should have read messages");
+                                         ^0
+  745|      1|    }
+  746|       |
+  747|       |    /// Test schema field is populated
+  748|       |    #[test]
+  749|      1|    fn test_sequential_bag_schema_populated() {
+  750|      1|        let path = fixture_path("robocodec_test_15.bag");
+  751|      1|        if !path.exists() {
+  752|      0|            return;
+  753|      1|        }
+  754|       |
+  755|      1|        let reader = SequentialBagReader::open(&path).unwrap();
+  756|       |
+  757|      8|        for channel in reader.channels().values() {
+                                     ^1                ^1
+  758|       |            // Schema should be populated from message_definition
+  759|      8|            assert!(
+  760|      8|                channel.schema.is_some(),
+  761|      0|                "schema should be populated from message_definition"
+  762|       |            );
+  763|      8|            if let Some(ref schema) = channel.schema {
+  764|      8|                assert!(!schema.is_empty(), "schema should not be empty");
+                                                          ^0
+  765|      0|            }
+  766|       |        }
+  767|      1|    }
+  768|       |}
+

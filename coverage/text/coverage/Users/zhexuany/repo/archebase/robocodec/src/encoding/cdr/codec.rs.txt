@@ -1,0 +1,155 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/encoding/cdr/codec.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! CDR codec implementation wrapping existing decoder/encoder.
+    6|       |
+    7|       |use crate::core::{CodecError, DecodedMessage, Encoding, Result};
+    8|       |use crate::encoding::transform::SchemaMetadata;
+    9|       |use crate::encoding::CdrDecoder;
+   10|       |use crate::encoding::CdrEncoder;
+   11|       |use crate::encoding::DynCodec;
+   12|       |
+   13|       |/// CDR codec wrapper implementing the unified codec interface.
+   14|       |///
+   15|       |/// This wraps the existing `CdrDecoder` and `CdrEncoder` to work with
+   16|       |/// the unified codec system.
+   17|       |pub struct CdrCodec {
+   18|       |    /// Cached decoder (stateless, can be reused)
+   19|       |    decoder: CdrDecoder,
+   20|       |    /// Current encoder for encoding operations
+   21|       |    encoder: Option<CdrEncoder>,
+   22|       |}
+   23|       |
+   24|       |impl CdrCodec {
+   25|       |    /// Create a new CDR codec.
+   26|     14|    pub fn new() -> Self {
+   27|     14|        Self {
+   28|     14|            decoder: CdrDecoder::new(),
+   29|     14|            encoder: None,
+   30|     14|        }
+   31|     14|    }
+   32|       |
+   33|       |    /// Get the CDR decoder.
+   34|      0|    pub fn decoder(&self) -> &CdrDecoder {
+   35|      0|        &self.decoder
+   36|      0|    }
+   37|       |
+   38|       |    /// Get a mutable CDR encoder.
+   39|      1|    pub fn encoder(&mut self) -> &mut CdrEncoder {
+   40|      1|        if self.encoder.is_none() {
+   41|      1|            self.encoder = Some(CdrEncoder::new());
+   42|      1|        }
+                      ^0
+   43|      1|        self.encoder.as_mut().unwrap()
+   44|      1|    }
+   45|       |}
+   46|       |
+   47|       |impl Default for CdrCodec {
+   48|      1|    fn default() -> Self {
+   49|      1|        Self::new()
+   50|      1|    }
+   51|       |}
+   52|       |
+   53|       |impl DynCodec for CdrCodec {
+   54|      1|    fn decode_dynamic(&self, data: &[u8], schema: &SchemaMetadata) -> Result<DecodedMessage> {
+   55|      1|        match schema {
+   56|       |            SchemaMetadata::Cdr {
+   57|      0|                type_name,
+   58|      0|                schema_text,
+   59|       |            } => {
+   60|       |                // Parse the schema text to get MessageSchema
+   61|      0|                let parsed_schema = crate::schema::parse_schema(type_name, schema_text)?;
+   62|       |
+   63|       |                // Decode using the existing CDR decoder
+   64|      0|                self.decoder.decode(&parsed_schema, data, Some(type_name))
+   65|       |            }
+   66|      1|            _ => Err(CodecError::invalid_schema(
+   67|      1|                schema.type_name(),
+   68|      1|                "Schema is not a CDR schema",
+   69|      1|            )),
+   70|       |        }
+   71|      1|    }
+   72|       |
+   73|      0|    fn encode_dynamic(
+   74|      0|        &mut self,
+   75|      0|        message: &DecodedMessage,
+   76|      0|        schema: &SchemaMetadata,
+   77|      0|    ) -> Result<Vec<u8>> {
+   78|      0|        match schema {
+   79|       |            SchemaMetadata::Cdr {
+   80|      0|                type_name,
+   81|      0|                schema_text,
+   82|       |            } => {
+   83|       |                // Parse the schema text to get MessageSchema
+   84|      0|                let parsed_schema = crate::schema::parse_schema(type_name, schema_text)?;
+   85|       |
+   86|       |                // Encode using the CDR encoder
+   87|      0|                let encoder = self.encoder();
+   88|      0|                encoder.encode_message(message, &parsed_schema, type_name)?;
+   89|       |                // Take ownership of encoder to call finish
+   90|      0|                let encoder = self.encoder.take().unwrap();
+   91|      0|                Ok(encoder.finish())
+   92|       |            }
+   93|      0|            _ => Err(CodecError::invalid_schema(
+   94|      0|                schema.type_name(),
+   95|      0|                "Schema is not a CDR schema",
+   96|      0|            )),
+   97|       |        }
+   98|      0|    }
+   99|       |
+  100|      2|    fn encoding_type(&self) -> Encoding {
+  101|      2|        Encoding::Cdr
+  102|      2|    }
+  103|       |
+  104|      1|    fn reset(&mut self) {
+  105|      1|        self.encoder = None;
+  106|      1|    }
+  107|       |
+  108|      0|    fn as_any(&self) -> &dyn std::any::Any {
+  109|      0|        self
+  110|      0|    }
+  111|       |}
+  112|       |
+  113|       |#[cfg(test)]
+  114|       |mod tests {
+  115|       |    use super::*;
+  116|       |
+  117|       |    #[test]
+  118|      1|    fn test_cdr_codec_creation() {
+  119|      1|        let codec = CdrCodec::new();
+  120|      1|        assert_eq!(codec.encoding_type(), Encoding::Cdr);
+  121|      1|    }
+  122|       |
+  123|       |    #[test]
+  124|      1|    fn test_cdr_codec_default() {
+  125|      1|        let codec = CdrCodec::default();
+  126|      1|        assert_eq!(codec.encoding_type(), Encoding::Cdr);
+  127|      1|    }
+  128|       |
+  129|       |    #[test]
+  130|      1|    fn test_cdr_codec_reset() {
+  131|      1|        let mut codec = CdrCodec::new();
+  132|       |
+  133|       |        // Get encoder to initialize it
+  134|      1|        let _enc = codec.encoder();
+  135|      1|        assert!(codec.encoder.is_some());
+  136|       |
+  137|       |        // Reset
+  138|      1|        codec.reset();
+  139|      1|        assert!(codec.encoder.is_none());
+  140|      1|    }
+  141|       |
+  142|       |    #[test]
+  143|      1|    fn test_cdr_codec_decode_invalid_schema() {
+  144|      1|        let codec = CdrCodec::new();
+  145|      1|        let schema = SchemaMetadata::protobuf("test.Type".to_string(), vec![1, 2, 3]);
+  146|       |
+  147|      1|        let result = codec.decode_dynamic(&[0x00, 0x00, 0x00, 0x00], &schema);
+  148|      1|        assert!(result.is_err());
+  149|      1|    }
+  150|       |}
+

@@ -1,0 +1,431 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/schema/ast.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! AST types for parsed ROS .msg schemas.
+    6|       |
+    7|       |use std::collections::HashMap;
+    8|       |
+    9|       |/// A parsed ROS message schema.
+   10|       |#[derive(Debug, Clone, PartialEq)]
+   11|       |pub struct MessageSchema {
+   12|       |    /// Schema name (e.g., "std_msgs/msg/Header" or just "Header")
+   13|       |    pub name: String,
+   14|       |    /// Package name (e.g., "std_msgs")
+   15|       |    pub package: Option<String>,
+   16|       |    /// All types defined in this schema (main type + nested types)
+   17|       |    pub types: HashMap<String, MessageType>,
+   18|       |}
+   19|       |
+   20|       |/// A message type definition with its fields.
+   21|       |#[derive(Debug, Clone, PartialEq)]
+   22|       |pub struct MessageType {
+   23|       |    /// Type name including package if available
+   24|       |    pub name: String,
+   25|       |    /// Ordered list of fields
+   26|       |    pub fields: Vec<Field>,
+   27|       |    /// Maximum alignment required for this type
+   28|       |    pub max_alignment: u64,
+   29|       |}
+   30|       |
+   31|       |/// A field in a message type.
+   32|       |#[derive(Debug, Clone, PartialEq)]
+   33|       |pub struct Field {
+   34|       |    /// Field name
+   35|       |    pub name: String,
+   36|       |    /// Field type
+   37|       |    pub type_name: FieldType,
+   38|       |}
+   39|       |
+   40|       |/// Field type - can be primitive, array, or nested message.
+   41|       |#[derive(Debug, Clone, PartialEq)]
+   42|       |pub enum FieldType {
+   43|       |    /// Primitive type
+   44|       |    Primitive(PrimitiveType),
+   45|       |    /// Array type
+   46|       |    Array {
+   47|       |        /// Base type (element type)
+   48|       |        base_type: Box<FieldType>,
+   49|       |        /// Array size (None = dynamic, Some(N) = fixed)
+   50|       |        size: Option<usize>,
+   51|       |    },
+   52|       |    /// Nested message type
+   53|       |    Nested(String),
+   54|       |}
+   55|       |
+   56|       |/// Primitive ROS types.
+   57|       |#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+   58|       |pub enum PrimitiveType {
+   59|       |    /// Boolean
+   60|       |    Bool,
+   61|       |    /// 8-bit signed integer
+   62|       |    Int8,
+   63|       |    /// 16-bit signed integer
+   64|       |    Int16,
+   65|       |    /// 32-bit signed integer
+   66|       |    Int32,
+   67|       |    /// 64-bit signed integer
+   68|       |    Int64,
+   69|       |    /// 8-bit unsigned integer
+   70|       |    UInt8,
+   71|       |    /// 16-bit unsigned integer
+   72|       |    UInt16,
+   73|       |    /// 32-bit unsigned integer
+   74|       |    UInt32,
+   75|       |    /// 64-bit unsigned integer
+   76|       |    UInt64,
+   77|       |    /// 32-bit float
+   78|       |    Float32,
+   79|       |    /// 64-bit float
+   80|       |    Float64,
+   81|       |    /// String
+   82|       |    String,
+   83|       |    /// Wide string (UTF-16)
+   84|       |    WString,
+   85|       |    /// Byte (alias for UInt8)
+   86|       |    Byte,
+   87|       |    /// Char (alias for Int8)
+   88|       |    Char,
+   89|       |    /// Time (ROS timestamp: sec:int32, nsec:uint32)
+   90|       |    Time,
+   91|       |    /// Duration (ROS duration: sec:int32, nsec:uint32)
+   92|       |    Duration,
+   93|       |}
+   94|       |
+   95|       |impl PrimitiveType {
+   96|       |    /// Get the alignment requirement for this primitive type.
+   97|    575|    pub fn alignment(self) -> u64 {
+   98|    575|        match self {
+   99|       |            PrimitiveType::Bool
+  100|       |            | PrimitiveType::Int8
+  101|       |            | PrimitiveType::UInt8
+  102|       |            | PrimitiveType::Byte
+  103|     17|            | PrimitiveType::Char => 1,
+  104|      6|            PrimitiveType::Int16 | PrimitiveType::UInt16 => 2,
+  105|    327|            PrimitiveType::Int32 | PrimitiveType::UInt32 | PrimitiveType::Float32 => 4,
+  106|     88|            PrimitiveType::Int64 | PrimitiveType::UInt64 | PrimitiveType::Float64 => 8,
+  107|    130|            PrimitiveType::String | PrimitiveType::WString => 4, // Length prefix is 4-byte aligned
+  108|      7|            PrimitiveType::Time | PrimitiveType::Duration => 4,  // 8 bytes total, 4-byte alignment
+  109|       |        }
+  110|    575|    }
+  111|       |
+  112|       |    /// Get the size in bytes for this primitive type, if fixed.
+  113|      0|    pub fn size(self) -> Option<usize> {
+  114|      0|        match self {
+  115|      0|            PrimitiveType::Bool => Some(1),
+  116|       |            PrimitiveType::Int8
+  117|       |            | PrimitiveType::UInt8
+  118|       |            | PrimitiveType::Byte
+  119|      0|            | PrimitiveType::Char => Some(1),
+  120|      0|            PrimitiveType::Int16 | PrimitiveType::UInt16 => Some(2),
+  121|      0|            PrimitiveType::Int32 | PrimitiveType::UInt32 | PrimitiveType::Float32 => Some(4),
+  122|      0|            PrimitiveType::Int64 | PrimitiveType::UInt64 | PrimitiveType::Float64 => Some(8),
+  123|      0|            PrimitiveType::String | PrimitiveType::WString => None, // Variable length
+  124|      0|            PrimitiveType::Time | PrimitiveType::Duration => Some(8), // sec:int32 + nsec:uint32
+  125|       |        }
+  126|      0|    }
+  127|       |
+  128|       |    /// Parse a primitive type from a string.
+  129|    375|    pub fn try_from_str(s: &str) -> Option<Self> {
+  130|    375|        match s {
+  131|    375|            "bool" | "boolean" => Some(PrimitiveType::Bool),
+                                   ^374         ^1
+  132|    374|            "int8" => Some(PrimitiveType::Int8),
+                                    ^1
+  133|    373|            "int16" => Some(PrimitiveType::Int16),
+                                     ^1
+  134|    372|            "int32" => Some(PrimitiveType::Int32),
+                                     ^64
+  135|    308|            "int64" => Some(PrimitiveType::Int64),
+                                     ^1
+  136|    307|            "uint8" => Some(PrimitiveType::UInt8),
+                                     ^14
+  137|    293|            "uint16" => Some(PrimitiveType::UInt16),
+                                      ^2
+  138|    291|            "uint32" => Some(PrimitiveType::UInt32),
+                                      ^42
+  139|    249|            "uint64" => Some(PrimitiveType::UInt64),
+                                      ^1
+  140|    248|            "float32" | "float" => Some(PrimitiveType::Float32),
+                                      ^246       ^2
+  141|    246|            "float64" | "double" => Some(PrimitiveType::Float64),
+                                      ^169        ^77
+  142|    169|            "string" => Some(PrimitiveType::String),
+                                      ^73
+  143|     96|            "wstring" => Some(PrimitiveType::WString),
+                                       ^0
+  144|     96|            "byte" => Some(PrimitiveType::Byte),
+                                    ^0
+  145|     96|            "char" => Some(PrimitiveType::Char),
+                                    ^0
+  146|     96|            "time" => Some(PrimitiveType::Time),
+                                    ^7
+  147|     89|            "duration" => Some(PrimitiveType::Duration),
+                                        ^0
+  148|     89|            _ => None,
+  149|       |        }
+  150|    375|    }
+  151|       |
+  152|       |    /// Convert to the core PrimitiveType.
+  153|    187|    pub fn to_core(self) -> crate::PrimitiveType {
+  154|    187|        match self {
+  155|      0|            PrimitiveType::Bool => crate::PrimitiveType::Bool,
+  156|      0|            PrimitiveType::Int8 => crate::PrimitiveType::Int8,
+  157|      0|            PrimitiveType::Int16 => crate::PrimitiveType::Int16,
+  158|     28|            PrimitiveType::Int32 => crate::PrimitiveType::Int32,
+  159|      0|            PrimitiveType::Int64 => crate::PrimitiveType::Int64,
+  160|     10|            PrimitiveType::UInt8 => crate::PrimitiveType::UInt8,
+  161|      0|            PrimitiveType::UInt16 => crate::PrimitiveType::UInt16,
+  162|     44|            PrimitiveType::UInt32 => crate::PrimitiveType::UInt32,
+  163|      0|            PrimitiveType::UInt64 => crate::PrimitiveType::UInt64,
+  164|      2|            PrimitiveType::Float32 => crate::PrimitiveType::Float32,
+  165|     69|            PrimitiveType::Float64 => crate::PrimitiveType::Float64,
+  166|     27|            PrimitiveType::String | PrimitiveType::WString => crate::PrimitiveType::String,
+  167|      0|            PrimitiveType::Byte | PrimitiveType::Char => crate::PrimitiveType::Byte,
+  168|      7|            PrimitiveType::Time | PrimitiveType::Duration => crate::PrimitiveType::Int64, // Fallback
+  169|       |        }
+  170|    187|    }
+  171|       |}
+  172|       |
+  173|       |impl FieldType {
+  174|       |    /// Get the alignment requirement for this field type.
+  175|    778|    pub fn alignment(&self) -> u64 {
+  176|    778|        match self {
+  177|    570|            FieldType::Primitive(p) => p.alignment(),
+  178|     68|            FieldType::Array { base_type, .. } => base_type.alignment(),
+  179|    140|            FieldType::Nested(_) => 4, // Nested structs have 4-byte alignment in CDR
+  180|       |        }
+  181|    778|    }
+  182|       |
+  183|       |    /// Check if this is a complex type (requires per-element alignment in arrays).
+  184|      3|    pub fn is_complex(&self) -> bool {
+  185|      2|        !matches!(
+  186|      2|            self,
+  187|       |            FieldType::Primitive(
+  188|       |                PrimitiveType::Bool
+  189|       |                    | PrimitiveType::Int8
+  190|       |                    | PrimitiveType::UInt8
+  191|       |                    | PrimitiveType::Byte
+  192|       |                    | PrimitiveType::Char
+  193|       |                    | PrimitiveType::Int16
+  194|       |                    | PrimitiveType::UInt16
+  195|       |                    | PrimitiveType::Int32
+  196|       |                    | PrimitiveType::UInt32
+  197|       |                    | PrimitiveType::Float32
+  198|       |                    | PrimitiveType::Int64
+  199|       |                    | PrimitiveType::UInt64
+  200|       |                    | PrimitiveType::Float64
+  201|       |            )
+  202|       |        )
+  203|      3|    }
+  204|       |}
+  205|       |
+  206|       |impl MessageSchema {
+  207|       |    /// Create an empty schema.
+  208|     98|    pub fn new(name: String) -> Self {
+  209|     98|        Self {
+  210|     98|            package: extract_package(&name),
+  211|     98|            name,
+  212|     98|            types: HashMap::new(),
+  213|     98|        }
+  214|     98|    }
+  215|       |
+  216|       |    /// Register a type in this schema.
+  217|    298|    pub fn add_type(&mut self, msg_type: MessageType) {
+  218|    298|        self.types.insert(msg_type.name.clone(), msg_type);
+  219|    298|    }
+  220|       |
+  221|       |    /// Look up a type by name.
+  222|     51|    pub fn get_type(&self, name: &str) -> Option<&MessageType> {
+  223|     51|        self.types.get(name)
+  224|     51|    }
+  225|       |
+  226|       |    /// Look up a type by name with variant resolution.
+  227|    118|    pub fn get_type_variants(&self, name: &str) -> Option<&MessageType> {
+  228|       |        // Try exact match first
+  229|    118|        if let Some(t) = self.types.get(name) {
+                                  ^101
+  230|    101|            return Some(t);
+  231|     17|        }
+  232|       |
+  233|       |        // Convert :: to / (IDL uses :: but we store with /)
+  234|     17|        let normalized_name = name.replace("::", "/");
+  235|       |
+  236|       |        // Try with normalized name
+  237|     17|        if let Some(t) = self.types.get(&normalized_name) {
+                                  ^0
+  238|      0|            return Some(t);
+  239|     17|        }
+  240|       |
+  241|       |        // Try with /msg/ suffix
+  242|     17|        if !normalized_name.contains("/msg/") {
+  243|     16|            let with_msg = normalized_name.replace('/', "/msg/");
+  244|     16|            if let Some(t) = self.types.get(&with_msg) {
+                                      ^2
+  245|      2|                return Some(t);
+  246|     14|            }
+  247|      1|        }
+  248|       |
+  249|       |        // Try without /msg/ suffix
+  250|     15|        if normalized_name.contains("/msg/") {
+  251|      1|            let without_msg = normalized_name.replace("/msg/", "/");
+  252|      1|            if let Some(t) = self.types.get(&without_msg) {
+  253|      1|                return Some(t);
+  254|      0|            }
+  255|     14|        }
+  256|       |
+  257|       |        // Try short name match
+  258|     14|        if !normalized_name.contains('/') {
+  259|     30|            for (full_name, msg_type) in &self.types {
+  260|     30|                if full_name.ends_with(&format!("/{normalized_name}"))
+  261|     16|                    || full_name.ends_with(&format!("/msg/{normalized_name}"))
+  262|     16|                    || full_name.as_str() == normalized_name
+  263|       |                {
+  264|     14|                    return Some(msg_type);
+  265|     16|                }
+  266|       |            }
+  267|      0|        }
+  268|       |
+  269|      0|        None
+  270|    118|    }
+  271|       |
+  272|       |    /// Rename all types in the schema by applying a package name transformation.
+  273|       |    ///
+  274|       |    /// This updates:
+  275|       |    /// - The schema's own name and package
+  276|       |    /// - All type names in the types HashMap
+  277|       |    /// - All nested type references in field types
+  278|       |    ///
+  279|       |    /// # Arguments
+  280|       |    ///
+  281|       |    /// * `old_package` - The old package name (e.g., "genie_msgs")
+  282|       |    /// * `new_package` - The new package name (e.g., "archebase")
+  283|      0|    pub fn rename_package(&mut self, old_package: &str, new_package: &str) {
+  284|       |        // Update schema name
+  285|      0|        self.name = self
+  286|      0|            .name
+  287|      0|            .replace(&format!("{old_package}/"), &format!("{new_package}/"));
+  288|      0|        self.name = self
+  289|      0|            .name
+  290|      0|            .replace(&format!("{old_package}::"), &format!("{new_package}::"));
+  291|       |
+  292|       |        // Update package field
+  293|      0|        if self.package.as_deref() == Some(old_package) {
+  294|      0|            self.package = Some(new_package.to_string());
+  295|      0|        }
+  296|       |
+  297|       |        // Build new types HashMap with updated keys and values
+  298|      0|        let mut new_types = HashMap::new();
+  299|      0|        for (old_key, mut msg_type) in self.types.drain() {
+  300|       |            // Update the type's name
+  301|      0|            let new_key = old_key.replace(&format!("{old_package}/"), &format!("{new_package}/"));
+  302|      0|            let new_key = new_key.replace(&format!("{old_package}::"), &format!("{new_package}::"));
+  303|       |
+  304|      0|            msg_type.name = msg_type
+  305|      0|                .name
+  306|      0|                .replace(&format!("{old_package}/"), &format!("{new_package}/"));
+  307|      0|            msg_type.name = msg_type
+  308|      0|                .name
+  309|      0|                .replace(&format!("{old_package}::"), &format!("{new_package}::"));
+  310|       |
+  311|       |            // Update field type references
+  312|      0|            for field in &mut msg_type.fields {
+  313|      0|                Self::rename_field_type(&mut field.type_name, old_package, new_package);
+  314|      0|            }
+  315|       |
+  316|      0|            new_types.insert(new_key, msg_type);
+  317|       |        }
+  318|      0|        self.types = new_types;
+  319|      0|    }
+  320|       |
+  321|       |    /// Rename package in a field type recursively.
+  322|      0|    fn rename_field_type(field_type: &mut FieldType, old_package: &str, new_package: &str) {
+  323|      0|        match field_type {
+  324|      0|            FieldType::Nested(type_name) => {
+  325|      0|                *type_name =
+  326|      0|                    type_name.replace(&format!("{old_package}/"), &format!("{new_package}/"));
+  327|      0|                *type_name =
+  328|      0|                    type_name.replace(&format!("{old_package}::"), &format!("{new_package}::"));
+  329|      0|            }
+  330|      0|            FieldType::Array { base_type, .. } => {
+  331|      0|                Self::rename_field_type(base_type, old_package, new_package);
+  332|      0|            }
+  333|      0|            FieldType::Primitive(_) => {}
+  334|       |        }
+  335|      0|    }
+  336|       |}
+  337|       |
+  338|       |impl MessageType {
+  339|       |    /// Create a new message type.
+  340|    334|    pub fn new(name: String) -> Self {
+  341|    334|        Self {
+  342|    334|            name,
+  343|    334|            fields: Vec::new(),
+  344|    334|            max_alignment: 1,
+  345|    334|        }
+  346|    334|    }
+  347|       |
+  348|       |    /// Add a field to this message type.
+  349|    710|    pub fn add_field(&mut self, field: Field) {
+  350|       |        // Update max alignment
+  351|    710|        let field_alignment = field.type_name.alignment();
+  352|    710|        self.max_alignment = self.max_alignment.max(field_alignment);
+  353|    710|        self.fields.push(field);
+  354|    710|    }
+  355|       |}
+  356|       |
+  357|       |/// Extract package name from a fully-qualified type name.
+  358|     98|fn extract_package(name: &str) -> Option<String> {
+  359|     98|    if name.contains('/') {
+  360|     67|        let parts: Vec<&str> = name.split('/').collect();
+  361|     67|        if parts.len() >= 2 {
+  362|     67|            Some(parts[0].to_string())
+  363|       |        } else {
+  364|      0|            None
+  365|       |        }
+  366|       |    } else {
+  367|     31|        None
+  368|       |    }
+  369|     98|}
+  370|       |
+  371|       |#[cfg(test)]
+  372|       |mod tests {
+  373|       |    use super::*;
+  374|       |
+  375|       |    #[test]
+  376|      1|    fn test_primitive_type_from_str() {
+  377|      1|        assert_eq!(
+  378|      1|            PrimitiveType::try_from_str("int32"),
+  379|       |            Some(PrimitiveType::Int32)
+  380|       |        );
+  381|      1|        assert_eq!(
+  382|      1|            PrimitiveType::try_from_str("float64"),
+  383|       |            Some(PrimitiveType::Float64)
+  384|       |        );
+  385|      1|        assert_eq!(PrimitiveType::try_from_str("unknown"), None);
+  386|      1|    }
+  387|       |
+  388|       |    #[test]
+  389|      1|    fn test_primitive_type_alignment() {
+  390|      1|        assert_eq!(PrimitiveType::Bool.alignment(), 1);
+  391|      1|        assert_eq!(PrimitiveType::Int16.alignment(), 2);
+  392|      1|        assert_eq!(PrimitiveType::Int32.alignment(), 4);
+  393|      1|        assert_eq!(PrimitiveType::Int64.alignment(), 8);
+  394|      1|        assert_eq!(PrimitiveType::String.alignment(), 4);
+  395|      1|    }
+  396|       |
+  397|       |    #[test]
+  398|      1|    fn test_field_type_is_complex() {
+  399|      1|        assert!(!FieldType::Primitive(PrimitiveType::Int32).is_complex());
+  400|      1|        assert!(FieldType::Primitive(PrimitiveType::String).is_complex());
+  401|      1|        assert!(FieldType::Array {
+  402|      1|            base_type: Box::new(FieldType::Primitive(PrimitiveType::Int32)),
+  403|      1|            size: None,
+  404|      1|        }
+  405|      1|        .is_complex());
+  406|      1|    }
+  407|       |}
+

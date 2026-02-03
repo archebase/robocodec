@@ -481,5 +481,77 @@ mod tests {
         assert_eq!(FileFormat::Mcap.extension(), "mcap");
         assert_eq!(FileFormat::Bag.mime_type(), "application/x-rosbag");
         assert_eq!(format!("{}", FileFormat::Mcap), "MCAP");
+        assert_eq!(format!("{}", FileFormat::Bag), "ROS1 Bag");
+        assert_eq!(format!("{}", FileFormat::Unknown), "Unknown");
+        assert_eq!(FileFormat::Unknown.extension(), "");
+        assert_eq!(FileFormat::Unknown.mime_type(), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_decoded_message_result_partial_timestamps() {
+        use crate::core::DecodedMessage;
+
+        let message = DecodedMessage::new();
+        let channel = ChannelInfo::new(0, "/test", "test_msgs/Test");
+        let result = DecodedMessageResult::new(message, channel, Some(1000), None);
+
+        // Only log_time is Some
+        assert_eq!(result.log_time, Some(1000));
+        assert_eq!(result.publish_time, None);
+        assert!(!result.has_timestamps()); // Requires both
+    }
+
+    #[test]
+    fn test_raw_message_empty() {
+        let msg = RawMessage::new(1, 1000, 900, vec![]);
+        assert!(msg.is_empty());
+        assert_eq!(msg.len(), 0);
+    }
+
+    #[test]
+    fn test_channel_info_builder_methods() {
+        let info = ChannelInfo::new(1, "/test", "std_msgs/String")
+            .with_schema_data(vec![1, 2, 3], "ros2msg")
+            .with_callerid("/node123");
+
+        assert_eq!(info.schema_data, Some(vec![1, 2, 3]));
+        assert_eq!(info.schema_encoding, Some("ros2msg".to_string()));
+        assert_eq!(info.callerid, Some("/node123".to_string()));
+    }
+
+    #[test]
+    fn test_timestamped_decoded_message() {
+        use crate::core::DecodedMessage;
+
+        let message = DecodedMessage::new();
+        let timestamped = TimestampedDecodedMessage::new(message, 1000, 900);
+
+        assert_eq!(timestamped.log_time, 1000);
+        assert_eq!(timestamped.publish_time, 900);
+    }
+
+    #[test]
+    fn test_timestamped_decoded_message_into_message() {
+        use crate::core::DecodedMessage;
+
+        let message = DecodedMessage::new();
+        let timestamped = TimestampedDecodedMessage::new(message, 1000, 900);
+        let _recovered = timestamped.into_message();
+    }
+
+    #[test]
+    fn test_message_metadata_sequence() {
+        let mut meta = MessageMetadata::new(1, 1000, 900, 100, 50);
+        meta.sequence = Some(42);
+
+        assert_eq!(meta.sequence, Some(42));
+    }
+
+    #[test]
+    fn test_file_info_empty_channels() {
+        let info = FileInfo::new("test.mcap", FileFormat::Mcap);
+        assert!(!info.has_topic("/any"));
+        assert!(info.channels_for_topic("/any").is_empty());
+        assert_eq!(info.topic_count(), 0);
     }
 }

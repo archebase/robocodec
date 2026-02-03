@@ -1,0 +1,98 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/bin/robocodec.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! # Robocodec CLI
+    6|       |//!
+    7|       |//! Unified command-line tool for robotics data file operations.
+    8|       |//!
+    9|       |//! ## Usage
+   10|       |//!
+   11|       |//! ```sh
+   12|       |//! # Show file information
+   13|       |//! robocodec inspect info file.mcap
+   14|       |//!
+   15|       |//! # List topics
+   16|       |//! robocodec inspect topics file.bag
+   17|       |//!
+   18|       |//! # Rewrite a file (same format)
+   19|       |//! robocodec rewrite input.bag output.bag
+   20|       |//!
+   21|       |//! # Extract data
+   22|       |//! robocodec extract topics input.mcap output.mcap /camera,/lidar
+   23|       |//!
+   24|       |//! # Search for patterns
+   25|       |//! robocodec search topics input.mcap sensor
+   26|       |//! ```
+   27|       |
+   28|       |mod cmd;
+   29|       |mod common;
+   30|       |
+   31|       |use std::process;
+   32|       |
+   33|       |use clap::{Parser, Subcommand};
+   34|       |use cmd::{ExtractCmd, InspectCmd, RewriteCmd, SchemaCmd, SearchCmd};
+   35|       |use common::Result;
+   36|       |
+   37|       |/// Robocodec - Robotics data format toolkit
+   38|       |///
+   39|       |/// Work with MCAP and ROS bag files through a unified interface.
+   40|       |/// Format auto-detection means you rarely need to specify file types.
+   41|       |#[derive(Parser, Clone)]
+   42|       |#[command(name = "robocodec")]
+   43|       |#[command(about = "Robotics data format toolkit for MCAP and ROS bag files", long_about = None)]
+   44|       |#[command(version = env!("CARGO_PKG_VERSION"))]
+   45|       |#[command(author = "ArcheBase")]
+   46|       |struct Cli {
+   47|       |    #[command(subcommand)]
+   48|       |    command: Commands,
+   49|       |}
+   50|       |
+   51|       |/// Available commands
+   52|       |#[derive(Subcommand, Clone)]
+   53|       |enum Commands {
+   54|       |    /// Inspect file contents (info, topics, schemas, messages)
+   55|       |    #[command(subcommand)]
+   56|       |    Inspect(InspectCmd),
+   57|       |
+   58|       |    /// Rewrite a file (same format only)
+   59|       |    Rewrite(RewriteCmd),
+   60|       |
+   61|       |    /// Extract subsets of data (by topic, time, count)
+   62|       |    #[command(subcommand)]
+   63|       |    Extract(ExtractCmd),
+   64|       |
+   65|       |    /// Search within files (bytes, strings, topics, fields)
+   66|       |    #[command(subcommand)]
+   67|       |    Search(SearchCmd),
+   68|       |
+   69|       |    /// Schema operations (list, show, validate, diff)
+   70|       |    #[command(subcommand)]
+   71|       |    Schema(SchemaCmd),
+   72|       |}
+   73|       |
+   74|     25|fn run() -> Result<()> {
+   75|     25|    let cli = Cli::parse();
+   76|       |
+   77|     25|    match cli.command {
+   78|     22|        Commands::Inspect(cmd) => cmd.run(),
+   79|      2|        Commands::Rewrite(cmd) => cmd.run(),
+   80|      0|        Commands::Extract(cmd) => cmd.run(),
+   81|      0|        Commands::Search(cmd) => cmd.run(),
+   82|      1|        Commands::Schema(cmd) => cmd.run(),
+   83|       |    }
+   84|     25|}
+   85|       |
+   86|     25|fn main() {
+   87|     25|    let result = run();
+   88|       |
+   89|     25|    if let Err(e) = result {
+                             ^13
+   90|     13|        eprintln!("Error: {e}");
+   91|     13|        process::exit(1);
+   92|     12|    }
+   93|     12|}
+

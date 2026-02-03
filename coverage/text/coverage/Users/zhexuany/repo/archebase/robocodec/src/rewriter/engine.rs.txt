@@ -1,0 +1,745 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/rewriter/engine.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! MCAP rewrite engine orchestrator.
+    6|       |//!
+    7|       |//! This module provides the [`McapRewriteEngine`] which coordinates
+    8|       |//! message decoding, schema transformation, and re-encoding for the
+    9|       |//! MCAP rewriter.
+   10|       |
+   11|       |use std::collections::HashMap;
+   12|       |
+   13|       |use crate::core::Result;
+   14|       |use crate::encoding::{CodecFactory, ProtobufSchemaTransformer, SchemaMetadata};
+   15|       |use crate::io::formats::mcap::reader::{McapReader, RawMessage};
+   16|       |use crate::io::ChannelInfo;
+   17|       |use crate::transform::MultiTransform;
+   18|       |
+   19|       |/// Extract package name from a protobuf type name.
+   20|       |///
+   21|       |/// # Arguments
+   22|       |///
+   23|       |/// * `type_name` - Full type name (e.g., "pkg.foo.Bar" or ".pkg.foo.Bar")
+   24|       |///
+   25|       |/// # Returns
+   26|       |///
+   27|       |/// Package name (e.g., "pkg.foo") or empty string if not found
+   28|      7|fn extract_protobuf_package(type_name: &str) -> String {
+   29|       |    // Remove leading dot if present
+   30|      7|    let name = type_name.strip_prefix('.').unwrap_or(type_name);
+   31|       |
+   32|       |    // For "pkg.foo.Bar" or "pkg.Bar", extract "pkg.foo" or "pkg"
+   33|      7|    let parts: Vec<&str> = name.split('.').collect();
+   34|      7|    if parts.len() >= 2 {
+   35|       |        // Return everything except the last part (the message name)
+   36|      5|        parts[..parts.len() - 1].join(".")
+   37|       |    } else {
+   38|      2|        String::new()
+   39|       |    }
+   40|      7|}
+   41|       |
+   42|       |/// Extract message name from a protobuf type name.
+   43|       |///
+   44|       |/// # Arguments
+   45|       |///
+   46|       |/// * `type_name` - Full type name (e.g., "pkg.foo.Bar" or ".pkg.foo.Bar")
+   47|       |///
+   48|       |/// # Returns
+   49|       |///
+   50|       |/// Message name (e.g., "Bar") or empty string if not found
+   51|      0|fn extract_protobuf_message_name(type_name: &str) -> String {
+   52|       |    // Remove leading dot if present
+   53|      0|    let name = type_name.strip_prefix('.').unwrap_or(type_name);
+   54|       |
+   55|       |    // For "pkg.foo.Bar", extract "Bar"
+   56|      0|    let parts: Vec<&str> = name.split('.').collect();
+   57|      0|    if !parts.is_empty() {
+   58|      0|        parts.last().unwrap_or(&"").to_string()
+   59|       |    } else {
+   60|      0|        String::new()
+   61|       |    }
+   62|      0|}
+   63|       |
+   64|       |/// Validate that a protobuf message name is valid.
+   65|       |///
+   66|       |/// Protobuf message names must be valid identifiers:
+   67|       |/// - Start with a letter or underscore
+   68|       |/// - Contain only letters, digits, and underscores
+   69|       |///
+   70|       |/// # Arguments
+   71|       |///
+   72|       |/// * `message_name` - The message name to validate
+   73|       |/// * `full_type_name` - The full type name (for error reporting)
+   74|       |///
+   75|       |/// # Returns
+   76|       |///
+   77|       |/// Ok(()) if valid, Err with details if invalid
+   78|      0|fn validate_protobuf_message_name(message_name: &str, full_type_name: &str) -> Result<()> {
+   79|      0|    if message_name.is_empty() {
+   80|      0|        return Err(crate::core::CodecError::invalid_schema(
+   81|      0|            full_type_name,
+   82|      0|            "Message name cannot be empty",
+   83|      0|        ));
+   84|      0|    }
+   85|       |
+   86|       |    // Check first character is letter or underscore
+   87|      0|    let first_char = message_name.chars().next().unwrap();
+   88|      0|    if !first_char.is_alphabetic() && first_char != '_' {
+   89|      0|        return Err(crate::core::CodecError::invalid_schema(
+   90|      0|            full_type_name,
+   91|      0|            format!(
+   92|      0|                "Invalid protobuf message name '{full_type_name}': must start with a letter or underscore, found '{first_char}'"
+   93|      0|            ),
+   94|      0|        ));
+   95|      0|    }
+   96|       |
+   97|       |    // Check all characters are valid (letters, digits, underscore only)
+   98|      0|    for (idx, ch) in message_name.chars().enumerate() {
+   99|      0|        if !ch.is_alphanumeric() && ch != '_' {
+  100|      0|            return Err(crate::core::CodecError::invalid_schema(
+  101|      0|                full_type_name,
+  102|      0|                format!(
+  103|      0|                    "Invalid protobuf message name '{full_type_name}': character '{ch}' at position {idx} is not allowed (only letters, digits, and underscore '_' are allowed in protobuf message names)"
+  104|      0|                ),
+  105|      0|            ));
+  106|      0|        }
+  107|       |    }
+  108|       |
+  109|      0|    Ok(())
+  110|      0|}
+  111|       |
+  112|       |/// Statistics from MCAP message rewriting operations.
+  113|       |#[derive(Debug, Clone, Default)]
+  114|       |pub struct McapRewriteStats {
+  115|       |    /// Total messages processed
+  116|       |    pub message_count: u64,
+  117|       |    /// Messages successfully re-encoded
+  118|       |    pub reencoded_count: u64,
+  119|       |    /// Messages passed through without re-encoding
+  120|       |    pub passthrough_count: u64,
+  121|       |    /// Messages that failed to decode
+  122|       |    pub decode_failures: u64,
+  123|       |    /// Messages that failed to encode
+  124|       |    pub encode_failures: u64,
+  125|       |    /// Number of topics renamed
+  126|       |    pub topics_renamed: u64,
+  127|       |    /// Number of types renamed
+  128|       |    pub types_renamed: u64,
+  129|       |}
+  130|       |
+  131|       |/// Message rewrite engine that orchestrates decode-transform-encode flow.
+  132|       |///
+  133|       |/// This engine:
+  134|       |/// 1. Detects message encoding from channel metadata
+  135|       |/// 2. Selects appropriate codec (CDR, Protobuf, JSON)
+  136|       |/// 3. Applies schema transformations from the pipeline
+  137|       |/// 4. Decodes and re-encodes messages
+  138|       |/// 5. Writes output to the MCAP writer
+  139|       |pub struct McapRewriteEngine {
+  140|       |    /// Codec factory for creating codec instances
+  141|       |    codec_factory: CodecFactory,
+  142|       |    /// Statistics
+  143|       |    stats: McapRewriteStats,
+  144|       |    /// Cached schemas indexed by transformed type name
+  145|       |    schemas: HashMap<String, SchemaMetadata>,
+  146|       |    /// Original schema data indexed by channel ID
+  147|       |    channel_schemas: HashMap<u16, SchemaMetadata>,
+  148|       |    /// Transformed channel topics
+  149|       |    channel_topics: HashMap<u16, String>,
+  150|       |}
+  151|       |
+  152|       |impl McapRewriteEngine {
+  153|       |    /// Create a new message rewrite engine.
+  154|      6|    pub fn new() -> Self {
+  155|      6|        Self {
+  156|      6|            codec_factory: CodecFactory::new(),
+  157|      6|            stats: McapRewriteStats::default(),
+  158|      6|            schemas: HashMap::new(),
+  159|      6|            channel_schemas: HashMap::new(),
+  160|      6|            channel_topics: HashMap::new(),
+  161|      6|        }
+  162|      6|    }
+  163|       |
+  164|       |    /// Get the current statistics.
+  165|      1|    pub fn stats(&self) -> &McapRewriteStats {
+  166|      1|        &self.stats
+  167|      1|    }
+  168|       |
+  169|       |    /// Take the statistics, resetting the internal counter.
+  170|      0|    pub fn take_stats(&mut self) -> McapRewriteStats {
+  171|      0|        std::mem::take(&mut self.stats)
+  172|      0|    }
+  173|       |
+  174|       |    /// Get the number of schemas prepared.
+  175|      0|    pub fn schema_count(&self) -> usize {
+  176|      0|        self.schemas.len()
+  177|      0|    }
+  178|       |
+  179|       |    /// Prepare schemas for rewriting.
+  180|       |    ///
+  181|       |    /// This phase:
+  182|       |    /// 1. Parses all schemas from the input MCAP
+  183|       |    /// 2. Applies transformations from the pipeline (including topic-specific type transforms)
+  184|       |    /// 3. Caches the transformed schemas for use during message processing
+  185|       |    ///
+  186|       |    /// # Arguments
+  187|       |    ///
+  188|       |    /// * `reader` - The MCAP reader
+  189|       |    /// * `pipeline` - Optional transform pipeline to apply
+  190|      3|    pub fn prepare_schemas(
+  191|      3|        &mut self,
+  192|      3|        reader: &McapReader,
+  193|      3|        pipeline: Option<&MultiTransform>,
+  194|      3|    ) -> Result<()> {
+  195|     11|        for (channel_id, channel) in reader.channels() {
+                                                   ^3     ^3
+  196|       |            // Detect encoding
+  197|     11|            let encoding = self
+  198|     11|                .codec_factory
+  199|     11|                .detect_encoding(&channel.encoding, channel.schema_encoding.as_deref());
+  200|       |
+  201|       |            // Create schema metadata from channel info
+  202|     11|            let schema = self.create_schema_metadata(channel, &encoding)?;
+                                                                                      ^0
+  203|       |
+  204|       |            // Store original schema for this channel (before transformation)
+  205|     11|            self.channel_schemas.insert(*channel_id, schema.clone());
+  206|       |
+  207|       |            // Apply transformations with topic context if pipeline provided
+  208|     11|            let transformed_schema = if let Some(p) = pipeline {
+                                                               ^10
+  209|     10|                self.apply_transformations_with_topic(schema, &channel.topic, p)?
+                                                                                              ^0
+  210|       |            } else {
+  211|      1|                schema
+  212|       |            };
+  213|       |
+  214|       |            // Cache by channel_id to support topic-specific type transforms
+  215|       |            // (same source type can map to different target types based on topic)
+  216|     11|            self.schemas
+  217|     11|                .insert(channel_id.to_string(), transformed_schema);
+  218|       |
+  219|       |            // Store transformed topic
+  220|     11|            let transformed_topic = if let Some(p) = pipeline {
+                                                              ^10
+  221|     10|                p.transform_topic(&channel.topic)
+  222|     10|                    .unwrap_or_else(|| channel.topic.clone())
+                                                     ^0            ^0
+  223|       |            } else {
+  224|      1|                channel.topic.clone()
+  225|       |            };
+  226|     11|            self.channel_topics.insert(*channel_id, transformed_topic);
+  227|       |
+  228|       |            // Track transformation statistics using topic context
+  229|     11|            if let Some(p) = pipeline {
+                                      ^10
+  230|     10|                let original_topic = &channel.topic;
+  231|     10|                let original_type = &channel.message_type;
+  232|       |
+  233|     10|                if p.transform_topic(original_topic).as_deref() != Some(original_topic) {
+  234|      0|                    self.stats.topics_renamed += 1;
+  235|     10|                }
+  236|       |
+  237|       |                // Use topic-aware type transformation for accurate statistics
+  238|     10|                let (transformed_type, _) =
+  239|     10|                    p.transform_type_with_topic(original_topic, original_type, None);
+  240|     10|                if transformed_type != *original_type {
+  241|      0|                    self.stats.types_renamed += 1;
+  242|     10|                }
+  243|      1|            }
+  244|       |        }
+  245|       |
+  246|      3|        Ok(())
+  247|      3|    }
+  248|       |
+  249|       |    /// Create schema metadata from channel information.
+  250|     11|    fn create_schema_metadata(
+  251|     11|        &self,
+  252|     11|        channel: &ChannelInfo,
+  253|     11|        encoding: &crate::Encoding,
+  254|     11|    ) -> Result<SchemaMetadata> {
+  255|     11|        match encoding {
+  256|       |            crate::Encoding::Cdr => {
+  257|      2|                let schema_text = channel
+  258|      2|                    .schema
+  259|      2|                    .as_ref()
+  260|      2|                    .ok_or_else(|| {
+                                                 ^0
+  261|      0|                        crate::core::CodecError::invalid_schema(
+  262|      0|                            &channel.message_type,
+  263|       |                            "No schema data for CDR channel",
+  264|       |                        )
+  265|      0|                    })?
+  266|      2|                    .clone();
+  267|      2|                Ok(SchemaMetadata::cdr(
+  268|      2|                    channel.message_type.clone(),
+  269|      2|                    schema_text,
+  270|      2|                ))
+  271|       |            }
+  272|       |            crate::Encoding::Protobuf => {
+  273|      9|                let schema_data = channel
+  274|      9|                    .schema_data
+  275|      9|                    .as_ref()
+  276|      9|                    .ok_or_else(|| {
+                                                 ^0
+  277|      0|                        crate::core::CodecError::invalid_schema(
+  278|      0|                            &channel.message_type,
+  279|       |                            "No schema data for protobuf channel",
+  280|       |                        )
+  281|      0|                    })?
+  282|      9|                    .clone();
+  283|      9|                Ok(SchemaMetadata::protobuf(
+  284|      9|                    channel.message_type.clone(),
+  285|      9|                    schema_data,
+  286|      9|                ))
+  287|       |            }
+  288|       |            crate::Encoding::Json => {
+  289|      0|                let schema_text = channel
+  290|      0|                    .schema
+  291|      0|                    .as_ref()
+  292|      0|                    .ok_or_else(|| {
+  293|      0|                        crate::core::CodecError::invalid_schema(
+  294|      0|                            &channel.message_type,
+  295|       |                            "No schema data for JSON channel",
+  296|       |                        )
+  297|      0|                    })?
+  298|      0|                    .clone();
+  299|      0|                Ok(SchemaMetadata::json(
+  300|      0|                    channel.message_type.clone(),
+  301|      0|                    schema_text,
+  302|      0|                ))
+  303|       |            }
+  304|       |        }
+  305|     11|    }
+  306|       |
+  307|       |    /// Apply transformations to a schema with topic context.
+  308|       |    ///
+  309|       |    /// This applies type transformations that may be topic-specific,
+  310|       |    /// allowing the same source type to map to different target types
+  311|       |    /// based on the channel topic.
+  312|     10|    fn apply_transformations_with_topic(
+  313|     10|        &self,
+  314|     10|        schema: SchemaMetadata,
+  315|     10|        topic: &str,
+  316|     10|        pipeline: &MultiTransform,
+  317|     10|    ) -> Result<SchemaMetadata> {
+  318|       |        // Get the original schema text based on the variant type
+  319|     10|        let original_schema_text = match &schema {
+  320|      1|            SchemaMetadata::Cdr { schema_text, .. } => Some(schema_text.as_str()),
+  321|      9|            SchemaMetadata::Protobuf { schema_text, .. } => schema_text.as_deref(),
+  322|      0|            SchemaMetadata::Json { schema_text, .. } => Some(schema_text.as_str()),
+  323|       |        };
+  324|       |
+  325|       |        // Apply topic-aware type transformation
+  326|     10|        let (new_type_name, new_schema_text) =
+  327|     10|            pipeline.transform_type_with_topic(topic, schema.type_name(), original_schema_text);
+  328|       |
+  329|       |        // If type didn't change, return original schema
+  330|     10|        let original_type_name = schema.type_name().to_string();
+  331|     10|        if new_type_name == original_type_name && new_schema_text.is_none() {
+  332|      9|            return Ok(schema);
+  333|      1|        }
+  334|       |
+  335|       |        // Create a new schema with the transformed type name and schema text
+  336|      1|        match schema {
+  337|       |            SchemaMetadata::Cdr { .. } => {
+  338|      1|                let text = new_schema_text
+  339|      1|                    .or_else(|| original_schema_text.map(|s| s.to_string()))
+                                              ^0                   ^0      ^0^0
+  340|      1|                    .unwrap_or_default();
+  341|      1|                Ok(SchemaMetadata::cdr(new_type_name, text))
+  342|       |            }
+  343|       |            SchemaMetadata::Protobuf {
+  344|       |                type_name: _,
+  345|      0|                file_descriptor_set,
+  346|      0|                ref schema_text,
+  347|       |            } => {
+  348|       |                // For protobuf, we need to transform the FileDescriptorSet
+  349|       |                // to update package names and/or message type names
+  350|      0|                let transformer = ProtobufSchemaTransformer::new();
+  351|       |
+  352|       |                // Extract package and message names from type names
+  353|       |                // Format: "pkg.foo.Bar" -> package: "pkg.foo", message: "Bar"
+  354|      0|                let old_package = extract_protobuf_package(&original_type_name);
+  355|      0|                let new_package = extract_protobuf_package(&new_type_name);
+  356|      0|                let old_message_name = extract_protobuf_message_name(&original_type_name);
+  357|      0|                let new_message_name = extract_protobuf_message_name(&new_type_name);
+  358|       |
+  359|       |                // Detect ambiguous type transformations
+  360|       |                // If target has more dot-separated elements than source, it's ambiguous
+  361|       |                // Example: "pkg.foo.Bar" -> "pkg.foo.baz.qux"
+  362|       |                // The intent could be:
+  363|       |                //   - package: "pkg.foo", message: "baz.qux" (contains . - invalid)
+  364|       |                //   - package: "pkg.foo.baz", message: "qux" (changes package structure)
+  365|       |                // Both are problematic, so we require the user to clarify
+  366|      0|                let old_element_count = original_type_name.split('.').count();
+  367|      0|                let new_element_count = new_type_name.split('.').count();
+  368|      0|                if new_element_count > old_element_count && !old_package.is_empty() {
+  369|      0|                    return Err(crate::core::CodecError::invalid_schema(
+  370|      0|                        &new_type_name,
+  371|      0|                        format!(
+  372|      0|                            "Ambiguous protobuf type transformation: '{}' has more dot-separated elements than '{}'. \
+  373|      0|                            Please clarify: use '_' instead of '.' in message names (e.g., 'pkg.foo.baz_qux'), \
+  374|      0|                            or use a format that doesn't change the package structure.",
+  375|      0|                            &new_type_name, &original_type_name
+  376|      0|                        ),
+  377|      0|                    ));
+  378|      0|                }
+  379|       |
+  380|       |                // Validate the new message name is valid for protobuf
+  381|       |                // (must only contain letters, digits, and underscore)
+  382|      0|                if !new_message_name.is_empty() && new_message_name != old_message_name {
+  383|      0|                    validate_protobuf_message_name(&new_message_name, &new_type_name)?;
+  384|      0|                }
+  385|       |
+  386|       |                // Use the common package for renaming operations
+  387|      0|                let common_package = if !old_package.is_empty() {
+  388|      0|                    &old_package
+  389|      0|                } else if !new_package.is_empty() {
+  390|      0|                    &new_package
+  391|       |                } else {
+  392|      0|                    &String::new()
+  393|       |                };
+  394|       |
+  395|       |                // Step 1: Transform package if changed
+  396|      0|                let transformed_fds = if !old_package.is_empty()
+  397|      0|                    && !new_package.is_empty()
+  398|      0|                    && old_package != new_package
+  399|       |                {
+  400|      0|                    transformer.transform_file_descriptor_set(
+  401|      0|                        &file_descriptor_set,
+  402|      0|                        &old_package,
+  403|      0|                        &new_package,
+  404|      0|                    )?
+  405|       |                } else {
+  406|      0|                    file_descriptor_set
+  407|       |                };
+  408|       |
+  409|       |                // Step 2: Rename message type if changed
+  410|      0|                let transformed_fds = if !old_message_name.is_empty()
+  411|      0|                    && !new_message_name.is_empty()
+  412|      0|                    && old_message_name != new_message_name
+  413|       |                {
+  414|      0|                    transformer.rename_message_type_in_fds(
+  415|      0|                        &transformed_fds,
+  416|      0|                        &old_message_name,
+  417|      0|                        &new_message_name,
+  418|      0|                        common_package,
+  419|      0|                    )?
+  420|       |                } else {
+  421|      0|                    transformed_fds
+  422|       |                };
+  423|       |
+  424|      0|                Ok(SchemaMetadata::Protobuf {
+  425|      0|                    type_name: new_type_name,
+  426|      0|                    file_descriptor_set: transformed_fds,
+  427|      0|                    schema_text: schema_text.clone(),
+  428|      0|                })
+  429|       |            }
+  430|       |            SchemaMetadata::Json { .. } => {
+  431|      0|                let text = new_schema_text
+  432|      0|                    .or_else(|| original_schema_text.map(|s| s.to_string()))
+  433|      0|                    .unwrap_or_default();
+  434|      0|                Ok(SchemaMetadata::json(new_type_name, text))
+  435|       |            }
+  436|       |        }
+  437|     10|    }
+  438|       |
+  439|       |    /// Get the transformed topic for a channel.
+  440|      0|    pub fn get_transformed_topic(&self, channel_id: u16) -> Option<&str> {
+  441|      0|        self.channel_topics.get(&channel_id).map(|s| s.as_str())
+  442|      0|    }
+  443|       |
+  444|       |    /// Get the transformed schema for a channel.
+  445|      0|    pub fn get_transformed_schema(&self, channel_id: u16) -> Option<&SchemaMetadata> {
+  446|       |        // Schemas are keyed by channel_id to support topic-specific type transforms
+  447|      0|        self.schemas.get(&channel_id.to_string())
+  448|      0|    }
+  449|       |
+  450|       |    /// Rewrite a single message.
+  451|       |    ///
+  452|       |    /// # Arguments
+  453|       |    ///
+  454|       |    /// * `msg` - The message to rewrite
+  455|       |    /// * `channel_info` - Channel information
+  456|       |    /// * `skip_decode_failures` - Whether to skip messages that fail to decode
+  457|       |    /// * `encode_callback` - Callback to write the encoded data
+  458|       |    ///
+  459|       |    /// # Returns
+  460|       |    ///
+  461|       |    /// True if the message was processed (encoded or passed through),
+  462|       |    /// false if it was skipped
+  463|      0|    pub fn rewrite_message<F>(
+  464|      0|        &mut self,
+  465|      0|        msg: &RawMessage,
+  466|      0|        channel_info: &ChannelInfo,
+  467|      0|        skip_decode_failures: bool,
+  468|      0|        mut encode_callback: F,
+  469|      0|    ) -> Result<bool>
+  470|      0|    where
+  471|      0|        F: FnMut(&[u8]) -> Result<()>,
+  472|       |    {
+  473|      0|        self.stats.message_count += 1;
+  474|       |
+  475|       |        // Detect encoding
+  476|      0|        let encoding = self.codec_factory.detect_encoding(
+  477|      0|            &channel_info.encoding,
+  478|      0|            channel_info.schema_encoding.as_deref(),
+  479|       |        );
+  480|       |
+  481|       |        // Get the schema for this channel
+  482|      0|        let schema = match self.get_transformed_schema(msg.channel_id) {
+  483|      0|            Some(s) => s.clone(),
+  484|       |            None => {
+  485|       |                // No schema available, pass through
+  486|      0|                encode_callback(&msg.data)?;
+  487|      0|                self.stats.passthrough_count += 1;
+  488|      0|                return Ok(true);
+  489|       |            }
+  490|       |        };
+  491|       |
+  492|       |        // Get the codec for this encoding (mutable for encode)
+  493|      0|        let codec = self.codec_factory.get_codec_mut(encoding)?;
+  494|       |
+  495|       |        // Decode the message
+  496|      0|        let decoded = match codec.decode_dynamic(&msg.data, &schema) {
+  497|      0|            Ok(d) => d,
+  498|      0|            Err(e) => {
+  499|      0|                self.stats.decode_failures += 1;
+  500|      0|                if skip_decode_failures {
+  501|       |                    // Skip decode failure: pass through original data
+  502|      0|                    encode_callback(&msg.data)?;
+  503|      0|                    self.stats.passthrough_count += 1;
+  504|      0|                    return Ok(true);
+  505|      0|                }
+  506|       |                // Fail on decode error: return error to caller
+  507|      0|                return Err(e);
+  508|       |            }
+  509|       |        };
+  510|       |
+  511|       |        // Encode the message
+  512|      0|        let encoded_data = match codec.encode_dynamic(&decoded, &schema) {
+  513|      0|            Ok(data) => data,
+  514|      0|            Err(e) => {
+  515|      0|                self.stats.encode_failures += 1;
+  516|      0|                return Err(e);
+  517|       |            }
+  518|       |        };
+  519|       |
+  520|       |        // Write the encoded data
+  521|      0|        encode_callback(&encoded_data)?;
+  522|      0|        self.stats.reencoded_count += 1;
+  523|       |
+  524|      0|        Ok(true)
+  525|      0|    }
+  526|       |
+  527|       |    /// Reset the engine state for a new rewrite operation.
+  528|      1|    pub fn reset(&mut self) {
+  529|      1|        self.stats = McapRewriteStats::default();
+  530|      1|        self.schemas.clear();
+  531|      1|        self.channel_schemas.clear();
+  532|      1|        self.channel_topics.clear();
+  533|      1|    }
+  534|       |}
+  535|       |
+  536|       |impl Default for McapRewriteEngine {
+  537|      1|    fn default() -> Self {
+  538|      1|        Self::new()
+  539|      1|    }
+  540|       |}
+  541|       |
+  542|       |#[cfg(test)]
+  543|       |mod tests {
+  544|       |    use super::*;
+  545|       |    use std::path::PathBuf;
+  546|       |
+  547|       |    /// Get the fixtures directory path
+  548|      3|    fn fixtures_dir() -> PathBuf {
+  549|       |        // Use CARGO_MANIFEST_DIR to get the robocodec crate root
+  550|      3|        let manifest_dir =
+  551|      3|            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| String::from("."));
+                                                                                 ^0
+  552|      3|        PathBuf::from(manifest_dir).join("tests").join("fixtures")
+  553|      3|    }
+  554|       |
+  555|      3|    fn fixture_path(name: &str) -> PathBuf {
+  556|      3|        fixtures_dir().join(name)
+  557|      3|    }
+  558|       |
+  559|       |    #[test]
+  560|      1|    fn test_engine_creation() {
+  561|      1|        let engine = McapRewriteEngine::new();
+  562|      1|        assert_eq!(engine.stats.message_count, 0);
+  563|      1|    }
+  564|       |
+  565|       |    #[test]
+  566|      1|    fn test_engine_default() {
+  567|      1|        let engine = McapRewriteEngine::default();
+  568|      1|        assert_eq!(engine.stats.message_count, 0);
+  569|      1|    }
+  570|       |
+  571|       |    #[test]
+  572|      1|    fn test_engine_reset() {
+  573|      1|        let mut engine = McapRewriteEngine::new();
+  574|      1|        engine.stats.message_count = 100;
+  575|      1|        engine.stats.reencoded_count = 50;
+  576|       |
+  577|      1|        engine.reset();
+  578|       |
+  579|      1|        assert_eq!(engine.stats.message_count, 0);
+  580|      1|        assert_eq!(engine.stats.reencoded_count, 0);
+  581|      1|    }
+  582|       |
+  583|       |    #[test]
+  584|      1|    fn test_stats_default() {
+  585|      1|        let stats = McapRewriteStats::default();
+  586|      1|        assert_eq!(stats.message_count, 0);
+  587|      1|        assert_eq!(stats.reencoded_count, 0);
+  588|      1|        assert_eq!(stats.passthrough_count, 0);
+  589|      1|    }
+  590|       |
+  591|       |    #[test]
+  592|      1|    fn test_prepare_schemas_with_reader() {
+  593|      1|        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+  594|      1|        let mut engine = McapRewriteEngine::new();
+  595|       |
+  596|       |        // Should successfully prepare schemas
+  597|      1|        let result = engine.prepare_schemas(&reader, None);
+  598|      1|        assert!(result.is_ok(), "prepare_schemas failed: {:?}", result.err());
+                                              ^0                              ^0     ^0
+  599|       |
+  600|       |        // Should have cached schemas
+  601|      1|        assert!(!engine.schemas.is_empty());
+  602|      1|    }
+  603|       |
+  604|       |    #[test]
+  605|      1|    fn test_prepare_schemas_with_transforms() {
+  606|      1|        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+  607|      1|        let mut engine = McapRewriteEngine::new();
+  608|       |
+  609|       |        // Create a transform pipeline using the builder
+  610|      1|        let pipeline = crate::transform::TransformBuilder::new()
+  611|      1|            .with_type_rename("std_msgs", "my_msgs")
+  612|      1|            .build();
+  613|       |
+  614|       |        // Should successfully prepare schemas with transforms
+  615|      1|        let result = engine.prepare_schemas(&reader, Some(&pipeline));
+  616|      1|        assert!(
+  617|      1|            result.is_ok(),
+  618|      0|            "prepare_schemas with transforms failed: {:?}",
+  619|      0|            result.err()
+  620|       |        );
+  621|      1|    }
+  622|       |
+  623|       |    #[test]
+  624|      1|    fn test_protobuf_rewriting() {
+  625|      1|        let fixture_path_str = fixture_path("robocodec_test_3.mcap");
+  626|      1|        let reader = McapReader::open(&fixture_path_str).unwrap_or_else(|e| {
+                                                                                          ^0
+  627|      0|            panic!("Failed to open {:?}: {e}", fixture_path_str);
+  628|       |        });
+  629|       |
+  630|      1|        println!("=== Channels in fixture ===");
+  631|      9|        for (id, channel) in reader.channels() {
+                                           ^1     ^1
+  632|      9|            println!("Channel {}: {}", id, channel.topic);
+  633|      9|            println!("  Message type: {}", channel.message_type);
+  634|      9|            println!("  Encoding: {}", channel.encoding);
+  635|      9|            println!("  Schema encoding: {:?}", channel.schema_encoding);
+  636|      9|        }
+  637|       |
+  638|      1|        let mut engine = McapRewriteEngine::new();
+  639|       |
+  640|       |        // Create type rename mappings (example using actual fixture types):
+  641|       |        // /lowdim/joint: pkg.foo.Bar -> pkg.foo.Baz
+  642|       |        // /lowdim/tcp: pkg.foo.Bar -> pkg.foo.Qux
+  643|       |        // /lowdim/ee_state: pkg.foo.Bar -> pkg.foo.Quux
+  644|       |        // /lowdim/airexo_joint: pkg.foo.Bar -> pkg.foo.Corge
+  645|       |        // /camera/intrinsic/camid_1: pkg.foo.Bar -> pkg.foo.baz_qux
+  646|       |
+  647|      1|        let pipeline = crate::transform::TransformBuilder::new()
+  648|      1|            .with_type_rename("nmx.msg.LowdimData", "nmx.msg.JointStates")
+  649|      1|            .build();
+  650|       |
+  651|       |        // Prepare schemas with transforms
+  652|      1|        engine
+  653|      1|            .prepare_schemas(&reader, Some(&pipeline))
+  654|      1|            .expect("Failed to prepare schemas");
+  655|       |
+  656|       |        // Verify schemas were transformed
+  657|      1|        assert!(!engine.schemas.is_empty(), "No schemas were cached");
+                                                          ^0
+  658|       |
+  659|      1|        println!("=== Prepared schemas ===");
+  660|      1|        println!("Prepared {} schemas", engine.schemas.len());
+  661|      9|        for type_name in engine.schemas.keys() {
+                                       ^1             ^1
+  662|      9|            println!("  - {type_name}");
+  663|      9|        }
+  664|       |
+  665|       |        // For now, let's just check that we have some schemas
+  666|       |        // The actual transformation will be implemented in the apply_transformations method
+  667|      1|        assert!(!engine.schemas.is_empty(), "Expected schemas to be cached");
+                                                          ^0
+  668|       |
+  669|       |        // Verify statistics
+  670|      1|        let stats = engine.stats();
+  671|      1|        println!("=== Stats ===");
+  672|      1|        println!("  Topics renamed: {}", stats.topics_renamed);
+  673|      1|        println!("  Types renamed: {}", stats.types_renamed);
+  674|      1|    }
+  675|       |
+  676|       |    #[test]
+  677|      1|    fn test_extract_protobuf_package_with_leading_dot() {
+  678|       |        // Test with leading dot: ".pkg.foo.Bar" -> "pkg.foo"
+  679|      1|        let result = extract_protobuf_package(".pkg.foo.Bar");
+  680|      1|        assert_eq!(result, "pkg.foo");
+  681|      1|    }
+  682|       |
+  683|       |    #[test]
+  684|      1|    fn test_extract_protobuf_package_without_leading_dot() {
+  685|       |        // Test without leading dot: "pkg.foo.Bar" -> "pkg.foo"
+  686|      1|        let result = extract_protobuf_package("pkg.foo.Bar");
+  687|      1|        assert_eq!(result, "pkg.foo");
+  688|      1|    }
+  689|       |
+  690|       |    #[test]
+  691|      1|    fn test_extract_protobuf_package_single_part() {
+  692|       |        // Test with single part: "MessageType" -> ""
+  693|      1|        let result = extract_protobuf_package("MessageType");
+  694|      1|        assert_eq!(result, "");
+  695|      1|    }
+  696|       |
+  697|       |    #[test]
+  698|      1|    fn test_extract_protobuf_package_two_parts() {
+  699|       |        // Test with two parts: "pkg.Message" -> "pkg"
+  700|      1|        let result = extract_protobuf_package("pkg.Message");
+  701|      1|        assert_eq!(result, "pkg");
+  702|      1|    }
+  703|       |
+  704|       |    #[test]
+  705|      1|    fn test_extract_protobuf_package_nested_packages() {
+  706|       |        // Test with nested packages: "foo.bar.baz.Type" -> "foo.bar.baz"
+  707|      1|        let result = extract_protobuf_package("foo.bar.baz.Type");
+  708|      1|        assert_eq!(result, "foo.bar.baz");
+  709|      1|    }
+  710|       |
+  711|       |    #[test]
+  712|      1|    fn test_extract_protobuf_package_empty_string() {
+  713|       |        // Test with empty string: "" -> ""
+  714|      1|        let result = extract_protobuf_package("");
+  715|      1|        assert_eq!(result, "");
+  716|      1|    }
+  717|       |
+  718|       |    #[test]
+  719|      1|    fn test_extract_protobuf_package_only_dots() {
+  720|       |        // Test with only dots: "..." -> "." (join of empty strings from split)
+  721|      1|        let result = extract_protobuf_package("...");
+  722|      1|        assert_eq!(result, ".");
+  723|      1|    }
+  724|       |}
+

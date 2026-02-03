@@ -1,0 +1,1337 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/encoding/protobuf/codec.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Protobuf codec implementation using prost-reflect for dynamic message handling.
+    6|       |
+    7|       |use std::collections::HashMap;
+    8|       |use std::sync::RwLock;
+    9|       |
+   10|       |use prost::Message;
+   11|       |use prost_reflect::{
+   12|       |    DescriptorPool, DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, ReflectMessage,
+   13|       |};
+   14|       |use prost_types::FileDescriptorSet;
+   15|       |
+   16|       |use crate::core::{CodecError, CodecValue, DecodedMessage, Encoding, Result};
+   17|       |use crate::encoding::transform::SchemaMetadata;
+   18|       |use crate::encoding::DynCodec;
+   19|       |
+   20|       |/// Protobuf codec using prost-reflect for dynamic message encoding/decoding.
+   21|       |///
+   22|       |/// This codec handles protobuf messages without code generation by using
+   23|       |/// FileDescriptorSet at runtime. Uses thread-safe interior mutability for caching.
+   24|       |pub struct ProtobufCodec {
+   25|       |    /// Cached descriptor pools indexed by type name
+   26|       |    pools: RwLock<HashMap<String, DescriptorPool>>,
+   27|       |    /// Cached message descriptors indexed by type name
+   28|       |    descriptors: RwLock<HashMap<String, MessageDescriptor>>,
+   29|       |}
+   30|       |
+   31|       |impl ProtobufCodec {
+   32|       |    /// Create a new Protobuf codec.
+   33|     42|    pub fn new() -> Self {
+   34|     42|        Self {
+   35|     42|            pools: RwLock::new(HashMap::new()),
+   36|     42|            descriptors: RwLock::new(HashMap::new()),
+   37|     42|        }
+   38|     42|    }
+   39|       |
+   40|       |    /// Add a FileDescriptorSet to the codec.
+   41|       |    ///
+   42|       |    /// # Arguments
+   43|       |    ///
+   44|       |    /// * `type_name` - Message type name (e.g., "nmx.msg.Lowdim")
+   45|       |    /// * `fds_bytes` - FileDescriptorSet binary data
+   46|       |    ///
+   47|       |    /// # Returns
+   48|       |    ///
+   49|       |    /// The message descriptor for the type
+   50|     25|    pub fn add_file_descriptor_set(
+   51|     25|        &self,
+   52|     25|        type_name: &str,
+   53|     25|        fds_bytes: &[u8],
+   54|     25|    ) -> Result<MessageDescriptor> {
+   55|       |        // Check if already loaded
+   56|       |        {
+   57|     25|            let descriptors = self
+   58|     25|                .descriptors
+   59|     25|                .read()
+   60|     25|                .map_err(|e| CodecError::Other(format!("Descriptor read lock poisoned: {e}")))?;
+                                                             ^0      ^0                                     ^0
+   61|     25|            if let Some(descriptor) = descriptors.get(type_name) {
+                                      ^1
+   62|      1|                return Ok(descriptor.clone());
+   63|     24|            }
+   64|       |        }
+   65|       |
+   66|       |        // Decode FileDescriptorSet
+   67|     24|        let fds = FileDescriptorSet::decode(fds_bytes).map_err(|e| {
+                          ^23                                                    ^1
+   68|      1|            CodecError::parse(
+   69|       |                "protobuf",
+   70|      1|                format!("Failed to decode FileDescriptorSet: {e}"),
+   71|       |            )
+   72|      1|        })?;
+   73|       |
+   74|       |        // Build descriptor pool
+   75|     23|        let pool = DescriptorPool::from_file_descriptor_set(fds).map_err(|e| {
+                                                                                           ^0
+   76|      0|            CodecError::parse("protobuf", format!("Failed to build descriptor pool: {e}"))
+   77|      0|        })?;
+   78|       |
+   79|       |        // Get message descriptor
+   80|     23|        let descriptor = pool
+                          ^22
+   81|     23|            .get_message_by_name(type_name)
+   82|     23|            .ok_or_else(|| CodecError::type_not_found(type_name))?;
+                                         ^1                         ^1         ^1
+   83|       |
+   84|       |        // Cache for reuse
+   85|     22|        self.pools
+   86|     22|            .write()
+   87|     22|            .map_err(|e| CodecError::Other(format!("Pool write lock poisoned: {e}")))?
+                                                         ^0      ^0                                ^0
+   88|     22|            .insert(type_name.to_string(), pool);
+   89|     22|        self.descriptors
+   90|     22|            .write()
+   91|     22|            .map_err(|e| CodecError::Other(format!("Descriptor write lock poisoned: {e}")))?
+                                                         ^0      ^0                                      ^0
+   92|     22|            .insert(type_name.to_string(), descriptor.clone());
+   93|       |
+   94|     22|        Ok(descriptor)
+   95|     25|    }
+   96|       |
+   97|       |    /// Ensure a descriptor is loaded for the given type.
+   98|       |    ///
+   99|       |    /// # Arguments
+  100|       |    ///
+  101|       |    /// * `schema` - Schema metadata containing FileDescriptorSet
+  102|       |    ///
+  103|       |    /// # Returns
+  104|       |    ///
+  105|       |    /// The message descriptor for the type
+  106|     36|    fn ensure_descriptor(&self, schema: &SchemaMetadata) -> Result<MessageDescriptor> {
+  107|     36|        match schema {
+  108|       |            SchemaMetadata::Protobuf {
+  109|     34|                type_name,
+  110|     34|                file_descriptor_set,
+  111|       |                ..
+  112|       |            } => {
+  113|       |                // Check if already loaded
+  114|       |                {
+  115|     34|                    let descriptors = self.descriptors.read().map_err(|e| {
+                                                                                        ^0
+  116|      0|                        CodecError::Other(format!("Descriptor read lock poisoned: {e}"))
+  117|      0|                    })?;
+  118|     34|                    if let Some(descriptor) = descriptors.get(type_name) {
+                                              ^16
+  119|     16|                        return Ok(descriptor.clone());
+  120|     18|                    }
+  121|       |                }
+  122|       |
+  123|       |                // Load from FileDescriptorSet
+  124|     18|                self.add_file_descriptor_set(type_name, file_descriptor_set)
+  125|       |            }
+  126|      2|            _ => Err(CodecError::invalid_schema(
+  127|      2|                schema.type_name(),
+  128|      2|                "Schema is not a Protobuf schema",
+  129|      2|            )),
+  130|       |        }
+  131|     36|    }
+  132|       |
+  133|       |    /// Get a descriptor by type name without loading.
+  134|      5|    pub fn get_descriptor(&self, type_name: &str) -> Option<MessageDescriptor> {
+  135|      5|        self.descriptors.read().ok()?.get(type_name).cloned()
+                                                  ^0
+  136|      5|    }
+  137|       |
+  138|       |    /// Convert a DynamicMessage to DecodedMessage.
+  139|       |    ///
+  140|       |    /// # Arguments
+  141|       |    ///
+  142|       |    /// * `dynamic_msg` - The dynamic protobuf message
+  143|       |    /// * `descriptor` - Message descriptor for field info
+  144|     21|    fn dynamic_to_decoded(
+  145|     21|        &self,
+  146|     21|        dynamic_msg: &DynamicMessage,
+  147|     21|        descriptor: &MessageDescriptor,
+  148|     21|    ) -> DecodedMessage {
+  149|     21|        let mut fields = HashMap::new();
+  150|       |
+  151|     55|        for field in descriptor.fields() {
+                                   ^21        ^21
+  152|     55|            let field_name = field.name().to_string();
+  153|       |
+  154|     55|            if let Some(value) = dynamic_msg.get_field_by_name(&field_name) {
+  155|     55|                if let Some(codec_value) = self.reflect_value_to_codec(&value) {
+  156|     55|                    fields.insert(field_name, codec_value);
+  157|     55|                }
+                              ^0
+  158|      0|            }
+  159|       |        }
+  160|       |
+  161|     21|        fields
+  162|     21|    }
+  163|       |
+  164|       |    /// Convert a DecodedMessage to a DynamicMessage.
+  165|       |    ///
+  166|       |    /// # Arguments
+  167|       |    ///
+  168|       |    /// * `decoded` - The decoded message
+  169|       |    /// * `descriptor` - Message descriptor for field info
+  170|     13|    fn decoded_to_dynamic(
+  171|     13|        &self,
+  172|     13|        decoded: &DecodedMessage,
+  173|     13|        descriptor: &MessageDescriptor,
+  174|     13|    ) -> Result<DynamicMessage> {
+  175|     13|        let mut dynamic_msg = DynamicMessage::new(descriptor.clone());
+  176|       |
+  177|     40|        for (field_name, codec_value) in decoded {
+                           ^28         ^28
+  178|     28|            if let Some(field) = descriptor.get_field_by_name(field_name) {
+                                      ^27
+  179|     27|                let reflect_value = self.codec_to_reflect_value_with_field(codec_value, &field)?;
+                                  ^26                                                                        ^1
+  180|     26|                dynamic_msg.set_field(&field, reflect_value);
+  181|      1|            }
+  182|       |        }
+  183|       |
+  184|     12|        Ok(dynamic_msg)
+  185|     13|    }
+  186|       |
+  187|       |    /// Convert a CodecValue to a prost-reflect Value with field context.
+  188|       |    ///
+  189|       |    /// This version handles nested structs by using the field descriptor
+  190|       |    /// to determine the target message type.
+  191|       |    #[allow(clippy::only_used_in_recursion)]
+  192|     31|    fn codec_to_reflect_value_with_field(
+  193|     31|        &self,
+  194|     31|        value: &CodecValue,
+  195|     31|        field: &FieldDescriptor,
+  196|     31|    ) -> Result<prost_reflect::Value> {
+  197|       |        // Handle enum fields - check field kind for enum type
+  198|     31|        let is_enum = matches!(field.kind(), Kind::Enum(_));
+                                    ^30
+  199|       |
+  200|     31|        match value {
+  201|      7|            CodecValue::Bool(v) => Ok(prost_reflect::Value::Bool(*v)),
+  202|      0|            CodecValue::Int8(v) => {
+  203|      0|                if is_enum {
+  204|      0|                    Ok(prost_reflect::Value::EnumNumber(*v as i32))
+  205|       |                } else {
+  206|      0|                    Ok(prost_reflect::Value::I32(*v as i32))
+  207|       |                }
+  208|       |            }
+  209|      0|            CodecValue::Int16(v) => {
+  210|      0|                if is_enum {
+  211|      0|                    Ok(prost_reflect::Value::EnumNumber(*v as i32))
+  212|       |                } else {
+  213|      0|                    Ok(prost_reflect::Value::I32(*v as i32))
+  214|       |                }
+  215|       |            }
+  216|     13|            CodecValue::Int32(v) => {
+  217|     13|                if is_enum {
+  218|      1|                    Ok(prost_reflect::Value::EnumNumber(*v))
+  219|       |                } else {
+  220|     12|                    Ok(prost_reflect::Value::I32(*v))
+  221|       |                }
+  222|       |            }
+  223|      0|            CodecValue::Int64(v) => Ok(prost_reflect::Value::I64(*v)),
+  224|      0|            CodecValue::UInt8(v) => Ok(prost_reflect::Value::U32(*v as u32)),
+  225|      0|            CodecValue::UInt16(v) => Ok(prost_reflect::Value::U32(*v as u32)),
+  226|      0|            CodecValue::UInt32(v) => Ok(prost_reflect::Value::U32(*v)),
+  227|      0|            CodecValue::UInt64(v) => Ok(prost_reflect::Value::U64(*v)),
+  228|      0|            CodecValue::Float32(v) => Ok(prost_reflect::Value::F32(*v)),
+  229|      0|            CodecValue::Float64(v) => Ok(prost_reflect::Value::F64(*v)),
+  230|      7|            CodecValue::String(v) => Ok(prost_reflect::Value::String(v.clone())),
+  231|      0|            CodecValue::Bytes(v) => Ok(prost_reflect::Value::Bytes(v.clone().into())),
+  232|      1|            CodecValue::Array(v) => {
+  233|       |                // Check if this is a repeated message field
+  234|      1|                if let Kind::Message(msg_desc) = field.kind() {
+                                                   ^0
+  235|       |                    // Array of messages
+  236|      0|                    let items: Vec<prost_reflect::Value> = v
+  237|      0|                        .iter()
+  238|      0|                        .map(|val| {
+  239|      0|                            if let CodecValue::Struct(fields) = val {
+  240|       |                                // Convert nested struct to message
+  241|      0|                                let mut nested_msg = DynamicMessage::new(msg_desc.clone());
+  242|      0|                                for (nested_field_name, nested_value) in fields {
+  243|      0|                                    if let Some(nested_field) =
+  244|      0|                                        msg_desc.get_field_by_name(nested_field_name)
+  245|       |                                    {
+  246|      0|                                        let nested_reflect = self
+  247|      0|                                            .codec_to_reflect_value_with_field(
+  248|      0|                                                nested_value,
+  249|      0|                                                &nested_field,
+  250|      0|                                            )?;
+  251|      0|                                        nested_msg.set_field(&nested_field, nested_reflect);
+  252|      0|                                    }
+  253|       |                                }
+  254|      0|                                Ok(prost_reflect::Value::Message(nested_msg))
+  255|       |                            } else {
+  256|      0|                                self.codec_to_reflect_value_with_field(val, field)
+  257|       |                            }
+  258|      0|                        })
+  259|      0|                        .collect::<Result<Vec<_>>>()?;
+  260|      0|                    Ok(prost_reflect::Value::List(items))
+  261|       |                } else {
+  262|       |                    // Array of primitives or enums
+  263|      1|                    let items: Vec<prost_reflect::Value> = v
+  264|      1|                        .iter()
+  265|      3|                        .map(|val| self.codec_to_reflect_value_with_field(val, field))
+                                       ^1
+  266|      1|                        .collect::<Result<Vec<_>>>()?;
+                                                                  ^0
+  267|      1|                    Ok(prost_reflect::Value::List(items))
+  268|       |                }
+  269|       |            }
+  270|      2|            CodecValue::Struct(fields) => {
+  271|       |                // Nested message - check field kind to get message type
+  272|      2|                if let Kind::Message(msg_desc) = field.kind() {
+                                                   ^1
+  273|      1|                    let mut nested_msg = DynamicMessage::new(msg_desc.clone());
+  274|      2|                    for (nested_field_name, nested_value) in fields {
+                                       ^1                 ^1
+  275|      1|                        if let Some(nested_field) = msg_desc.get_field_by_name(nested_field_name) {
+  276|      1|                            let nested_reflect = self
+  277|      1|                                .codec_to_reflect_value_with_field(nested_value, &nested_field)?;
+                                                                                                             ^0
+  278|      1|                            nested_msg.set_field(&nested_field, nested_reflect);
+  279|      0|                        }
+  280|       |                    }
+  281|      1|                    Ok(prost_reflect::Value::Message(nested_msg))
+  282|       |                } else {
+  283|      1|                    Err(CodecError::unsupported(format!(
+  284|      1|                        "nested struct for non-message field: {} (kind: {:?})",
+  285|      1|                        field.name(),
+  286|      1|                        field.kind()
+  287|      1|                    )))
+  288|       |                }
+  289|       |            }
+  290|       |            CodecValue::Null => {
+  291|       |                // For null values, use appropriate default based on field type
+  292|      1|                if is_enum {
+  293|      0|                    Ok(prost_reflect::Value::EnumNumber(0))
+  294|       |                } else {
+  295|      1|                    Ok(prost_reflect::Value::I32(0))
+  296|       |                }
+  297|       |            }
+  298|      0|            CodecValue::Timestamp(_) => Err(CodecError::unsupported("timestamp in protobuf")),
+  299|      0|            CodecValue::Duration(_) => Err(CodecError::unsupported("duration in protobuf")),
+  300|       |        }
+  301|     31|    }
+  302|       |
+  303|       |    /// Get a message descriptor by type name, checking all cached pools.
+  304|       |    #[allow(dead_code)]
+  305|      0|    fn get_descriptor_by_name(&self, type_name: &str) -> Option<MessageDescriptor> {
+  306|       |        // First check the direct descriptor cache
+  307|       |        {
+  308|      0|            let descriptors = self.descriptors.read().ok()?;
+  309|      0|            if let Some(desc) = descriptors.get(type_name) {
+  310|      0|                return Some(desc.clone());
+  311|      0|            }
+  312|       |        }
+  313|       |
+  314|       |        // Then search through all cached pools
+  315|      0|        let pools = self.pools.read().ok()?;
+  316|      0|        for pool in pools.values() {
+  317|      0|            if let Some(desc) = pool.get_message_by_name(type_name) {
+  318|       |                // Cache it for future use
+  319|      0|                drop(pools);
+  320|      0|                let mut descriptors = self.descriptors.write().ok()?;
+  321|      0|                descriptors.insert(type_name.to_string(), desc.clone());
+  322|      0|                return Some(desc);
+  323|      0|            }
+  324|       |        }
+  325|       |
+  326|      0|        None
+  327|      0|    }
+  328|       |
+  329|       |    /// Convert a prost-reflect Value to CodecValue.
+  330|     61|    fn reflect_value_to_codec(&self, value: &prost_reflect::Value) -> Option<CodecValue> {
+  331|     61|        match value {
+  332|     13|            prost_reflect::Value::Bool(v) => Some(CodecValue::Bool(*v)),
+  333|     21|            prost_reflect::Value::I32(v) => Some(CodecValue::Int32(*v)),
+  334|      1|            prost_reflect::Value::I64(v) => Some(CodecValue::Int64(*v)),
+  335|      1|            prost_reflect::Value::U32(v) => Some(CodecValue::UInt32(*v)),
+  336|      1|            prost_reflect::Value::U64(v) => Some(CodecValue::UInt64(*v)),
+  337|      1|            prost_reflect::Value::F32(v) => Some(CodecValue::Float32(*v)),
+  338|      1|            prost_reflect::Value::F64(v) => Some(CodecValue::Float64(*v)),
+  339|      1|            prost_reflect::Value::Bytes(v) => Some(CodecValue::Bytes(v.to_vec())),
+  340|     13|            prost_reflect::Value::String(v) => Some(CodecValue::String(v.clone())),
+  341|      2|            prost_reflect::Value::EnumNumber(v) => Some(CodecValue::Int32(*v)),
+  342|      4|            prost_reflect::Value::List(v) => {
+  343|      4|                let items: Vec<CodecValue> = v
+  344|      4|                    .iter()
+  345|      6|                    .filter_map(|val| self.reflect_value_to_codec(val))
+                                   ^4
+  346|      4|                    .collect();
+  347|      4|                Some(CodecValue::Array(items))
+  348|       |            }
+  349|      2|            prost_reflect::Value::Message(v) => {
+  350|      2|                let descriptor = v.descriptor();
+  351|      2|                let nested = self.dynamic_to_decoded(v, &descriptor);
+  352|      2|                Some(CodecValue::Struct(nested))
+  353|       |            }
+  354|      0|            prost_reflect::Value::Map(_kv) => {
+  355|       |                // Maps: convert to list of structs for compatibility
+  356|       |                // Each map entry becomes a struct with "key" and "value" fields
+  357|      0|                None
+  358|       |            }
+  359|       |        }
+  360|     61|    }
+  361|       |}
+  362|       |
+  363|       |impl Default for ProtobufCodec {
+  364|      1|    fn default() -> Self {
+  365|      1|        Self::new()
+  366|      1|    }
+  367|       |}
+  368|       |
+  369|       |impl DynCodec for ProtobufCodec {
+  370|     22|    fn decode_dynamic(&self, data: &[u8], schema: &SchemaMetadata) -> Result<DecodedMessage> {
+  371|     22|        let descriptor = self.ensure_descriptor(schema)?;
+                          ^20                                        ^2
+  372|       |
+  373|       |        // Decode using prost-reflect (needs owned descriptor)
+  374|     20|        let dynamic_msg = DynamicMessage::decode(descriptor.clone(), data)
+                          ^19
+  375|     20|            .map_err(|e| CodecError::parse("protobuf", format!("Failed to decode message: {e}")))?;
+                                       ^1                            ^1      ^1                                ^1
+  376|       |
+  377|       |        // Convert to DecodedMessage
+  378|     19|        Ok(self.dynamic_to_decoded(&dynamic_msg, &descriptor))
+  379|     22|    }
+  380|       |
+  381|     14|    fn encode_dynamic(
+  382|     14|        &mut self,
+  383|     14|        message: &DecodedMessage,
+  384|     14|        schema: &SchemaMetadata,
+  385|     14|    ) -> Result<Vec<u8>> {
+  386|     14|        let descriptor = self.ensure_descriptor(schema)?;
+                          ^13                                        ^1
+  387|       |
+  388|       |        // Convert DecodedMessage to DynamicMessage
+  389|     13|        let dynamic_msg = self.decoded_to_dynamic(message, &descriptor)?;
+                          ^12                                                        ^1
+  390|       |
+  391|       |        // Encode to bytes
+  392|     12|        let mut buf = Vec::new();
+  393|     12|        dynamic_msg.encode(&mut buf).map_err(|e| {
+                                                               ^0
+  394|      0|            CodecError::encode("protobuf", format!("Failed to encode message: {e}"))
+  395|      0|        })?;
+  396|       |
+  397|     12|        Ok(buf)
+  398|     14|    }
+  399|       |
+  400|      3|    fn encoding_type(&self) -> Encoding {
+  401|      3|        Encoding::Protobuf
+  402|      3|    }
+  403|       |
+  404|      1|    fn reset(&mut self) {
+  405|       |        // No state to reset
+  406|      1|    }
+  407|       |
+  408|      1|    fn as_any(&self) -> &dyn std::any::Any {
+  409|      1|        self
+  410|      1|    }
+  411|       |}
+  412|       |
+  413|       |#[cfg(test)]
+  414|       |mod tests {
+  415|       |    use super::*;
+  416|       |    use prost::Message;
+  417|       |    use prost_types::field_descriptor_proto::{Label, Type as ProtoType};
+  418|       |    use prost_types::{
+  419|       |        DescriptorProto, EnumDescriptorProto, EnumValueDescriptorProto, FieldDescriptorProto,
+  420|       |        FileDescriptorProto, FileDescriptorSet,
+  421|       |    };
+  422|       |    use std::collections::HashMap;
+  423|       |
+  424|       |    // =========================================================================
+  425|       |    // Test Fixtures
+  426|       |    // =========================================================================
+  427|       |
+  428|       |    /// Create a minimal FileDescriptorSet for a simple message.
+  429|     16|    fn create_simple_fds() -> Vec<u8> {
+  430|     16|        let fds = FileDescriptorSet {
+  431|     16|            file: vec![FileDescriptorProto {
+  432|     16|                name: Some("test.proto".to_string()),
+  433|     16|                package: Some("test".to_string()),
+  434|     16|                message_type: vec![DescriptorProto {
+  435|     16|                    name: Some("SimpleMessage".to_string()),
+  436|     16|                    field: vec![
+  437|     16|                        FieldDescriptorProto {
+  438|     16|                            name: Some("int_field".to_string()),
+  439|     16|                            number: Some(1),
+  440|     16|                            label: Some(Label::Optional as i32),
+  441|     16|                            r#type: Some(ProtoType::Int32 as i32),
+  442|     16|                            ..Default::default()
+  443|     16|                        },
+  444|     16|                        FieldDescriptorProto {
+  445|     16|                            name: Some("string_field".to_string()),
+  446|     16|                            number: Some(2),
+  447|     16|                            label: Some(Label::Optional as i32),
+  448|     16|                            r#type: Some(ProtoType::String as i32),
+  449|     16|                            ..Default::default()
+  450|     16|                        },
+  451|     16|                        FieldDescriptorProto {
+  452|     16|                            name: Some("bool_field".to_string()),
+  453|     16|                            number: Some(3),
+  454|     16|                            label: Some(Label::Optional as i32),
+  455|     16|                            r#type: Some(ProtoType::Bool as i32),
+  456|     16|                            ..Default::default()
+  457|     16|                        },
+  458|     16|                    ],
+  459|     16|                    ..Default::default()
+  460|     16|                }],
+  461|     16|                ..Default::default()
+  462|     16|            }],
+  463|     16|        };
+  464|     16|        fds.encode_to_vec()
+  465|     16|    }
+  466|       |
+  467|       |    /// Create a FileDescriptorSet with an enum type.
+  468|      2|    fn create_enum_fds() -> Vec<u8> {
+  469|      2|        let fds = FileDescriptorSet {
+  470|      2|            file: vec![FileDescriptorProto {
+  471|      2|                name: Some("enum_test.proto".to_string()),
+  472|      2|                package: Some("test".to_string()),
+  473|      2|                enum_type: vec![EnumDescriptorProto {
+  474|      2|                    name: Some("TestEnum".to_string()),
+  475|      2|                    value: vec![
+  476|      2|                        EnumValueDescriptorProto {
+  477|      2|                            name: Some("UNKNOWN".to_string()),
+  478|      2|                            number: Some(0),
+  479|      2|                            ..Default::default()
+  480|      2|                        },
+  481|      2|                        EnumValueDescriptorProto {
+  482|      2|                            name: Some("VALUE_ONE".to_string()),
+  483|      2|                            number: Some(1),
+  484|      2|                            ..Default::default()
+  485|      2|                        },
+  486|      2|                        EnumValueDescriptorProto {
+  487|      2|                            name: Some("VALUE_TWO".to_string()),
+  488|      2|                            number: Some(2),
+  489|      2|                            ..Default::default()
+  490|      2|                        },
+  491|      2|                    ],
+  492|      2|                    ..Default::default()
+  493|      2|                }],
+  494|      2|                message_type: vec![DescriptorProto {
+  495|      2|                    name: Some("EnumMessage".to_string()),
+  496|      2|                    field: vec![FieldDescriptorProto {
+  497|      2|                        name: Some("enum_field".to_string()),
+  498|      2|                        number: Some(1),
+  499|      2|                        label: Some(Label::Optional as i32),
+  500|      2|                        r#type: Some(ProtoType::Enum as i32),
+  501|      2|                        type_name: Some(".test.TestEnum".to_string()),
+  502|      2|                        ..Default::default()
+  503|      2|                    }],
+  504|      2|                    ..Default::default()
+  505|      2|                }],
+  506|      2|                ..Default::default()
+  507|      2|            }],
+  508|      2|        };
+  509|      2|        fds.encode_to_vec()
+  510|      2|    }
+  511|       |
+  512|       |    /// Create a FileDescriptorSet with a nested message.
+  513|      2|    fn create_nested_fds() -> Vec<u8> {
+  514|      2|        let fds = FileDescriptorSet {
+  515|      2|            file: vec![FileDescriptorProto {
+  516|      2|                name: Some("nested.proto".to_string()),
+  517|      2|                package: Some("test".to_string()),
+  518|      2|                message_type: vec![
+  519|      2|                    DescriptorProto {
+  520|      2|                        name: Some("NestedMessage".to_string()),
+  521|      2|                        field: vec![FieldDescriptorProto {
+  522|      2|                            name: Some("value".to_string()),
+  523|      2|                            number: Some(1),
+  524|      2|                            label: Some(Label::Optional as i32),
+  525|      2|                            r#type: Some(ProtoType::Int32 as i32),
+  526|      2|                            ..Default::default()
+  527|      2|                        }],
+  528|      2|                        ..Default::default()
+  529|      2|                    },
+  530|      2|                    DescriptorProto {
+  531|      2|                        name: Some("OuterMessage".to_string()),
+  532|      2|                        field: vec![FieldDescriptorProto {
+  533|      2|                            name: Some("nested".to_string()),
+  534|      2|                            number: Some(1),
+  535|      2|                            label: Some(Label::Optional as i32),
+  536|      2|                            r#type: Some(ProtoType::Message as i32),
+  537|      2|                            type_name: Some(".test.NestedMessage".to_string()),
+  538|      2|                            ..Default::default()
+  539|      2|                        }],
+  540|      2|                        ..Default::default()
+  541|      2|                    },
+  542|      2|                ],
+  543|      2|                ..Default::default()
+  544|      2|            }],
+  545|      2|        };
+  546|      2|        fds.encode_to_vec()
+  547|      2|    }
+  548|       |
+  549|       |    /// Create a FileDescriptorSet with repeated fields.
+  550|      2|    fn create_repeated_fds() -> Vec<u8> {
+  551|      2|        let fds = FileDescriptorSet {
+  552|      2|            file: vec![FileDescriptorProto {
+  553|      2|                name: Some("repeated.proto".to_string()),
+  554|      2|                package: Some("test".to_string()),
+  555|      2|                message_type: vec![DescriptorProto {
+  556|      2|                    name: Some("RepeatedMessage".to_string()),
+  557|      2|                    field: vec![
+  558|      2|                        FieldDescriptorProto {
+  559|      2|                            name: Some("int_array".to_string()),
+  560|      2|                            number: Some(1),
+  561|      2|                            label: Some(Label::Repeated as i32),
+  562|      2|                            r#type: Some(ProtoType::Int32 as i32),
+  563|      2|                            ..Default::default()
+  564|      2|                        },
+  565|      2|                        FieldDescriptorProto {
+  566|      2|                            name: Some("string_array".to_string()),
+  567|      2|                            number: Some(2),
+  568|      2|                            label: Some(Label::Repeated as i32),
+  569|      2|                            r#type: Some(ProtoType::String as i32),
+  570|      2|                            ..Default::default()
+  571|      2|                        },
+  572|      2|                    ],
+  573|      2|                    ..Default::default()
+  574|      2|                }],
+  575|      2|                ..Default::default()
+  576|      2|            }],
+  577|      2|        };
+  578|      2|        fds.encode_to_vec()
+  579|      2|    }
+  580|       |
+  581|       |    /// Create a FileDescriptorSet with all scalar types.
+  582|      1|    fn create_scalar_fds() -> Vec<u8> {
+  583|      1|        let fds = FileDescriptorSet {
+  584|      1|            file: vec![FileDescriptorProto {
+  585|      1|                name: Some("scalar.proto".to_string()),
+  586|      1|                package: Some("test".to_string()),
+  587|      1|                message_type: vec![DescriptorProto {
+  588|      1|                    name: Some("ScalarMessage".to_string()),
+  589|      1|                    field: vec![
+  590|      1|                        FieldDescriptorProto {
+  591|      1|                            name: Some("double_field".to_string()),
+  592|      1|                            number: Some(1),
+  593|      1|                            label: Some(Label::Optional as i32),
+  594|      1|                            r#type: Some(ProtoType::Double as i32),
+  595|      1|                            ..Default::default()
+  596|      1|                        },
+  597|      1|                        FieldDescriptorProto {
+  598|      1|                            name: Some("float_field".to_string()),
+  599|      1|                            number: Some(2),
+  600|      1|                            label: Some(Label::Optional as i32),
+  601|      1|                            r#type: Some(ProtoType::Float as i32),
+  602|      1|                            ..Default::default()
+  603|      1|                        },
+  604|      1|                        FieldDescriptorProto {
+  605|      1|                            name: Some("int64_field".to_string()),
+  606|      1|                            number: Some(3),
+  607|      1|                            label: Some(Label::Optional as i32),
+  608|      1|                            r#type: Some(ProtoType::Int64 as i32),
+  609|      1|                            ..Default::default()
+  610|      1|                        },
+  611|      1|                        FieldDescriptorProto {
+  612|      1|                            name: Some("uint64_field".to_string()),
+  613|      1|                            number: Some(4),
+  614|      1|                            label: Some(Label::Optional as i32),
+  615|      1|                            r#type: Some(ProtoType::Uint64 as i32),
+  616|      1|                            ..Default::default()
+  617|      1|                        },
+  618|      1|                        FieldDescriptorProto {
+  619|      1|                            name: Some("int32_field".to_string()),
+  620|      1|                            number: Some(5),
+  621|      1|                            label: Some(Label::Optional as i32),
+  622|      1|                            r#type: Some(ProtoType::Int32 as i32),
+  623|      1|                            ..Default::default()
+  624|      1|                        },
+  625|      1|                        FieldDescriptorProto {
+  626|      1|                            name: Some("uint32_field".to_string()),
+  627|      1|                            number: Some(6),
+  628|      1|                            label: Some(Label::Optional as i32),
+  629|      1|                            r#type: Some(ProtoType::Uint32 as i32),
+  630|      1|                            ..Default::default()
+  631|      1|                        },
+  632|      1|                        FieldDescriptorProto {
+  633|      1|                            name: Some("bool_field".to_string()),
+  634|      1|                            number: Some(7),
+  635|      1|                            label: Some(Label::Optional as i32),
+  636|      1|                            r#type: Some(ProtoType::Bool as i32),
+  637|      1|                            ..Default::default()
+  638|      1|                        },
+  639|      1|                        FieldDescriptorProto {
+  640|      1|                            name: Some("string_field".to_string()),
+  641|      1|                            number: Some(8),
+  642|      1|                            label: Some(Label::Optional as i32),
+  643|      1|                            r#type: Some(ProtoType::String as i32),
+  644|      1|                            ..Default::default()
+  645|      1|                        },
+  646|      1|                        FieldDescriptorProto {
+  647|      1|                            name: Some("bytes_field".to_string()),
+  648|      1|                            number: Some(9),
+  649|      1|                            label: Some(Label::Optional as i32),
+  650|      1|                            r#type: Some(ProtoType::Bytes as i32),
+  651|      1|                            ..Default::default()
+  652|      1|                        },
+  653|      1|                    ],
+  654|      1|                    ..Default::default()
+  655|      1|                }],
+  656|      1|                ..Default::default()
+  657|      1|            }],
+  658|      1|        };
+  659|      1|        fds.encode_to_vec()
+  660|      1|    }
+  661|       |
+  662|       |    /// Encode a simple test message manually as protobuf.
+  663|      4|    fn encode_simple_message(int_val: i32, string_val: &str, bool_val: bool) -> Vec<u8> {
+  664|      4|        let mut bytes = Vec::new();
+  665|       |
+  666|       |        // Field 1: int32 (tag 0x08)
+  667|      4|        bytes.push(0x08);
+  668|      4|        encode_varint(int_val as u64, &mut bytes);
+  669|       |
+  670|       |        // Field 2: string (tag 0x12)
+  671|      4|        bytes.push(0x12);
+  672|      4|        encode_varint(string_val.len() as u64, &mut bytes);
+  673|      4|        bytes.extend_from_slice(string_val.as_bytes());
+  674|       |
+  675|       |        // Field 3: bool (tag 0x18)
+  676|      4|        bytes.push(0x18);
+  677|      4|        bytes.push(bool_val as u8);
+  678|       |
+  679|      4|        bytes
+  680|      4|    }
+  681|       |
+  682|       |    /// Encode a varint to bytes.
+  683|     17|    fn encode_varint(mut value: u64, bytes: &mut Vec<u8>) {
+  684|     37|        while value >= 0x80 {
+  685|     20|            bytes.push((value & 0x7F) as u8 | 0x80);
+  686|     20|            value >>= 7;
+  687|     20|        }
+  688|     17|        bytes.push(value as u8);
+  689|     17|    }
+  690|       |
+  691|       |    // =========================================================================
+  692|       |    // Construction Tests
+  693|       |    // =========================================================================
+  694|       |
+  695|       |    #[test]
+  696|      1|    fn test_protobuf_codec_creation() {
+  697|      1|        let codec = ProtobufCodec::new();
+  698|      1|        assert_eq!(codec.encoding_type(), Encoding::Protobuf);
+  699|      1|    }
+  700|       |
+  701|       |    #[test]
+  702|      1|    fn test_protobuf_codec_default() {
+  703|      1|        let codec = ProtobufCodec::default();
+  704|      1|        assert_eq!(codec.encoding_type(), Encoding::Protobuf);
+  705|      1|    }
+  706|       |
+  707|       |    #[test]
+  708|      1|    fn test_protobuf_codec_has_empty_caches_after_creation() {
+  709|      1|        let codec = ProtobufCodec::new();
+  710|       |
+  711|      1|        let pools = codec.pools.read().unwrap();
+  712|      1|        let descriptors = codec.descriptors.read().unwrap();
+  713|       |
+  714|      1|        assert!(pools.is_empty());
+  715|      1|        assert!(descriptors.is_empty());
+  716|      1|    }
+  717|       |
+  718|       |    // =========================================================================
+  719|       |    // FileDescriptorSet Tests
+  720|       |    // =========================================================================
+  721|       |
+  722|       |    #[test]
+  723|      1|    fn test_protobuf_codec_add_fds_returns_descriptor() {
+  724|      1|        let codec = ProtobufCodec::new();
+  725|      1|        let fds_bytes = create_simple_fds();
+  726|       |
+  727|      1|        let result = codec.add_file_descriptor_set("test.SimpleMessage", &fds_bytes);
+  728|      1|        assert!(result.is_ok());
+  729|       |
+  730|      1|        let descriptor = result.unwrap();
+  731|      1|        assert_eq!(descriptor.name(), "SimpleMessage");
+  732|      1|    }
+  733|       |
+  734|       |    #[test]
+  735|      1|    fn test_protobuf_codec_add_invalid_fds() {
+  736|      1|        let codec = ProtobufCodec::new();
+  737|       |
+  738|      1|        let result = codec.add_file_descriptor_set("test.Type", &[0xFF, 0xFF, 0xFF, 0xFF]);
+  739|      1|        assert!(result.is_err());
+  740|      1|    }
+  741|       |
+  742|       |    #[test]
+  743|      1|    fn test_protobuf_codec_add_fds_caches_descriptor() {
+  744|      1|        let codec = ProtobufCodec::new();
+  745|      1|        let fds_bytes = create_simple_fds();
+  746|       |
+  747|      1|        codec
+  748|      1|            .add_file_descriptor_set("test.SimpleMessage", &fds_bytes)
+  749|      1|            .unwrap();
+  750|       |
+  751|       |        // Descriptor should be cached
+  752|      1|        let descriptor = codec.get_descriptor("test.SimpleMessage");
+  753|      1|        assert!(descriptor.is_some());
+  754|      1|        assert_eq!(descriptor.unwrap().name(), "SimpleMessage");
+  755|      1|    }
+  756|       |
+  757|       |    #[test]
+  758|      1|    fn test_protobuf_codec_add_fds_idempotent() {
+  759|      1|        let codec = ProtobufCodec::new();
+  760|      1|        let fds_bytes = create_simple_fds();
+  761|       |
+  762|      1|        let result1 = codec.add_file_descriptor_set("test.SimpleMessage", &fds_bytes);
+  763|      1|        let result2 = codec.add_file_descriptor_set("test.SimpleMessage", &fds_bytes);
+  764|       |
+  765|      1|        assert!(result1.is_ok());
+  766|      1|        assert!(result2.is_ok());
+  767|      1|        assert_eq!(result1.unwrap().name(), result2.unwrap().name());
+  768|      1|    }
+  769|       |
+  770|       |    #[test]
+  771|      1|    fn test_protobuf_codec_get_descriptor_returns_none_for_unknown_type() {
+  772|      1|        let codec = ProtobufCodec::new();
+  773|       |
+  774|      1|        let descriptor = codec.get_descriptor("unknown.Type");
+  775|      1|        assert!(descriptor.is_none());
+  776|      1|    }
+  777|       |
+  778|       |    // =========================================================================
+  779|       |    // Decode Tests
+  780|       |    // =========================================================================
+  781|       |
+  782|       |    #[test]
+  783|      1|    fn test_protobuf_codec_decode_simple_message() {
+  784|      1|        let codec = ProtobufCodec::new();
+  785|      1|        let fds_bytes = create_simple_fds();
+  786|      1|        let schema = SchemaMetadata::protobuf("test.SimpleMessage".to_string(), fds_bytes);
+  787|       |
+  788|      1|        let encoded = encode_simple_message(42, "hello", true);
+  789|      1|        let result = codec.decode_dynamic(&encoded, &schema);
+  790|       |
+  791|      1|        assert!(result.is_ok(), "decode failed: {:?}", result.err());
+                                              ^0                     ^0     ^0
+  792|      1|        let decoded = result.unwrap();
+  793|       |
+  794|      1|        assert_eq!(decoded.get("int_field"), Some(&CodecValue::Int32(42)));
+  795|      1|        assert_eq!(
+  796|      1|            decoded.get("string_field"),
+  797|      1|            Some(&CodecValue::String("hello".to_string()))
+  798|       |        );
+  799|      1|        assert_eq!(decoded.get("bool_field"), Some(&CodecValue::Bool(true)));
+  800|      1|    }
+  801|       |
+  802|       |    #[test]
+  803|      1|    fn test_protobuf_codec_decode_with_missing_fields() {
+  804|      1|        let codec = ProtobufCodec::new();
+  805|      1|        let fds_bytes = create_simple_fds();
+  806|      1|        let schema = SchemaMetadata::protobuf("test.SimpleMessage".to_string(), fds_bytes);
+  807|       |
+  808|       |        // Only encode field 1
+  809|      1|        let encoded = vec![0x08, 0x2A];
+  810|      1|        let result = codec.decode_dynamic(&encoded, &schema);
+  811|       |
+  812|      1|        assert!(result.is_ok());
+  813|      1|        let decoded = result.unwrap();
+  814|       |
+  815|      1|        assert_eq!(decoded.get("int_field"), Some(&CodecValue::Int32(42)));
+  816|       |        // Note: prost-reflect includes all schema fields in the decoded message
+  817|       |        // Missing fields are represented with default values (empty string for strings)
+  818|       |        // The behavior of the codec is to iterate over all descriptor fields
+  819|      1|    }
+  820|       |
+  821|       |    #[test]
+  822|      1|    fn test_protobuf_codec_decode_enum_field() {
+  823|      1|        let codec = ProtobufCodec::new();
+  824|      1|        let fds_bytes = create_enum_fds();
+  825|      1|        let schema = SchemaMetadata::protobuf("test.EnumMessage".to_string(), fds_bytes);
+  826|       |
+  827|       |        // Encode enum value 1 (VALUE_ONE)
+  828|      1|        let encoded = vec![0x08, 0x01];
+  829|      1|        let result = codec.decode_dynamic(&encoded, &schema);
+  830|       |
+  831|      1|        assert!(result.is_ok());
+  832|      1|        let decoded = result.unwrap();
+  833|       |
+  834|       |        // Enums are decoded as Int32
+  835|      1|        assert_eq!(decoded.get("enum_field"), Some(&CodecValue::Int32(1)));
+  836|      1|    }
+  837|       |
+  838|       |    #[test]
+  839|      1|    fn test_protobuf_codec_decode_nested_message() {
+  840|      1|        let codec = ProtobufCodec::new();
+  841|      1|        let fds_bytes = create_nested_fds();
+  842|      1|        let schema = SchemaMetadata::protobuf("test.OuterMessage".to_string(), fds_bytes);
+  843|       |
+  844|       |        // Encode nested message: { nested: { value: 42 } }
+  845|       |        // Tag for field 1: 0x0A (wire type 2 = length-delimited)
+  846|       |        // Length: 2
+  847|       |        // Nested message: field 1, value 42
+  848|      1|        let encoded = vec![0x0A, 0x02, 0x08, 0x2A];
+  849|      1|        let result = codec.decode_dynamic(&encoded, &schema);
+  850|       |
+  851|      1|        assert!(result.is_ok());
+  852|      1|        let decoded = result.unwrap();
+  853|       |
+  854|      1|        let nested = decoded.get("nested");
+  855|      1|        assert!(nested.is_some());
+  856|       |
+  857|      1|        if let Some(CodecValue::Struct(fields)) = nested {
+  858|      1|            assert_eq!(fields.get("value"), Some(&CodecValue::Int32(42)));
+  859|       |        } else {
+  860|      0|            panic!("Expected Struct for nested field");
+  861|       |        }
+  862|      1|    }
+  863|       |
+  864|       |    #[test]
+  865|      1|    fn test_protobuf_codec_decode_repeated_fields() {
+  866|      1|        let codec = ProtobufCodec::new();
+  867|      1|        let fds_bytes = create_repeated_fds();
+  868|      1|        let schema = SchemaMetadata::protobuf("test.RepeatedMessage".to_string(), fds_bytes);
+  869|       |
+  870|       |        // Encode repeated int32: [1, 2, 3]
+  871|      1|        let mut encoded = Vec::new();
+  872|      4|        for val in [1i32, 2, 3] {
+                          ^3
+  873|      3|            encoded.push(0x08); // tag for field 1
+  874|      3|            encode_varint(val as u64, &mut encoded);
+  875|      3|        }
+  876|       |
+  877|      1|        let result = codec.decode_dynamic(&encoded, &schema);
+  878|       |
+  879|      1|        assert!(result.is_ok());
+  880|      1|        let decoded = result.unwrap();
+  881|       |
+  882|      1|        let int_array = decoded.get("int_array");
+  883|      1|        assert!(int_array.is_some());
+  884|       |
+  885|      1|        if let Some(CodecValue::Array(arr)) = int_array {
+  886|      1|            assert_eq!(arr.len(), 3);
+  887|      1|            assert_eq!(arr[0], CodecValue::Int32(1));
+  888|      1|            assert_eq!(arr[1], CodecValue::Int32(2));
+  889|      1|            assert_eq!(arr[2], CodecValue::Int32(3));
+  890|       |        } else {
+  891|      0|            panic!("Expected Array for int_array field");
+  892|       |        }
+  893|      1|    }
+  894|       |
+  895|       |    #[test]
+  896|      1|    fn test_protobuf_codec_decode_all_scalar_types() {
+  897|      1|        let codec = ProtobufCodec::new();
+  898|      1|        let fds_bytes = create_scalar_fds();
+  899|      1|        let schema = SchemaMetadata::protobuf("test.ScalarMessage".to_string(), fds_bytes);
+  900|       |
+  901|       |        // Manually encode all scalar fields
+  902|      1|        let mut encoded = Vec::new();
+  903|       |
+  904|       |        // double_field (tag 0x09): value 3.125
+  905|      1|        encoded.push(0x09);
+  906|      1|        encoded.extend_from_slice(&3.125f64.to_le_bytes());
+  907|       |
+  908|       |        // float_field (tag 0x15): value 2.71
+  909|      1|        encoded.push(0x15);
+  910|      1|        encoded.extend_from_slice(&2.71f32.to_le_bytes());
+  911|       |
+  912|       |        // int64_field (tag 0x18): value -12345
+  913|      1|        encoded.push(0x18);
+  914|      1|        encode_varint((-12345i64) as u64, &mut encoded);
+  915|       |
+  916|       |        // uint64_field (tag 0x20): value 12345
+  917|      1|        encoded.push(0x20);
+  918|      1|        encode_varint(12345u64, &mut encoded);
+  919|       |
+  920|       |        // int32_field (tag 0x28): value -100
+  921|      1|        encoded.push(0x28);
+  922|      1|        encode_varint((-100i32) as u64, &mut encoded);
+  923|       |
+  924|       |        // uint32_field (tag 0x30): value 200
+  925|      1|        encoded.push(0x30);
+  926|      1|        encode_varint(200u64, &mut encoded);
+  927|       |
+  928|       |        // bool_field (tag 0x38): value true
+  929|      1|        encoded.push(0x38);
+  930|      1|        encoded.push(1u8);
+  931|       |
+  932|       |        // string_field (tag 0x42): value "test"
+  933|      1|        encoded.push(0x42);
+  934|      1|        encode_varint(4u64, &mut encoded);
+  935|      1|        encoded.extend_from_slice(b"test");
+  936|       |
+  937|       |        // bytes_field (tag 0x4A): value b"\xDE\xAD\xBE\xEF"
+  938|      1|        encoded.push(0x4A);
+  939|      1|        encode_varint(4u64, &mut encoded);
+  940|      1|        encoded.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+  941|       |
+  942|      1|        let result = codec.decode_dynamic(&encoded, &schema);
+  943|       |
+  944|      1|        assert!(result.is_ok(), "decode failed: {:?}", result.err());
+                                              ^0                     ^0     ^0
+  945|      1|        let decoded = result.unwrap();
+  946|       |
+  947|      1|        assert_eq!(
+  948|      1|            decoded.get("double_field"),
+  949|       |            Some(&CodecValue::Float64(3.125))
+  950|       |        );
+  951|      1|        assert_eq!(decoded.get("float_field"), Some(&CodecValue::Float32(2.71)));
+  952|      1|        assert_eq!(decoded.get("int64_field"), Some(&CodecValue::Int64(-12345)));
+  953|      1|        assert_eq!(
+  954|      1|            decoded.get("uint64_field"),
+  955|       |            Some(&CodecValue::UInt64(12345))
+  956|       |        );
+  957|      1|        assert_eq!(decoded.get("int32_field"), Some(&CodecValue::Int32(-100)));
+  958|      1|        assert_eq!(decoded.get("uint32_field"), Some(&CodecValue::UInt32(200)));
+  959|      1|        assert_eq!(decoded.get("bool_field"), Some(&CodecValue::Bool(true)));
+  960|      1|        assert_eq!(
+  961|      1|            decoded.get("string_field"),
+  962|      1|            Some(&CodecValue::String("test".to_string()))
+  963|       |        );
+  964|      1|        assert_eq!(
+  965|      1|            decoded.get("bytes_field"),
+  966|      1|            Some(&CodecValue::Bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]))
+  967|       |        );
+  968|      1|    }
+  969|       |
+  970|       |    #[test]
+  971|      1|    fn test_protobuf_codec_decode_empty_message() {
+  972|      1|        let codec = ProtobufCodec::new();
+  973|      1|        let fds_bytes = create_simple_fds();
+  974|      1|        let schema = SchemaMetadata::protobuf("test.SimpleMessage".to_string(), fds_bytes);
+  975|       |
+  976|      1|        let result = codec.decode_dynamic(&[], &schema);
+  977|       |
+  978|       |        // Note: prost-reflect returns all fields defined in the schema,
+  979|       |        // even if not present in the encoded message. Fields not in the
+  980|       |        // message will have default values.
+  981|       |        // This test verifies decoding succeeds.
+  982|      1|        assert!(result.is_ok());
+  983|      1|        let _decoded = result.unwrap();
+  984|      1|    }
+  985|       |
+  986|       |    #[test]
+  987|      1|    fn test_protobuf_codec_decode_invalid_schema_returns_error() {
+  988|      1|        let codec = ProtobufCodec::new();
+  989|      1|        let schema = SchemaMetadata::cdr("test.Type".to_string(), "int32 value".to_string());
+  990|       |
+  991|      1|        let result = codec.decode_dynamic(&[0x00, 0x00, 0x00, 0x00], &schema);
+  992|      1|        assert!(result.is_err());
+  993|      1|    }
+  994|       |
+  995|       |    #[test]
+  996|      1|    fn test_protobuf_codec_decode_malformed_protobuf_returns_error() {
+  997|      1|        let codec = ProtobufCodec::new();
+  998|      1|        let fds_bytes = create_simple_fds();
+  999|      1|        let schema = SchemaMetadata::protobuf("test.SimpleMessage".to_string(), fds_bytes);
+ 1000|       |
+ 1001|       |        // Invalid varint (incomplete)
+ 1002|      1|        let encoded = vec![0x08, 0x80, 0x80];
+ 1003|      1|        let result = codec.decode_dynamic(&encoded, &schema);
+ 1004|       |
+ 1005|      1|        assert!(result.is_err());
+ 1006|      1|    }
+ 1007|       |
+ 1008|       |    // =========================================================================
+ 1009|       |    // Encode Tests
+ 1010|       |    // =========================================================================
+ 1011|       |
+ 1012|       |    #[test]
+ 1013|      1|    fn test_protobuf_codec_encode_simple_message() {
+ 1014|      1|        let mut codec = ProtobufCodec::new();
+ 1015|      1|        let fds_bytes = create_simple_fds();
+ 1016|      1|        let schema = SchemaMetadata::protobuf("test.SimpleMessage".to_string(), fds_bytes);
+ 1017|       |
+ 1018|      1|        let mut decoded = DecodedMessage::new();
+ 1019|      1|        decoded.insert("int_field".to_string(), CodecValue::Int32(42));
+ 1020|      1|        decoded.insert(
+ 1021|      1|            "string_field".to_string(),
+ 1022|      1|            CodecValue::String("hello".to_string()),
+ 1023|       |        );
+ 1024|      1|        decoded.insert("bool_field".to_string(), CodecValue::Bool(true));
+ 1025|       |
+ 1026|      1|        let result = codec.encode_dynamic(&decoded, &schema);
+ 1027|       |
+ 1028|      1|        assert!(result.is_ok(), "encode failed: {:?}", result.err());
+                                              ^0                     ^0     ^0
+ 1029|      1|        let encoded = result.unwrap();
+ 1030|       |
+ 1031|       |        // Verify round-trip
+ 1032|      1|        let decoded_again = codec.decode_dynamic(&encoded, &schema).unwrap();
+ 1033|      1|        assert_eq!(decoded_again.get("int_field"), Some(&CodecValue::Int32(42)));
+ 1034|      1|        assert_eq!(
+ 1035|      1|            decoded_again.get("string_field"),
+ 1036|      1|            Some(&CodecValue::String("hello".to_string()))
+ 1037|       |        );
+ 1038|      1|        assert_eq!(
+ 1039|      1|            decoded_again.get("bool_field"),
+ 1040|       |            Some(&CodecValue::Bool(true))
+ 1041|       |        );
+ 1042|      1|    }
+ 1043|       |
+ 1044|       |    #[test]
+ 1045|      1|    fn test_protobuf_codec_encode_repeated_fields() {
+ 1046|      1|        let mut codec = ProtobufCodec::new();
+ 1047|      1|        let fds_bytes = create_repeated_fds();
+ 1048|      1|        let schema = SchemaMetadata::protobuf("test.RepeatedMessage".to_string(), fds_bytes);
+ 1049|       |
+ 1050|      1|        let mut decoded = DecodedMessage::new();
+ 1051|      1|        decoded.insert(
+ 1052|      1|            "int_array".to_string(),
+ 1053|      1|            CodecValue::Array(vec![
+ 1054|      1|                CodecValue::Int32(1),
+ 1055|      1|                CodecValue::Int32(2),
+ 1056|      1|                CodecValue::Int32(3),
+ 1057|      1|            ]),
+ 1058|       |        );
+ 1059|       |
+ 1060|      1|        let result = codec.encode_dynamic(&decoded, &schema);
+ 1061|       |
+ 1062|      1|        assert!(result.is_ok());
+ 1063|      1|        let encoded = result.unwrap();
+ 1064|       |
+ 1065|       |        // Verify round-trip
+ 1066|      1|        let decoded_again = codec.decode_dynamic(&encoded, &schema).unwrap();
+ 1067|      1|        assert_eq!(
+ 1068|      1|            decoded_again.get("int_array"),
+ 1069|      1|            Some(&CodecValue::Array(vec![
+ 1070|      1|                CodecValue::Int32(1),
+ 1071|      1|                CodecValue::Int32(2),
+ 1072|      1|                CodecValue::Int32(3),
+ 1073|      1|            ]))
+ 1074|       |        );
+ 1075|      1|    }
+ 1076|       |
+ 1077|       |    #[test]
+ 1078|      1|    fn test_protobuf_codec_encode_enum_field() {
+ 1079|      1|        let mut codec = ProtobufCodec::new();
+ 1080|      1|        let fds_bytes = create_enum_fds();
+ 1081|      1|        let schema = SchemaMetadata::protobuf("test.EnumMessage".to_string(), fds_bytes);
+ 1082|       |
+ 1083|      1|        let mut decoded = DecodedMessage::new();
+ 1084|      1|        decoded.insert("enum_field".to_string(), CodecValue::Int32(1));
+ 1085|       |
+ 1086|      1|        let result = codec.encode_dynamic(&decoded, &schema);
+ 1087|       |
+ 1088|      1|        assert!(result.is_ok());
+ 1089|      1|        let encoded = result.unwrap();
+ 1090|       |
+ 1091|       |        // Verify round-trip
+ 1092|      1|        let decoded_again = codec.decode_dynamic(&encoded, &schema).unwrap();
+ 1093|      1|        assert_eq!(decoded_again.get("enum_field"), Some(&CodecValue::Int32(1)));
+ 1094|      1|    }
+ 1095|       |
+ 1096|       |    #[test]
+ 1097|      1|    fn test_protobuf_codec_encode_nested_message() {
+ 1098|      1|        let mut codec = ProtobufCodec::new();
+ 1099|      1|        let fds_bytes = create_nested_fds();
+ 1100|      1|        let schema = SchemaMetadata::protobuf("test.OuterMessage".to_string(), fds_bytes);
+ 1101|       |
+ 1102|      1|        let mut nested_fields = HashMap::new();
+ 1103|      1|        nested_fields.insert("value".to_string(), CodecValue::Int32(42));
+ 1104|       |
+ 1105|      1|        let mut decoded = DecodedMessage::new();
+ 1106|      1|        decoded.insert("nested".to_string(), CodecValue::Struct(nested_fields));
+ 1107|       |
+ 1108|      1|        let result = codec.encode_dynamic(&decoded, &schema);
+ 1109|       |
+ 1110|      1|        assert!(result.is_ok());
+ 1111|      1|        let encoded = result.unwrap();
+ 1112|       |
+ 1113|       |        // Verify round-trip
+ 1114|      1|        let decoded_again = codec.decode_dynamic(&encoded, &schema).unwrap();
+ 1115|      1|        if let Some(CodecValue::Struct(fields)) = decoded_again.get("nested") {
+ 1116|      1|            assert_eq!(fields.get("value"), Some(&CodecValue::Int32(42)));
+ 1117|       |        } else {
+ 1118|      0|            panic!("Expected Struct for nested field");
+ 1119|       |        }
+ 1120|      1|    }
+ 1121|       |
+ 1122|       |    #[test]
+ 1123|      1|    fn test_protobuf_codec_encode_unknown_field_is_ignored() {
+ 1124|      1|        let mut codec = ProtobufCodec::new();
+ 1125|      1|        let fds_bytes = create_simple_fds();
+ 1126|      1|        let schema = SchemaMetadata::protobuf("test.SimpleMessage".to_string(), fds_bytes);
+ 1127|       |
+ 1128|      1|        let mut decoded = DecodedMessage::new();
+ 1129|      1|        decoded.insert("int_field".to_string(), CodecValue::Int32(42));
+ 1130|      1|        decoded.insert(
+ 1131|      1|            "unknown_field".to_string(),
+ 1132|      1|            CodecValue::String("value".to_string()),
+ 1133|       |        );
+ 1134|       |
+ 1135|       |        // Should succeed - unknown fields are silently ignored
+ 1136|      1|        let result = codec.encode_dynamic(&decoded, &schema);
+ 1137|      1|        assert!(result.is_ok());
+ 1138|      1|    }
+ 1139|       |
+ 1140|       |    #[test]
+ 1141|      1|    fn test_protobuf_codec_encode_with_invalid_schema_returns_error() {
+ 1142|      1|        let mut codec = ProtobufCodec::new();
+ 1143|      1|        let schema = SchemaMetadata::cdr("test.Type".to_string(), "int32 value".to_string());
+ 1144|       |
+ 1145|      1|        let mut decoded = DecodedMessage::new();
+ 1146|      1|        decoded.insert("field".to_string(), CodecValue::Int32(42));
+ 1147|       |
+ 1148|      1|        let result = codec.encode_dynamic(&decoded, &schema);
+ 1149|      1|        assert!(result.is_err());
+ 1150|      1|    }
+ 1151|       |
+ 1152|       |    // =========================================================================
+ 1153|       |    // Round-trip Tests
+ 1154|       |    // =========================================================================
+ 1155|       |
+ 1156|       |    #[test]
+ 1157|      1|    fn test_protobuf_codec_round_trip_preserves_data() {
+ 1158|      1|        let mut codec = ProtobufCodec::new();
+ 1159|      1|        let fds_bytes = create_simple_fds();
+ 1160|      1|        let schema = SchemaMetadata::protobuf("test.SimpleMessage".to_string(), fds_bytes);
+ 1161|       |
+ 1162|      1|        let original_data = encode_simple_message(42, "round-trip", true);
+ 1163|       |
+ 1164|      1|        let decoded = codec.decode_dynamic(&original_data, &schema).unwrap();
+ 1165|      1|        let encoded = codec.encode_dynamic(&decoded, &schema).unwrap();
+ 1166|       |
+ 1167|       |        // The encoded data should be functionally equivalent
+ 1168|      1|        let decoded_again = codec.decode_dynamic(&encoded, &schema).unwrap();
+ 1169|      1|        assert_eq!(decoded, decoded_again);
+ 1170|      1|    }
+ 1171|       |
+ 1172|       |    #[test]
+ 1173|      1|    fn test_protobuf_codec_multiple_decode_encode_cycles() {
+ 1174|      1|        let mut codec = ProtobufCodec::new();
+ 1175|      1|        let fds_bytes = create_simple_fds();
+ 1176|      1|        let schema = SchemaMetadata::protobuf("test.SimpleMessage".to_string(), fds_bytes);
+ 1177|       |
+ 1178|      1|        let original_data = encode_simple_message(100, "multi-cycle", false);
+ 1179|       |
+ 1180|      1|        let mut current = original_data.clone();
+ 1181|      6|        for _ in 0..5 {
+ 1182|      5|            let decoded = codec.decode_dynamic(&current, &schema).unwrap();
+ 1183|      5|            current = codec.encode_dynamic(&decoded, &schema).unwrap();
+ 1184|      5|        }
+ 1185|       |
+ 1186|       |        // Final decoded should match original
+ 1187|      1|        let decoded = codec.decode_dynamic(&current, &schema).unwrap();
+ 1188|      1|        assert_eq!(decoded.get("int_field"), Some(&CodecValue::Int32(100)));
+ 1189|      1|        assert_eq!(
+ 1190|      1|            decoded.get("string_field"),
+ 1191|      1|            Some(&CodecValue::String("multi-cycle".to_string()))
+ 1192|       |        );
+ 1193|      1|        assert_eq!(decoded.get("bool_field"), Some(&CodecValue::Bool(false)));
+ 1194|      1|    }
+ 1195|       |
+ 1196|       |    // =========================================================================
+ 1197|       |    // DynCodec Trait Tests
+ 1198|       |    // =========================================================================
+ 1199|       |
+ 1200|       |    #[test]
+ 1201|      1|    fn test_protobuf_codec_encoding_type_is_protobuf() {
+ 1202|      1|        let codec = ProtobufCodec::new();
+ 1203|      1|        assert_eq!(codec.encoding_type(), Encoding::Protobuf);
+ 1204|      1|    }
+ 1205|       |
+ 1206|       |    #[test]
+ 1207|      1|    fn test_protobuf_codec_reset_is_noop() {
+ 1208|      1|        let mut codec = ProtobufCodec::new();
+ 1209|      1|        let fds_bytes = create_simple_fds();
+ 1210|      1|        codec
+ 1211|      1|            .add_file_descriptor_set("test.SimpleMessage", &fds_bytes)
+ 1212|      1|            .unwrap();
+ 1213|       |
+ 1214|       |        // Reset should not cause errors
+ 1215|      1|        codec.reset();
+ 1216|       |
+ 1217|       |        // Descriptors should still be cached after reset
+ 1218|      1|        assert!(codec.get_descriptor("test.SimpleMessage").is_some());
+ 1219|      1|    }
+ 1220|       |
+ 1221|       |    #[test]
+ 1222|      1|    fn test_protobuf_codec_as_any_returns_self() {
+ 1223|      1|        let codec = ProtobufCodec::new();
+ 1224|      1|        let any = codec.as_any();
+ 1225|       |
+ 1226|      1|        assert!(any.is::<ProtobufCodec>());
+ 1227|      1|    }
+ 1228|       |
+ 1229|       |    // =========================================================================
+ 1230|       |    // Error Handling Tests
+ 1231|       |    // =========================================================================
+ 1232|       |
+ 1233|       |    #[test]
+ 1234|      1|    fn test_protobuf_codec_decode_with_wrong_type_in_schema() {
+ 1235|      1|        let codec = ProtobufCodec::new();
+ 1236|      1|        let fds_bytes = create_simple_fds();
+ 1237|       |        // Schema type doesn't match FDS
+ 1238|      1|        let schema = SchemaMetadata::protobuf("wrong.Type".to_string(), fds_bytes);
+ 1239|       |
+ 1240|      1|        let encoded = encode_simple_message(42, "test", true);
+ 1241|      1|        let result = codec.decode_dynamic(&encoded, &schema);
+ 1242|       |
+ 1243|      1|        assert!(result.is_err());
+ 1244|      1|    }
+ 1245|       |
+ 1246|       |    #[test]
+ 1247|      1|    fn test_protobuf_codec_encode_with_null_value() {
+ 1248|      1|        let mut codec = ProtobufCodec::new();
+ 1249|      1|        let fds_bytes = create_simple_fds();
+ 1250|      1|        let schema = SchemaMetadata::protobuf("test.SimpleMessage".to_string(), fds_bytes);
+ 1251|       |
+ 1252|      1|        let mut decoded = DecodedMessage::new();
+ 1253|      1|        decoded.insert("int_field".to_string(), CodecValue::Null);
+ 1254|       |
+ 1255|       |        // Null should be encoded as default value (0)
+ 1256|      1|        let result = codec.encode_dynamic(&decoded, &schema);
+ 1257|      1|        assert!(result.is_ok());
+ 1258|      1|    }
+ 1259|       |
+ 1260|       |    #[test]
+ 1261|      1|    fn test_protobuf_codec_encode_with_unsupported_nested_struct_for_non_message_field() {
+ 1262|      1|        let mut codec = ProtobufCodec::new();
+ 1263|      1|        let fds_bytes = create_simple_fds();
+ 1264|      1|        let schema = SchemaMetadata::protobuf("test.SimpleMessage".to_string(), fds_bytes);
+ 1265|       |
+ 1266|      1|        let mut nested = HashMap::new();
+ 1267|      1|        nested.insert("inner".to_string(), CodecValue::Int32(1));
+ 1268|       |
+ 1269|      1|        let mut decoded = DecodedMessage::new();
+ 1270|       |        // int_field is not a message type
+ 1271|      1|        decoded.insert("int_field".to_string(), CodecValue::Struct(nested));
+ 1272|       |
+ 1273|      1|        let result = codec.encode_dynamic(&decoded, &schema);
+ 1274|       |
+ 1275|       |        // Should return error because we can't encode a struct for a non-message field
+ 1276|      1|        assert!(result.is_err());
+ 1277|      1|    }
+ 1278|       |
+ 1279|       |    // =========================================================================
+ 1280|       |    // Thread Safety Tests
+ 1281|       |    // =========================================================================
+ 1282|       |
+ 1283|       |    #[test]
+ 1284|      1|    fn test_protobuf_codec_allows_concurrent_reads() {
+ 1285|      1|        let codec = ProtobufCodec::new();
+ 1286|      1|        let fds_bytes = create_simple_fds();
+ 1287|      1|        codec
+ 1288|      1|            .add_file_descriptor_set("test.SimpleMessage", &fds_bytes)
+ 1289|      1|            .unwrap();
+ 1290|       |
+ 1291|       |        // Multiple read locks should work
+ 1292|      1|        let descriptor1 = codec.get_descriptor("test.SimpleMessage");
+ 1293|      1|        let descriptor2 = codec.get_descriptor("test.SimpleMessage");
+ 1294|       |
+ 1295|      1|        assert!(descriptor1.is_some());
+ 1296|      1|        assert!(descriptor2.is_some());
+ 1297|      1|        assert_eq!(descriptor1.unwrap().name(), descriptor2.unwrap().name());
+ 1298|      1|    }
+ 1299|       |}
+

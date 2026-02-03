@@ -1,0 +1,427 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/schema/parser/unified.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Unified parser for IDL and ROS .msg schema files.
+    6|       |//!
+    7|       |//! This module provides two separate Pest grammars:
+    8|       |//! - `grammar/msg.pest` for ROS .msg format
+    9|       |//! - `grammar/omg_idl.pest` for OMG IDL format
+   10|       |
+   11|       |use crate::core::{CodecError, Result as CoreResult};
+   12|       |use crate::schema::ast::MessageSchema;
+   13|       |use crate::schema::builtin_types;
+   14|       |
+   15|       |// Import separate parsers (each has its own Rule enum in its own module)
+   16|       |use super::idl_parser;
+   17|       |use super::msg_parser;
+   18|       |
+   19|       |// =============================================================================
+   20|       |// Schema Format Detection
+   21|       |// =============================================================================
+   22|       |
+   23|       |/// Schema format detected during parsing.
+   24|       |#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   25|       |pub enum SchemaFormat {
+   26|       |    /// Classic ROS .msg format (simple field list)
+   27|       |    ClassicMsg,
+   28|       |    /// Pure OMG IDL format (module/struct declarations)
+   29|       |    OmgIdl,
+   30|       |    /// ROS 2 adapter IDL format (with separator lines and IDL headers)
+   31|       |    Ros2Idl,
+   32|       |}
+   33|       |
+   34|       |/// Parse a schema definition (supports IDL, ROS .msg, and ROS 2 adapter formats).
+   35|       |///
+   36|       |/// This function automatically detects the format:
+   37|       |/// - **Classic MSG**: Simple list of field definitions
+   38|       |/// - **IDL format**: Contains `module`, `struct` keywords
+   39|       |/// - **ROS 2 adapter**: Contains separator lines with `IDL:` headers
+   40|       |///
+   41|       |/// # Arguments
+   42|       |///
+   43|       |/// * `name` - The name of the message type (e.g., "std_msgs/Header")
+   44|       |/// * `definition` - The schema file contents
+   45|       |///
+   46|       |/// # Examples
+   47|       |///
+   48|       |/// ```no_run
+   49|       |/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+   50|       |/// use robocodec::schema::parse_schema;
+   51|       |///
+   52|       |/// // Parse simple MSG format
+   53|       |/// let schema = parse_schema("std_msgs/Header", "uint32 seq\ntime stamp\nstring frame_id")?;
+   54|       |///
+   55|       |/// // Parse IDL format
+   56|       |/// let idl_schema = parse_schema("geometry_msgs/Pose",
+   57|       |///     "struct Pose {\n    Point position;\n    Quaternion orientation;\n};")?;
+   58|       |/// # Ok(())
+   59|       |/// # }
+   60|       |/// ```
+   61|     12|pub fn parse_schema(name: impl Into<String>, definition: &str) -> CoreResult<MessageSchema> {
+   62|     12|    let name = name.into();
+   63|     12|    let format = detect_format(definition);
+   64|       |
+   65|     12|    let mut schema = match format {
+   66|      7|        SchemaFormat::ClassicMsg => msg_parser::parse(&name, definition),
+   67|      5|        SchemaFormat::OmgIdl => idl_parser::parse(&name, definition),
+   68|      0|        SchemaFormat::Ros2Idl => parse_ros2_idl(&name, definition),
+   69|      0|    }?;
+   70|       |
+   71|       |    // Populate with predefined builtin types
+   72|     12|    populate_builtin_types(&mut schema);
+   73|       |
+   74|     12|    Ok(schema)
+   75|     12|}
+   76|       |
+   77|       |/// Parse a schema definition with explicit encoding info.
+   78|       |///
+   79|       |/// Use this when you know the message encoding (e.g., from MCAP channel metadata).
+   80|       |/// The encoding helps determine ROS version for proper Header field handling.
+   81|       |///
+   82|       |/// # Arguments
+   83|       |///
+   84|       |/// * `name` - The name of the message type (e.g., "std_msgs/Header")
+   85|       |/// * `definition` - The schema file contents
+   86|       |/// * `encoding` - The message encoding (e.g., "cdr", "ros1msg")
+   87|     12|pub fn parse_schema_with_encoding(
+   88|     12|    name: impl Into<String>,
+   89|     12|    definition: &str,
+   90|     12|    encoding: &str,
+   91|     12|) -> CoreResult<MessageSchema> {
+   92|     12|    let name = name.into();
+   93|     12|    let format = detect_format(definition);
+   94|       |
+   95|     12|    let mut schema = match format {
+   96|     12|        SchemaFormat::ClassicMsg => msg_parser::parse_with_encoding(&name, definition, encoding),
+   97|      0|        SchemaFormat::OmgIdl => idl_parser::parse_with_encoding(&name, definition, encoding),
+   98|      0|        SchemaFormat::Ros2Idl => parse_ros2_idl_with_encoding(&name, definition, encoding),
+   99|      0|    }?;
+  100|       |
+  101|       |    // Populate with predefined builtin types
+  102|     12|    populate_builtin_types(&mut schema);
+  103|       |
+  104|     12|    Ok(schema)
+  105|     12|}
+  106|       |
+  107|       |/// Populate a schema with predefined builtin types.
+  108|       |///
+  109|       |/// This adds standard ROS2 builtin_interfaces types like Time and Duration
+  110|       |/// to the schema, ensuring they're available when decoding messages that
+  111|       |/// reference them.
+  112|     24|fn populate_builtin_types(schema: &mut MessageSchema) {
+  113|    144|    for builtin_type in builtin_types::get_all() {
+                                      ^24
+  114|       |        // Only add if not already present (user schemas can override)
+  115|    144|        if !schema.types.contains_key(&builtin_type.name) {
+  116|    120|            schema.add_type(builtin_type);
+  117|    120|        }
+                      ^24
+  118|       |    }
+  119|     24|}
+  120|       |
+  121|       |/// Detect the schema format from the definition.
+  122|     26|fn detect_format(definition: &str) -> SchemaFormat {
+  123|       |    // Check for ROS 2 adapter format - schemas starting with "IDL:" header
+  124|       |    // This can be either:
+  125|       |    // 1. Separator lines with "IDL:" header: =========\nIDL: xyz
+  126|       |    // 2. Direct "IDL:" at the start of a line
+  127|     26|    if definition.contains("IDL:") {
+  128|       |        // Check for separator pattern or direct IDL: lines
+  129|      0|        for line in definition.lines() {
+  130|      0|            if line.starts_with("===") && line.len() >= 3 {
+  131|       |                // Separator line found, this is ROS2 IDL format
+  132|      0|                return SchemaFormat::Ros2Idl;
+  133|      0|            }
+  134|      0|            if line.starts_with("IDL:") {
+  135|       |                // Direct IDL: header found, this is ROS2 IDL format
+  136|      0|                return SchemaFormat::Ros2Idl;
+  137|      0|            }
+  138|       |        }
+  139|     26|    }
+  140|       |
+  141|       |    // Check for pure IDL format (module keyword or struct keyword)
+  142|     26|    let trimmed = definition.trim_start();
+  143|     26|    if trimmed.starts_with("module ") || trimmed.starts_with("struct ") {
+  144|      6|        return SchemaFormat::OmgIdl;
+  145|     20|    }
+  146|       |
+  147|       |    // Default to classic MSG
+  148|     20|    SchemaFormat::ClassicMsg
+  149|     26|}
+  150|       |
+  151|       |/// Parse ROS 2 adapter IDL format (with separator lines).
+  152|       |///
+  153|       |/// This format has separator lines like:
+  154|       |///   ================================================================================================
+  155|       |///   IDL: std_msgs/msg/Header
+  156|       |///
+  157|       |/// We strip these headers and parse the entire content as pure OMG IDL.
+  158|      0|fn parse_ros2_idl(name: &str, definition: &str) -> CoreResult<MessageSchema> {
+  159|       |    // Default to ROS2 for ROS2 IDL format
+  160|      0|    parse_ros2_idl_with_encoding(name, definition, "cdr")
+  161|      0|}
+  162|       |
+  163|       |/// Parse ROS 2 adapter IDL format with explicit encoding info.
+  164|      0|fn parse_ros2_idl_with_encoding(
+  165|      0|    name: &str,
+  166|      0|    definition: &str,
+  167|      0|    encoding: &str,
+  168|      0|) -> CoreResult<MessageSchema> {
+  169|       |    // Strip ROS2 IDL header separator lines (lines starting with 80+ '=' chars)
+  170|       |    // Also strip "IDL: type/name" header lines
+  171|      0|    let cleaned: String = definition
+  172|      0|        .lines()
+  173|      0|        .filter(|line| {
+  174|       |            // Skip separator lines (80+ '=' chars) and "IDL:" header lines
+  175|      0|            !(line.starts_with("IDL:") || (line.starts_with('=') && line.len() >= 80))
+  176|      0|        })
+  177|      0|        .collect::<Vec<&str>>()
+  178|      0|        .join("\n");
+  179|       |
+  180|       |    // Check if there's any actual schema content left
+  181|      0|    let trimmed = cleaned.trim();
+  182|      0|    if trimmed.is_empty() || !trimmed.contains("struct") {
+  183|       |        // No actual schema content - this is likely a placeholder or binary-only schema
+  184|      0|        return Err(CodecError::parse(
+  185|      0|            "IDL schema",
+  186|      0|            "No valid schema content found (possibly binary/protobuf schema)",
+  187|      0|        ));
+  188|      0|    }
+  189|       |
+  190|       |    // After stripping headers, parse as pure OMG IDL with encoding
+  191|      0|    idl_parser::parse_with_encoding(name, &cleaned, encoding)
+  192|      0|}
+  193|       |
+  194|       |// Backward compatibility: SchemaParser that wraps parse_schema
+  195|       |pub struct SchemaParser;
+  196|       |
+  197|       |impl SchemaParser {
+  198|       |    /// Parse using the appropriate parser based on format detection
+  199|      0|    pub fn parse_auto(name: &str, input: &str) -> CoreResult<MessageSchema> {
+  200|      0|        parse_schema(name, input)
+  201|      0|    }
+  202|       |}
+  203|       |
+  204|       |// =============================================================================
+  205|       |// Tests
+  206|       |// =============================================================================
+  207|       |
+  208|       |#[cfg(test)]
+  209|       |mod tests {
+  210|       |    use super::*;
+  211|       |    use crate::schema::ast::{FieldType, PrimitiveType};
+  212|       |
+  213|       |    #[test]
+  214|      1|    fn test_parse_msg_format() {
+  215|      1|        let schema = parse_schema("TestMsg", "int32 value\nstring name").unwrap();
+  216|      1|        let msg_type = schema.get_type("TestMsg").unwrap();
+  217|       |
+  218|      1|        assert_eq!(msg_type.fields.len(), 2);
+  219|      1|        assert_eq!(msg_type.fields[0].name, "value");
+  220|      1|        assert_eq!(msg_type.fields[1].name, "name");
+  221|      1|    }
+  222|       |
+  223|       |    #[test]
+  224|      1|    fn test_parse_msg_arrays() {
+  225|      1|        let schema = parse_schema("TestMsg", "int32[] dynamic\nint32[5] fixed").unwrap();
+  226|      1|        let msg_type = schema.get_type("TestMsg").unwrap();
+  227|       |
+  228|      1|        assert_eq!(msg_type.fields.len(), 2);
+  229|       |
+  230|      1|        if let FieldType::Array { size, .. } = &msg_type.fields[0].type_name {
+  231|      1|            assert!(size.is_none());
+  232|       |        } else {
+  233|      0|            panic!("Expected array");
+  234|       |        }
+  235|       |
+  236|      1|        if let FieldType::Array { size, .. } = &msg_type.fields[1].type_name {
+  237|      1|            assert_eq!(*size, Some(5));
+  238|       |        } else {
+  239|      0|            panic!("Expected array");
+  240|       |        }
+  241|      1|    }
+  242|       |
+  243|       |    #[test]
+  244|      1|    fn test_parse_idl_struct() {
+  245|      1|        let idl = "struct Point { double x; double y; };";
+  246|       |
+  247|      1|        let schema = parse_schema("Point", idl).unwrap();
+  248|      1|        let msg_type = schema.get_type("Point").unwrap();
+  249|       |
+  250|      1|        assert_eq!(msg_type.fields.len(), 2);
+  251|      1|        assert_eq!(msg_type.fields[0].name, "x");
+  252|      1|        assert_eq!(msg_type.fields[1].name, "y");
+  253|      1|    }
+  254|       |
+  255|       |    #[test]
+  256|      1|    fn test_parse_idl_struct_with_multiple_types() {
+  257|      1|        let idl = "struct Point { double x; double y; };
+  258|      1|                   struct Vector3 { double x; double y; double z; };";
+  259|       |
+  260|      1|        let schema = parse_schema("Test", idl).unwrap();
+  261|      1|        let point = schema.get_type("Point").unwrap();
+  262|      1|        let vector = schema.get_type("Vector3").unwrap();
+  263|       |
+  264|      1|        assert_eq!(point.fields.len(), 2);
+  265|      1|        assert_eq!(vector.fields.len(), 3);
+  266|      1|    }
+  267|       |
+  268|       |    #[test]
+  269|      1|    fn test_parse_idl_struct_with_integer_types() {
+  270|      1|        let idl = "struct Numbers {
+  271|      1|            long a;
+  272|      1|            unsigned long b;
+  273|      1|            long long c;
+  274|      1|            unsigned long long d;
+  275|      1|            short e;
+  276|      1|            unsigned short f;
+  277|      1|        };";
+  278|       |
+  279|      1|        let schema = parse_schema("Numbers", idl).unwrap();
+  280|      1|        let msg_type = schema.get_type("Numbers").unwrap();
+  281|       |
+  282|      1|        assert_eq!(msg_type.fields.len(), 6);
+  283|      1|        assert_eq!(msg_type.fields[0].name, "a");
+  284|      1|        assert_eq!(msg_type.fields[1].name, "b");
+  285|      1|        assert_eq!(msg_type.fields[2].name, "c");
+  286|      1|        assert_eq!(msg_type.fields[3].name, "d");
+  287|      1|        assert_eq!(msg_type.fields[4].name, "e");
+  288|      1|        assert_eq!(msg_type.fields[5].name, "f");
+  289|      1|    }
+  290|       |
+  291|       |    #[test]
+  292|      1|    fn test_parse_idl_struct_with_sequence() {
+  293|      1|        let idl = "struct ArrayData { sequence<long> values; };";
+  294|       |
+  295|      1|        let schema = parse_schema("ArrayData", idl).unwrap();
+  296|      1|        let msg_type = schema.get_type("ArrayData").unwrap();
+  297|       |
+  298|      1|        assert_eq!(msg_type.fields.len(), 1);
+  299|      1|        assert_eq!(msg_type.fields[0].name, "values");
+  300|       |        // Verify it's an array type
+  301|      1|        match &msg_type.fields[0].type_name {
+  302|      1|            FieldType::Array { base_type, size } => {
+  303|      1|                assert!(size.is_none()); // sequence is dynamic
+  304|      1|                assert!(matches!(
+                                      ^0
+  305|      1|                    base_type.as_ref(),
+  306|       |                    FieldType::Primitive(PrimitiveType::Int32)
+  307|       |                ));
+  308|       |            }
+  309|      0|            _ => panic!("Expected Array type"),
+  310|       |        }
+  311|      1|    }
+  312|       |
+  313|       |    #[test]
+  314|      1|    fn test_parse_idl_struct_with_string() {
+  315|      1|        let idl = "struct StringData { string name; };";
+  316|       |
+  317|      1|        let schema = parse_schema("StringData", idl).unwrap();
+  318|      1|        let msg_type = schema.get_type("StringData").unwrap();
+  319|       |
+  320|      1|        assert_eq!(msg_type.fields.len(), 1);
+  321|      1|        assert_eq!(msg_type.fields[0].name, "name");
+  322|      1|        assert!(matches!(
+                              ^0
+  323|      1|            msg_type.fields[0].type_name,
+  324|       |            FieldType::Primitive(PrimitiveType::String)
+  325|       |        ));
+  326|      1|    }
+  327|       |
+  328|       |    #[test]
+  329|      1|    fn test_parse_nested_types() {
+  330|      1|        let schema =
+  331|      1|            parse_schema("TestMsg", "std_msgs/Header header\ngeometry_msgs/Pose pose").unwrap();
+  332|      1|        let msg_type = schema.get_type("TestMsg").unwrap();
+  333|       |
+  334|      1|        assert_eq!(msg_type.fields.len(), 2);
+  335|       |
+  336|      1|        assert!(matches!(msg_type.fields[0].type_name, FieldType::Nested(_)));
+                              ^0
+  337|      1|        assert!(matches!(msg_type.fields[1].type_name, FieldType::Nested(_)));
+                              ^0
+  338|      1|    }
+  339|       |
+  340|       |    #[test]
+  341|      1|    fn test_parse_with_comments() {
+  342|      1|        let schema = parse_schema(
+  343|       |            "TestMsg",
+  344|      1|            "# Header comment\nint32 value  # inline comment\nstring name",
+  345|       |        )
+  346|      1|        .unwrap();
+  347|      1|        let msg_type = schema.get_type("TestMsg").unwrap();
+  348|       |
+  349|      1|        assert_eq!(msg_type.fields.len(), 2);
+  350|      1|    }
+  351|       |
+  352|       |    #[test]
+  353|      1|    fn test_format_detection() {
+  354|      1|        assert_eq!(
+  355|      1|            detect_format("int32 value\nstring name"),
+  356|       |            SchemaFormat::ClassicMsg
+  357|       |        );
+  358|      1|        assert_eq!(
+  359|      1|            detect_format("struct Foo {\n    int32 x;\n};"),
+  360|       |            SchemaFormat::OmgIdl
+  361|       |        );
+  362|      1|    }
+  363|       |
+  364|       |    #[test]
+  365|      1|    fn test_builtin_types_included() {
+  366|       |        // Verify that builtin types are automatically included in parsed schemas
+  367|      1|        let schema = parse_schema("TestMsg", "int32 value").unwrap();
+  368|       |
+  369|       |        // Check that both naming variants for Time are present
+  370|      1|        assert!(schema.get_type("builtin_interfaces/Time").is_some());
+  371|      1|        assert!(schema.get_type("builtin_interfaces/msg/Time").is_some());
+  372|       |
+  373|       |        // Check that both naming variants for Duration are present
+  374|      1|        assert!(schema.get_type("builtin_interfaces/Duration").is_some());
+  375|      1|        assert!(schema.get_type("builtin_interfaces/msg/Duration").is_some());
+  376|      1|    }
+  377|       |
+  378|       |    #[test]
+  379|      1|    fn test_builtin_time_field_structure() {
+  380|      1|        let schema = parse_schema("TestMsg", "int32 value").unwrap();
+  381|       |
+  382|       |        // Verify Time type has correct field structure
+  383|      1|        let time = schema.get_type("builtin_interfaces/Time").unwrap();
+  384|      1|        assert_eq!(time.fields.len(), 2);
+  385|      1|        assert_eq!(time.fields[0].name, "sec");
+  386|      1|        assert_eq!(time.fields[1].name, "nanosec");
+  387|       |
+  388|       |        // Verify Duration type has correct field structure
+  389|      1|        let duration = schema.get_type("builtin_interfaces/Duration").unwrap();
+  390|      1|        assert_eq!(duration.fields.len(), 2);
+  391|      1|        assert_eq!(duration.fields[0].name, "sec");
+  392|      1|        assert_eq!(duration.fields[1].name, "nanosec");
+  393|      1|    }
+  394|       |
+  395|       |    #[test]
+  396|      1|    fn test_schema_with_builtin_time_reference() {
+  397|       |        // Test that a schema can reference builtin_interfaces/Time
+  398|      1|        let schema = parse_schema("TestMsg", "builtin_interfaces/Time stamp").unwrap();
+  399|       |
+  400|      1|        let msg_type = schema.get_type("TestMsg").unwrap();
+  401|      1|        assert_eq!(msg_type.fields.len(), 1);
+  402|      1|        assert_eq!(msg_type.fields[0].name, "stamp");
+  403|       |
+  404|       |        // Verify it's a nested type reference
+  405|      1|        match &msg_type.fields[0].type_name {
+  406|      1|            FieldType::Nested(name) => {
+  407|      1|                assert_eq!(name, "builtin_interfaces/Time");
+  408|       |            }
+  409|      0|            _ => panic!("Expected Nested type"),
+  410|       |        }
+  411|       |
+  412|       |        // Verify the referenced type exists
+  413|      1|        assert!(schema
+  414|      1|            .get_type_variants("builtin_interfaces/Time")
+  415|      1|            .is_some());
+  416|      1|    }
+  417|       |}
+

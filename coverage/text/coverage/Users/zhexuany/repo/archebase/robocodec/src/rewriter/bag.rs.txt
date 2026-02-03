@@ -1,0 +1,416 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/rewriter/bag.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! ROS1 bag file rewriter using decode-encode-write flow.
+    6|       |//!
+    7|       |//! This module provides functionality to rewrite ROS1 bag files with
+    8|       |//! optional transformations (topic/type renaming).
+    9|       |
+   10|       |use std::collections::HashMap;
+   11|       |use std::path::Path;
+   12|       |
+   13|       |use tracing::warn;
+   14|       |
+   15|       |use crate::core::{CodecError, Result};
+   16|       |use crate::encoding::{CdrDecoder, CdrEncoder};
+   17|       |use crate::io::formats::bag::writer::BagWriter;
+   18|       |use crate::io::formats::bag::BagFormat;
+   19|       |use crate::io::traits::FormatReader;
+   20|       |use crate::rewriter::{FormatRewriter, RewriteOptions, RewriteStats};
+   21|       |use crate::schema::{parse_schema, MessageSchema};
+   22|       |
+   23|       |/// ROS1 bag file rewriter.
+   24|       |///
+   25|       |/// Performs a full decode-encode-write cycle to normalize ROS1 bag files.
+   26|       |/// Can optionally apply transformations to rename topics and message types.
+   27|       |pub struct BagRewriter {
+   28|       |    /// Options for rewriting
+   29|       |    options: RewriteOptions,
+   30|       |    /// Cached schemas indexed by type name
+   31|       |    schemas: HashMap<String, MessageSchema>,
+   32|       |    /// Statistics
+   33|       |    stats: RewriteStats,
+   34|       |}
+   35|       |
+   36|       |impl BagRewriter {
+   37|       |    /// Create a new rewriter with default options.
+   38|      6|    pub fn new() -> Self {
+   39|      6|        Self::with_options(RewriteOptions::default())
+   40|      6|    }
+   41|       |
+   42|       |    /// Create a new rewriter with custom options.
+   43|     12|    pub fn with_options(options: RewriteOptions) -> Self {
+   44|     12|        Self {
+   45|     12|            options,
+   46|     12|            schemas: HashMap::new(),
+   47|     12|            stats: RewriteStats::default(),
+   48|     12|        }
+   49|     12|    }
+   50|       |
+   51|       |    /// Rewrite a ROS1 bag file to a new location.
+   52|       |    ///
+   53|       |    /// # Arguments
+   54|       |    ///
+   55|       |    /// * `input_path` - Path to the input bag file
+   56|       |    /// * `output_path` - Path to the output bag file
+   57|       |    ///
+   58|       |    /// # Returns
+   59|       |    ///
+   60|       |    /// Statistics about the rewrite operation.
+   61|      9|    pub fn rewrite<P1, P2>(&mut self, input_path: P1, output_path: P2) -> Result<RewriteStats>
+   62|      9|    where
+   63|      9|        P1: AsRef<Path>,
+   64|      9|        P2: AsRef<Path>,
+   65|       |    {
+   66|       |        // Reset statistics
+   67|      9|        self.stats = RewriteStats::default();
+   68|       |
+   69|       |        // Open input bag to get channel information
+   70|      9|        let reader = BagFormat::open(input_path.as_ref())?;
+                          ^8                                           ^1
+   71|      8|        let channels = FormatReader::channels(&reader).clone();
+   72|      8|        self.stats.channel_count = channels.len() as u64;
+   73|       |
+   74|       |        // Validate transformations if configured
+   75|      8|        if let Some(ref pipeline) = self.options.transforms {
+                                  ^3
+   76|      3|            let transform_channels: Vec<crate::transform::ChannelInfo> = channels
+   77|      3|                .values()
+   78|      3|                .map(|ch| crate::transform::ChannelInfo {
+   79|      3|                    id: ch.id,
+   80|      3|                    topic: ch.topic.clone(),
+   81|      3|                    message_type: ch.message_type.clone(),
+   82|      3|                    encoding: ch.encoding.clone(),
+   83|      3|                    schema: ch.schema.clone(),
+   84|      3|                    schema_encoding: ch.schema_encoding.clone(),
+   85|      3|                })
+   86|      3|                .collect();
+   87|      3|            pipeline
+   88|      3|                .validate(&transform_channels)
+   89|      3|                .map_err(|e| CodecError::encode("Transform", e.to_string()))?;
+                                           ^0                              ^0^0           ^0
+   90|      5|        }
+   91|       |
+   92|       |        // Create output bag writer
+   93|      8|        let mut writer = BagWriter::create(output_path)?;
+                                                                     ^0
+   94|       |
+   95|       |        // Pre-parse all schemas with transformations applied
+   96|      8|        if self.options.validate_schemas {
+   97|      3|            self.cache_schemas(&reader)?;
+                                                     ^0
+   98|      5|        }
+   99|       |
+  100|       |        // Build connection ID mapping for transformed topics
+  101|       |        // Maps: original channel_id -> new sequential connection ID
+  102|      8|        let mut conn_mapping: HashMap<u16, u16> = HashMap::new();
+  103|       |        // Use composite key (topic, callerid) to preserve connections from different publishers
+  104|      8|        let mut topic_callerid_to_new_conn: HashMap<(String, Option<String>), u16> = HashMap::new();
+  105|      8|        let mut next_new_conn_id: u16 = 0;
+  106|       |
+  107|      8|        let pipeline = self.options.transforms.as_ref();
+  108|       |
+  109|       |        // First pass: add all connections (with transformations applied)
+  110|      9|        for (orig_channel_id, channel) in channels.iter() {
+                                                        ^8       ^8
+  111|       |            // Apply transformations to get the target type and topic
+  112|      9|            let (transformed_type, transformed_schema) = if let Some(p) = pipeline {
+                                                                                   ^3
+  113|      3|                p.transform_type(&channel.message_type, channel.schema.as_deref())
+  114|       |            } else {
+  115|      6|                (channel.message_type.clone(), channel.schema.clone())
+  116|       |            };
+  117|       |
+  118|      9|            let transformed_topic = if let Some(p) = pipeline {
+                                                              ^3
+  119|      3|                p.transform_topic(&channel.topic)
+  120|      3|                    .unwrap_or_else(|| channel.topic.clone())
+                                                     ^0            ^0
+  121|       |            } else {
+  122|      6|                channel.topic.clone()
+  123|       |            };
+  124|       |
+  125|       |            // Preserve callerid from the original channel (ROS1-specific metadata)
+  126|      9|            let callerid = channel.callerid.clone();
+  127|       |
+  128|       |            // Check if we already have a connection for this (topic, callerid) combination
+  129|       |            // This ensures we don't merge connections from different publishers
+  130|      9|            let conn_key = (transformed_topic.clone(), callerid.clone());
+  131|      9|            let new_conn_id = if let Some(&existing_id) = topic_callerid_to_new_conn.get(&conn_key)
+                                                         ^0
+  132|       |            {
+  133|      0|                existing_id
+  134|       |            } else {
+  135|      9|                let new_id = next_new_conn_id;
+  136|      9|                next_new_conn_id = next_new_conn_id.wrapping_add(1);
+  137|       |
+  138|       |                // Add connection to writer with callerid preserved
+  139|      9|                let callerid_str = callerid.as_deref().unwrap_or("");
+  140|      9|                writer.add_connection_with_callerid(
+  141|      9|                    new_id,
+  142|      9|                    &transformed_topic,
+  143|      9|                    &transformed_type,
+  144|      9|                    transformed_schema.as_deref().unwrap_or(""),
+  145|      9|                    callerid_str,
+  146|      0|                )?;
+  147|       |
+  148|      9|                topic_callerid_to_new_conn.insert(conn_key, new_id);
+  149|      9|                new_id
+  150|       |            };
+  151|       |
+  152|      9|            conn_mapping.insert(*orig_channel_id, new_conn_id);
+  153|       |
+  154|       |            // Track transformation statistics
+  155|      9|            if let Some(p) = pipeline {
+                                      ^3
+  156|      3|                if p.transform_topic(&channel.topic).as_deref() != Some(&channel.topic) {
+  157|      2|                    self.stats.topics_renamed += 1;
+  158|      2|                }
+                              ^1
+  159|      3|                if p.transform_type(&channel.message_type, None).0 != channel.message_type {
+  160|      2|                    self.stats.types_renamed += 1;
+  161|      2|                }
+                              ^1
+  162|      6|            }
+  163|       |        }
+  164|       |
+  165|       |        // Process messages
+  166|      8|        let reader = BagFormat::open(input_path.as_ref())?;
+                                                                       ^0
+  167|      8|        let iter = reader.iter_raw()?;
+                                                  ^0
+  168|      8|        let stream = iter;
+  169|       |
+  170|       |        // Build a map of channel_id -> transformed type for schema lookup
+  171|      8|        let channel_type_map: HashMap<u16, String> = channels
+  172|      8|            .iter()
+  173|      9|            .map(|(id, ch)| {
+                           ^8
+  174|      9|                let transformed = if let Some(p) = pipeline {
+                                                            ^3
+  175|      3|                    p.transform_type(&ch.message_type, None).0
+  176|       |                } else {
+  177|      6|                    ch.message_type.clone()
+  178|       |                };
+  179|      9|                (*id, transformed)
+  180|      9|            })
+  181|      8|            .collect();
+  182|       |
+  183|      8|        let cdr_decoder = CdrDecoder::new();
+  184|      8|        let schemas = self.schemas.clone();
+  185|       |
+  186|       |        // Process each message
+  187|     20|        for result in stream {
+                          ^12
+  188|     12|            let (raw_msg, _channel_info) = match result {
+  189|     12|                Ok(msg) => msg,
+  190|      0|                Err(e) => {
+  191|      0|                    warn!(
+  192|       |                        context = "bag_message_read",
+  193|       |                        error = %e,
+  194|      0|                        "Failed to read message"
+  195|       |                    );
+  196|      0|                    continue;
+  197|       |                }
+  198|       |            };
+  199|       |
+  200|     12|            self.stats.message_count += 1;
+  201|       |
+  202|       |            // Get the new connection ID for this message
+  203|     12|            let new_conn_id = conn_mapping.get(&raw_msg.channel_id).copied();
+  204|       |
+  205|       |            // Skip if we don't have a mapping (shouldn't happen)
+  206|     12|            let new_conn_id = match new_conn_id {
+  207|     12|                Some(id) => id,
+  208|       |                None => {
+  209|      0|                    warn!(
+  210|       |                        context = "bag_rewrite",
+  211|       |                        channel_id = raw_msg.channel_id,
+  212|      0|                        "No connection mapping for channel, skipping message"
+  213|       |                    );
+  214|      0|                    continue;
+  215|       |                }
+  216|       |            };
+  217|       |
+  218|       |            // Get the transformed message type for schema lookup
+  219|     12|            let transformed_type = channel_type_map
+  220|     12|                .get(&raw_msg.channel_id)
+  221|     12|                .map(|s| s.as_str());
+  222|       |
+  223|       |            // Try to decode and re-encode CDR messages
+  224|     12|            if let Some(type_str) = transformed_type {
+  225|     12|                if let Some(schema) = schemas.get(type_str) {
+                                          ^3
+  226|       |                    // Use the io::RawMessage directly
+  227|      3|                    match self.rewrite_cdr_message(&cdr_decoder, &raw_msg, schema) {
+  228|      1|                        Ok(data) => {
+  229|       |                            // Write re-encoded message
+  230|      1|                            writer.write_message(&crate::bag::writer::BagMessage::from_raw(
+  231|      1|                                new_conn_id,
+  232|      1|                                raw_msg.log_time,
+  233|      1|                                data,
+  234|      1|                            ))?;
+                                            ^0
+  235|      1|                            self.stats.reencoded_count += 1;
+  236|       |                        }
+  237|      2|                        Err(e) => {
+  238|      2|                            warn!(
+  239|       |                                context = "bag_decode",
+  240|       |                                error = %e,
+  241|      0|                                "Failed to decode message"
+  242|       |                            );
+  243|      2|                            self.stats.decode_failures += 1;
+  244|      2|                            if self.options.skip_decode_failures {
+  245|      2|                                continue;
+  246|      0|                            }
+  247|       |                            // Pass through original data
+  248|      0|                            writer.write_message(&crate::bag::writer::BagMessage::from_raw(
+  249|      0|                                new_conn_id,
+  250|      0|                                raw_msg.log_time,
+  251|      0|                                raw_msg.data.clone(),
+  252|      0|                            ))?;
+  253|       |                        }
+  254|       |                    }
+  255|       |                } else {
+  256|       |                    // No schema, pass through
+  257|      9|                    writer.write_message(&crate::bag::writer::BagMessage::from_raw(
+  258|      9|                        new_conn_id,
+  259|      9|                        raw_msg.log_time,
+  260|      9|                        raw_msg.data.clone(),
+  261|      9|                    ))?;
+                                    ^0
+  262|      9|                    self.stats.passthrough_count += 1;
+  263|       |                }
+  264|       |            } else {
+  265|       |                // Pass through original data
+  266|      0|                writer.write_message(&crate::bag::writer::BagMessage::from_raw(
+  267|      0|                    new_conn_id,
+  268|      0|                    raw_msg.log_time,
+  269|      0|                    raw_msg.data.clone(),
+  270|      0|                ))?;
+  271|      0|                self.stats.passthrough_count += 1;
+  272|       |            }
+  273|       |        }
+  274|       |
+  275|       |        // Finish the bag writer
+  276|      8|        writer.finish()?;
+                                     ^0
+  277|       |
+  278|      8|        Ok(self.stats.clone())
+  279|      9|    }
+  280|       |
+  281|       |    /// Cache all schemas from the bag file, applying transformations if configured.
+  282|      3|    fn cache_schemas(&mut self, reader: &crate::bag::ParallelBagReader) -> Result<()> {
+  283|      3|        let pipeline = self.options.transforms.as_ref();
+  284|      3|        let channels = FormatReader::channels(reader);
+  285|       |
+  286|      4|        for channel in channels.values() {
+                                     ^3       ^3
+  287|       |            // Apply transformations to get target type
+  288|      4|            let (target_type, _target_schema) = if let Some(p) = pipeline {
+                                                                          ^0
+  289|      0|                p.transform_type(&channel.message_type, channel.schema.as_deref())
+  290|       |            } else {
+  291|      4|                (channel.message_type.clone(), channel.schema.clone())
+  292|       |            };
+  293|       |
+  294|       |            // Only cache if not already cached under the target type
+  295|      4|            if !self.schemas.contains_key(&target_type) {
+  296|      4|                let schema_to_parse = channel.schema.as_ref();
+  297|       |
+  298|      4|                if let Some(schema_text) = schema_to_parse {
+  299|      4|                    match parse_schema(&channel.message_type, schema_text) {
+  300|      4|                        Ok(mut schema) => {
+  301|       |                            // Apply package renaming if types differ
+  302|      4|                            if target_type != channel.message_type {
+  303|      0|                                let old_package =
+  304|      0|                                    channel.message_type.split('/').next().unwrap_or("");
+  305|      0|                                let new_package = target_type.split('/').next().unwrap_or("");
+  306|       |
+  307|      0|                                if !old_package.is_empty()
+  308|      0|                                    && !new_package.is_empty()
+  309|      0|                                    && old_package != new_package
+  310|      0|                                {
+  311|      0|                                    schema.rename_package(old_package, new_package);
+  312|      0|                                }
+  313|      0|                                schema.name = target_type.clone();
+  314|      0|                                if schema.package.as_deref() == Some(old_package) {
+  315|      0|                                    schema.package = Some(new_package.to_string());
+  316|      0|                                }
+  317|      4|                            }
+  318|       |
+  319|      4|                            self.schemas.insert(target_type.clone(), schema);
+  320|       |                        }
+  321|      0|                        Err(e) => {
+  322|      0|                            if self.options.validate_schemas {
+  323|      0|                                return Err(CodecError::encode(
+  324|      0|                                    "BagRewriter",
+  325|      0|                                    format!(
+  326|      0|                                        "Failed to parse schema for {} (from {}): {}",
+  327|      0|                                        target_type, channel.message_type, e
+  328|      0|                                    ),
+  329|      0|                                ));
+  330|      0|                            }
+  331|       |                            // Non-validating mode: continue without schema
+  332|       |                        }
+  333|       |                    }
+  334|      0|                }
+  335|      0|            }
+  336|       |        }
+  337|      3|        Ok(())
+  338|      3|    }
+  339|       |
+  340|       |    /// Rewrite a CDR message by decoding and re-encoding.
+  341|      3|    fn rewrite_cdr_message(
+  342|      3|        &mut self,
+  343|      3|        decoder: &CdrDecoder,
+  344|      3|        msg: &crate::io::metadata::RawMessage,
+  345|      3|        schema: &MessageSchema,
+  346|      3|    ) -> Result<Vec<u8>> {
+  347|       |        // Decode the message (handles CDR header internally)
+  348|      3|        let decoded = decoder.decode(schema, &msg.data, Some(&schema.name))?;
+                          ^1                                                             ^2
+  349|       |
+  350|       |        // Re-encode with proper CDR header
+  351|      1|        let mut encoder = CdrEncoder::new();
+  352|      1|        encoder.encode_message(&decoded, schema, &schema.name)?;
+                                                                            ^0
+  353|       |
+  354|      1|        let encoded_data = encoder.finish();
+  355|      1|        Ok(encoded_data)
+  356|      3|    }
+  357|       |
+  358|       |    /// Get the options used for rewriting.
+  359|      8|    pub fn options(&self) -> &RewriteOptions {
+  360|      8|        &self.options
+  361|      8|    }
+  362|       |}
+  363|       |
+  364|       |impl FormatRewriter for BagRewriter {
+  365|      0|    fn rewrite<P1, P2>(&mut self, input_path: P1, output_path: P2) -> Result<RewriteStats>
+  366|      0|    where
+  367|      0|        P1: AsRef<Path>,
+  368|      0|        P2: AsRef<Path>,
+  369|       |    {
+  370|      0|        self.rewrite(input_path, output_path)
+  371|      0|    }
+  372|       |
+  373|      0|    fn options(&self) -> &RewriteOptions {
+  374|      0|        self.options()
+  375|      0|    }
+  376|       |
+  377|      0|    fn as_any(&self) -> &dyn std::any::Any {
+  378|      0|        self
+  379|      0|    }
+  380|       |}
+  381|       |
+  382|       |impl Default for BagRewriter {
+  383|      1|    fn default() -> Self {
+  384|      1|        Self::new()
+  385|      1|    }
+  386|       |}
+

@@ -1,0 +1,329 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/io/detection.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Format detection using magic numbers and file analysis.
+    6|       |//!
+    7|       |//! This module provides robust format detection that goes beyond
+    8|       |//! simple file extension checking. It uses magic numbers (file signatures)
+    9|       |//! to identify the actual format of robotics data files.
+   10|       |//!
+   11|       |//! # Supported Formats
+   12|       |//!
+   13|       |//! - **MCAP**: Identified by magic number at start or end of file
+   14|       |//! - **ROS1 Bag**: Identified by file header structure
+   15|       |//!
+   16|       |//! # Example
+   17|       |//!
+   18|       |//! ```rust,no_run
+   19|       |//! use robocodec::io::detection::detect_format;
+   20|       |//! use robocodec::io::metadata::FileFormat;
+   21|       |//!
+   22|       |//! let format = detect_format("data.mcap")?;
+   23|       |//! assert_eq!(format, FileFormat::Mcap);
+   24|       |//! # Ok::<(), Box<dyn std::error::Error>>(())
+   25|       |//! ```
+   26|       |
+   27|       |use std::fs::File;
+   28|       |use std::io::Read;
+   29|       |use std::path::Path;
+   30|       |
+   31|       |use crate::CodecError;
+   32|       |
+   33|       |use super::metadata::FileFormat;
+   34|       |
+   35|       |/// MCAP magic number placeholder.
+   36|       |///
+   37|       |/// MCAP files don't have a simple magic string - they have a structured header.
+   38|       |/// We detect MCAP by checking for the MCAP record structure.
+   39|       |/// Try to detect the file format from the file content.
+   40|       |///
+   41|       |/// This function reads the file header and checks for magic numbers
+   42|       |/// to identify the format, falling back to file extension if needed.
+   43|       |///
+   44|       |/// # Arguments
+   45|       |///
+   46|       |/// * `path` - Path to the file to analyze
+   47|       |///
+   48|       |/// # Returns
+   49|       |///
+   50|       |/// The detected format, or `FileFormat::Unknown` if the format cannot be determined.
+   51|       |///
+   52|       |/// # Example
+   53|       |///
+   54|       |/// ```rust,no_run
+   55|       |/// use robocodec::io::detection::detect_format;
+   56|       |/// use robocodec::io::metadata::FileFormat;
+   57|       |///
+   58|       |/// let format = detect_format("data.mcap")?;
+   59|       |/// match format {
+   60|       |///     FileFormat::Mcap => println!("MCAP file detected"),
+   61|       |///     FileFormat::Bag => println!("ROS1 bag file detected"),
+   62|       |///     FileFormat::Unknown => println!("Unknown format"),
+   63|       |/// }
+   64|       |/// # Ok::<(), Box<dyn std::error::Error>>(())
+   65|       |/// ```
+   66|    106|pub fn detect_format<P: AsRef<Path>>(path: P) -> Result<FileFormat, CodecError> {
+   67|    106|    let path_ref = path.as_ref();
+   68|       |
+   69|       |    // First try magic number detection
+   70|    106|    match detect_from_magic(path_ref) {
+   71|     69|        Ok(FileFormat::Unknown) => {
+   72|     69|            // Magic detection didn't find anything, fall back to extension
+   73|     69|        }
+   74|     17|        Ok(format) => return Ok(format),
+   75|     20|        Err(_) => {
+   76|     20|            // Error reading file, fall back to extension
+   77|     20|        }
+   78|       |    }
+   79|       |
+   80|       |    // Fall back to extension detection
+   81|     89|    let format = detect_from_extension(path_ref);
+   82|     89|    Ok(format)
+   83|    106|}
+   84|       |
+   85|       |/// Detect format by reading file magic numbers.
+   86|    108|fn detect_from_magic(path: &Path) -> Result<FileFormat, CodecError> {
+   87|    108|    let mut file = File::open(path)
+                      ^88
+   88|    108|        .map_err(|e| CodecError::encode("FormatDetection", format!("Failed to open file: {e}")))?;
+                                   ^20                                   ^20     ^20                          ^20
+   89|       |
+   90|     88|    let mut header = [0u8; 1024];
+   91|     88|    let n = file.read(&mut header).map_err(|e| {
+                                                             ^0
+   92|      0|        CodecError::encode("FormatDetection", format!("Failed to read header: {e}"))
+   93|      0|    })?;
+   94|       |
+   95|     88|    if n < 8 {
+   96|      3|        return Ok(FileFormat::Unknown);
+   97|     85|    }
+   98|       |
+   99|       |    // Check for MCAP magic number
+  100|       |    // MCAP files start with a magic number and end with one
+  101|       |    // The magic is not a simple string, so we check the MCAP record structure
+  102|     85|    if is_mcap_magic(&header[..n]) {
+  103|      1|        return Ok(FileFormat::Mcap);
+  104|     84|    }
+  105|       |
+  106|       |    // Check for ROS1 bag format
+  107|       |    // Bag files start with "#ROSBAH" (old format) or have a specific structure
+  108|     84|    if is_rosbag_magic(&header[..n]) {
+  109|     18|        return Ok(FileFormat::Bag);
+  110|     66|    }
+  111|       |
+  112|     66|    Ok(FileFormat::Unknown)
+  113|    108|}
+  114|       |
+  115|       |/// Check if the header starts with MCAP magic.
+  116|     85|fn is_mcap_magic(header: &[u8]) -> bool {
+  117|     85|    if header.len() < 8 {
+  118|      0|        return false;
+  119|     85|    }
+  120|       |
+  121|       |    // MCAP files start with the MCAP record magic
+  122|       |    // The magic is the bytes of "MCAP" followed by version info
+  123|       |    // We check for common patterns:
+  124|       |    // 1. MCAP little-endian magic (0x1C, 0xC1, 0x41, 0x50, 0x43, 0x41, 0x4D, 0x00...)
+  125|       |    //    This is "MCAP\x00" with some prefix bytes
+  126|     85|    if header.len() >= 8 {
+  127|       |        // Check for MCAP signature (appears as "MCAP" starting at byte 4)
+  128|     85|        if &header[4..8] == b"MCAP" {
+  129|      1|            return true;
+  130|     84|        }
+  131|       |        // Also check at the start (some variants)
+  132|     84|        if &header[0..4] == b"MCAP" {
+  133|      0|            return true;
+  134|     84|        }
+  135|      0|    }
+  136|       |
+  137|     84|    false
+  138|     85|}
+  139|       |
+  140|       |/// Check if the header starts with ROS1 bag magic.
+  141|     84|fn is_rosbag_magic(header: &[u8]) -> bool {
+  142|     84|    if header.len() < 8 {
+  143|      0|        return false;
+  144|     84|    }
+  145|       |
+  146|       |    // Old format ROS1 bags start with "#ROSBAH"
+  147|     84|    if header.starts_with(b"#ROSBAH") {
+  148|      0|        return true;
+  149|     84|    }
+  150|       |
+  151|       |    // New format bags have a version string like "#ROSBAG"
+  152|     84|    if header.starts_with(b"#ROSBAG") {
+  153|     18|        return true;
+  154|     66|    }
+  155|       |
+  156|       |    // Check for bag file structure (starts with version record)
+  157|       |    // The bag format begins with a file header record
+  158|     66|    if header.len() >= 13 {
+  159|       |        // Check for version string like "1.2" or "2.0"
+  160|     66|        let header_str = std::str::from_utf8(&header[..header.len().min(100)]);
+  161|     66|        if let Ok(s) = header_str {
+                                ^8
+  162|      8|            if s.starts_with("#ROSBAG") || s.contains("VERSION") {
+  163|      0|                return true;
+  164|      8|            }
+  165|     58|        }
+  166|      0|    }
+  167|       |
+  168|     66|    false
+  169|     84|}
+  170|       |
+  171|       |/// Detect format from file extension (fallback).
+  172|     89|fn detect_from_extension(path: &Path) -> FileFormat {
+  173|     89|    path.extension()
+  174|     89|        .and_then(|e| e.to_str())
+  175|     89|        .map(|ext| match ext.to_lowercase().as_str() {
+  176|     89|            "mcap" => FileFormat::Mcap,
+                                    ^71
+  177|     18|            "bag" => FileFormat::Bag,
+                                   ^15
+  178|      3|            _ => FileFormat::Unknown,
+  179|     89|        })
+  180|     89|        .unwrap_or(FileFormat::Unknown)
+  181|     89|}
+  182|       |
+  183|       |/// Format detector with caching capabilities.
+  184|       |///
+  185|       |/// This trait can be implemented for custom format detection logic.
+  186|       |pub trait FormatDetector: Send + Sync {
+  187|       |    /// Detect the format of a file.
+  188|       |    fn detect(&self, path: &Path) -> Result<FileFormat, CodecError>;
+  189|       |}
+  190|       |
+  191|       |/// Default format detector implementation.
+  192|       |#[derive(Debug, Clone, Copy)]
+  193|       |pub struct DefaultFormatDetector;
+  194|       |
+  195|       |impl FormatDetector for DefaultFormatDetector {
+  196|      1|    fn detect(&self, path: &Path) -> Result<FileFormat, CodecError> {
+  197|      1|        detect_format(path)
+  198|      1|    }
+  199|       |}
+  200|       |
+  201|       |/// Check if a file is likely an MCAP file.
+  202|       |///
+  203|       |/// This is a convenience function that only checks for MCAP format.
+  204|      2|pub fn is_mcap_file<P: AsRef<Path>>(path: P) -> bool {
+  205|      2|    matches!(detect_format(path), Ok(FileFormat::Mcap))
+                  ^1
+  206|      2|}
+  207|       |
+  208|       |/// Check if a file is likely a ROS1 bag file.
+  209|       |///
+  210|       |/// This is a convenience function that only checks for bag format.
+  211|      2|pub fn is_bag_file<P: AsRef<Path>>(path: P) -> bool {
+  212|      2|    matches!(detect_format(path), Ok(FileFormat::Bag))
+                  ^1
+  213|      2|}
+  214|       |
+  215|       |#[cfg(test)]
+  216|       |mod tests {
+  217|       |    use super::*;
+  218|       |    use std::fs::File;
+  219|       |    use std::io::Write;
+  220|       |
+  221|      8|    fn create_temp_file(name: &str, ext: &str, data: &[u8]) -> String {
+  222|      8|        let mut path = std::env::temp_dir();
+  223|      8|        path.push(format!(
+  224|      8|            "robocodec_test_detect_{}_{}.{}",
+  225|      8|            std::process::id(),
+  226|       |            name,
+  227|       |            ext
+  228|       |        ));
+  229|      8|        {
+  230|      8|            let mut temp_file = File::create(&path).unwrap();
+  231|      8|            temp_file.write_all(data).unwrap();
+  232|      8|            temp_file.flush().unwrap();
+  233|      8|        }
+  234|      8|        path.to_str().unwrap().to_string()
+  235|      8|    }
+  236|       |
+  237|       |    #[test]
+  238|      1|    fn test_detect_from_extension_mcap() {
+  239|      1|        let path = create_temp_file("ext_mcap", "mcap", b"dummy content");
+  240|       |
+  241|      1|        let format = detect_format(&path).unwrap();
+  242|      1|        assert_eq!(format, FileFormat::Mcap);
+  243|       |
+  244|      1|        let _ = std::fs::remove_file(&path);
+  245|      1|    }
+  246|       |
+  247|       |    #[test]
+  248|      1|    fn test_detect_from_extension_bag() {
+  249|      1|        let path = create_temp_file("ext_bag", "bag", b"dummy content");
+  250|       |
+  251|      1|        let format = detect_format(&path).unwrap();
+  252|      1|        assert_eq!(format, FileFormat::Bag);
+  253|       |
+  254|      1|        let _ = std::fs::remove_file(&path);
+  255|      1|    }
+  256|       |
+  257|       |    #[test]
+  258|      1|    fn test_is_mcap_file() {
+  259|      1|        let path = create_temp_file("is_mcap", "mcap", b"dummy content");
+  260|       |
+  261|      1|        assert!(is_mcap_file(&path));
+  262|      1|        assert!(!is_bag_file(&path));
+  263|       |
+  264|      1|        let _ = std::fs::remove_file(&path);
+  265|      1|    }
+  266|       |
+  267|       |    #[test]
+  268|      1|    fn test_is_bag_file() {
+  269|      1|        let path = create_temp_file("is_bag", "bag", b"#ROSBAG");
+  270|       |
+  271|      1|        assert!(is_bag_file(&path));
+  272|      1|        assert!(!is_mcap_file(&path));
+  273|       |
+  274|      1|        let _ = std::fs::remove_file(&path);
+  275|      1|    }
+  276|       |
+  277|       |    #[test]
+  278|      1|    fn test_detect_from_magic_mcap() {
+  279|      1|        let path = create_temp_file("magic_mcap", "bin", b"\x1C\xC1\x41\x50MCAP");
+  280|       |
+  281|      1|        let format = detect_from_magic(std::path::Path::new(&path)).unwrap();
+  282|      1|        assert_eq!(format, FileFormat::Mcap);
+  283|       |
+  284|      1|        let _ = std::fs::remove_file(&path);
+  285|      1|    }
+  286|       |
+  287|       |    #[test]
+  288|      1|    fn test_detect_from_magic_rosbag() {
+  289|      1|        let path = create_temp_file("magic_bag", "bin", b"#ROSBAG V2.0");
+  290|       |
+  291|      1|        let format = detect_from_magic(std::path::Path::new(&path)).unwrap();
+  292|      1|        assert_eq!(format, FileFormat::Bag);
+  293|       |
+  294|      1|        let _ = std::fs::remove_file(&path);
+  295|      1|    }
+  296|       |
+  297|       |    #[test]
+  298|      1|    fn test_unknown_format() {
+  299|      1|        let path = create_temp_file("unknown", "xyz", b"unknown content");
+  300|       |
+  301|      1|        let format = detect_format(&path).unwrap();
+  302|      1|        assert_eq!(format, FileFormat::Unknown);
+  303|       |
+  304|      1|        let _ = std::fs::remove_file(&path);
+  305|      1|    }
+  306|       |
+  307|       |    #[test]
+  308|      1|    fn test_format_detector_trait() {
+  309|      1|        let detector = DefaultFormatDetector;
+  310|      1|        let path = create_temp_file("detector", "mcap", b"dummy");
+  311|       |
+  312|      1|        let format = detector.detect(std::path::Path::new(&path)).unwrap();
+  313|      1|        assert_eq!(format, FileFormat::Mcap);
+  314|       |
+  315|      1|        let _ = std::fs::remove_file(&path);
+  316|      1|    }
+  317|       |}
+

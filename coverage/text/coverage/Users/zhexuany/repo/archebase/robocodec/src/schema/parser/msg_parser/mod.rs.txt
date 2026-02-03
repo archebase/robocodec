@@ -1,0 +1,586 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/schema/parser/msg_parser/mod.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! MSG format parser using Pest.
+    6|       |//!
+    7|       |//! This module handles parsing of ROS .msg format files.
+    8|       |//!
+    9|       |//! The format supports:
+   10|       |//! - Simple field lists (root message)
+   11|       |//! - Dependency blocks with "MSG: TypeName" headers
+   12|       |//! - Array types: T[] (dynamic) or T[n] (fixed)
+   13|       |//! - Nested types: package/MessageName
+   14|       |//! - Comments (# style)
+   15|       |
+   16|       |use crate::core::CodecError;
+   17|       |use crate::core::Result as CoreResult;
+   18|       |use crate::schema::ast::MessageSchema;
+   19|       |use crate::schema::ast::{Field, FieldType, MessageType, PrimitiveType};
+   20|       |use pest::Parser;
+   21|       |use pest_derive::Parser;
+   22|       |
+   23|       |/// ROS version detected from encoding and schema format.
+   24|       |#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+   25|       |pub enum RosVersion {
+   26|       |    /// ROS1 - uses ros1msg encoding, Header has seq field
+   27|       |    Ros1,
+   28|       |    /// ROS2 - uses CDR encoding, Header has no seq field
+   29|       |    Ros2,
+   30|       |    /// Unknown version - don't modify schema
+   31|       |    Unknown,
+   32|       |}
+   33|       |
+   34|       |impl RosVersion {
+   35|       |    /// Detect ROS version from message encoding string.
+   36|       |    ///
+   37|       |    /// # Arguments
+   38|       |    /// * `encoding` - The message encoding (e.g., "ros1msg", "cdr")
+   39|       |    ///
+   40|       |    /// # Returns
+   41|       |    /// * `Ros1` if encoding is "ros1msg"
+   42|       |    /// * `Ros2` if encoding is "cdr"
+   43|       |    /// * `Unknown` otherwise
+   44|     18|    pub fn from_encoding(encoding: &str) -> Self {
+   45|     18|        let encoding_lower = encoding.to_lowercase();
+   46|     18|        if encoding_lower.contains("ros1") {
+   47|      3|            RosVersion::Ros1
+   48|     15|        } else if encoding_lower == "cdr" {
+   49|      3|            RosVersion::Ros2
+   50|       |        } else {
+   51|     12|            RosVersion::Unknown
+   52|       |        }
+   53|     18|    }
+   54|       |
+   55|       |    /// Detect ROS version from message type name.
+   56|       |    ///
+   57|       |    /// ROS2 types use `/msg/` in their path (e.g., `std_msgs/msg/Header`).
+   58|       |    /// ROS1 types use just `/` (e.g., `std_msgs/Header`).
+   59|     70|    pub fn from_type_name(type_name: &str) -> Self {
+   60|     70|        if type_name.contains("/msg/") {
+   61|     11|            RosVersion::Ros2
+   62|     59|        } else if type_name.contains('/') && !type_name.contains("/msg/") {
+                                                           ^34
+   63|     34|            RosVersion::Ros1
+   64|       |        } else {
+   65|     25|            RosVersion::Unknown
+   66|       |        }
+   67|     70|    }
+   68|       |}
+   69|       |
+   70|       |/// Pest parser for ROS .msg schema files.
+   71|       |#[derive(Parser)]
+   72|       |#[grammar = "schema/parser/msg_parser/msg.pest"] // Path relative to src/ directory
+   73|       |pub struct MsgParser;
+   74|       |
+   75|       |/// Parse classic ROS .msg format (auto-detects ROS version from type name).
+   76|     66|pub fn parse(name: &str, definition: &str) -> CoreResult<MessageSchema> {
+   77|       |    // Auto-detect ROS version from type name
+   78|     66|    let ros_version = RosVersion::from_type_name(name);
+   79|     66|    parse_with_version(name, definition, ros_version)
+   80|     66|}
+   81|       |
+   82|       |/// Parse classic ROS .msg format with explicit encoding.
+   83|       |///
+   84|       |/// Use this when you know the message encoding from the container format (e.g., MCAP).
+   85|     15|pub fn parse_with_encoding(
+   86|     15|    name: &str,
+   87|     15|    definition: &str,
+   88|     15|    encoding: &str,
+   89|     15|) -> CoreResult<MessageSchema> {
+   90|     15|    let ros_version = RosVersion::from_encoding(encoding);
+   91|     15|    parse_with_version(name, definition, ros_version)
+   92|     15|}
+   93|       |
+   94|       |/// Preprocess schema to convert indented inline type definitions to standard MSG format.
+   95|       |///
+   96|       |/// Converts:
+   97|       |/// ```text
+   98|       |/// geometry_msgs/Vector3 linear
+   99|       |///   float64 x
+  100|       |///   float64 y
+  101|       |///   float64 z
+  102|       |/// ```
+  103|       |///
+  104|       |/// To:
+  105|       |/// ```text
+  106|       |/// geometry_msgs/Vector3 linear
+  107|       |/// ===
+  108|       |/// MSG: geometry_msgs/Vector3
+  109|       |/// float64 x
+  110|       |/// float64 y
+  111|       |/// float64 z
+  112|       |/// ```
+  113|     44|fn preprocess_indented_schema(definition: &str) -> String {
+  114|     44|    let lines: Vec<&str> = definition.lines().collect();
+  115|     44|    let mut root_lines: Vec<String> = Vec::new();
+  116|     44|    let mut nested_types: std::collections::HashMap<String, Vec<String>> =
+  117|     44|        std::collections::HashMap::new();
+  118|     44|    let mut current_nested_type: Option<String> = None;
+  119|       |
+  120|    125|    for line in lines {
+                      ^81
+  121|     81|        let trimmed = line.trim();
+  122|       |
+  123|       |        // Skip empty lines and comments
+  124|     81|        if trimmed.is_empty() || trimmed.starts_with('#') {
+                                               ^67     ^67
+  125|     18|            if current_nested_type.is_none() {
+  126|     17|                root_lines.push(line.to_string());
+  127|     17|            }
+                          ^1
+  128|     18|            continue;
+  129|     63|        }
+  130|       |
+  131|       |        // Check if line starts with whitespace (indented)
+  132|     63|        let is_indented = line.starts_with(' ') || line.starts_with('\t');
+                                                                 ^61  ^61
+  133|       |
+  134|     63|        if is_indented {
+  135|       |            // This is a field of the current nested type
+  136|      2|            if let Some(ref type_name) = current_nested_type {
+  137|      2|                nested_types
+  138|      2|                    .entry(type_name.clone())
+  139|      2|                    .or_default()
+  140|      2|                    .push(trimmed.to_string());
+  141|      2|            }
+                          ^0
+  142|       |        } else {
+  143|       |            // Non-indented line - this is a root field
+  144|     61|            current_nested_type = None;
+  145|     61|            root_lines.push(line.to_string());
+  146|       |
+  147|       |            // Check if this field references a nested type (not a primitive)
+  148|       |            // Format: "package/Type fieldname" or "Type fieldname"
+  149|     61|            if let Some(nested_type) = extract_nested_type(trimmed) {
+                                      ^7
+  150|      7|                current_nested_type = Some(nested_type);
+  151|     54|            }
+  152|       |        }
+  153|       |    }
+  154|       |
+  155|       |    // Build the final schema with dependency blocks
+  156|     44|    let mut result = root_lines.join("\n");
+  157|       |
+  158|     45|    for (type_name, fields) in nested_types {
+                       ^1         ^1
+  159|      1|        if !fields.is_empty() {
+  160|      1|            result.push_str("\n===\nMSG: ");
+  161|      1|            result.push_str(&type_name);
+  162|      1|            result.push('\n');
+  163|      1|            result.push_str(&fields.join("\n"));
+  164|      1|            result.push('\n');
+  165|      1|        }
+                      ^0
+  166|       |    }
+  167|       |
+  168|     44|    result
+  169|     44|}
+  170|       |
+  171|       |/// Extract nested type name from a field declaration, if any.
+  172|       |/// Returns None for primitive types.
+  173|     61|fn extract_nested_type(line: &str) -> Option<String> {
+  174|       |    // Skip constants (contain '=')
+  175|     61|    if line.contains('=') {
+  176|      0|        return None;
+  177|     61|    }
+  178|       |
+  179|       |    // Split on whitespace to get the type part
+  180|     61|    let parts: Vec<&str> = line.split_whitespace().collect();
+  181|     61|    if parts.is_empty() {
+  182|      0|        return None;
+  183|     61|    }
+  184|       |
+  185|     61|    let type_part = parts[0];
+  186|       |
+  187|       |    // Remove array suffix if present
+  188|     61|    let base_type = type_part.split('[').next().unwrap_or(type_part);
+  189|       |
+  190|       |    // Check if it's a nested type (contains '/' or is not a primitive)
+  191|     61|    let primitives = [
+  192|     61|        "bool", "boolean", "byte", "char", "int8", "int16", "int32", "int64", "uint8", "uint16",
+  193|     61|        "uint32", "uint64", "float32", "float64", "float", "double", "string", "wstring", "time",
+  194|     61|        "duration",
+  195|     61|    ];
+  196|       |
+  197|     61|    if primitives.contains(&base_type) {
+  198|     54|        None
+  199|       |    } else {
+  200|      7|        Some(base_type.to_string())
+  201|       |    }
+  202|     61|}
+  203|       |
+  204|       |/// Parse classic ROS .msg format with explicit ROS version.
+  205|     81|pub fn parse_with_version(
+  206|     81|    name: &str,
+  207|     81|    definition: &str,
+  208|     81|    ros_version: RosVersion,
+  209|     81|) -> CoreResult<MessageSchema> {
+  210|       |    // Only preprocess if the schema doesn't already contain === separators
+  211|       |    // Schemas with === are already in the standard MSG format
+  212|     81|    let definition = if definition
+  213|     81|        .lines()
+  214|    801|        .any(|line| line.trim().starts_with("==="))
+                       ^81
+  215|       |    {
+  216|     37|        definition.to_string()
+  217|       |    } else {
+  218|     44|        preprocess_indented_schema(definition)
+  219|       |    };
+  220|       |
+  221|     81|    let pairs = MsgParser::parse(Rule::schema, &definition)
+  222|     81|        .map_err(|e| CodecError::parse("msg schema", format!("{e}")))?;
+                                   ^0                              ^0      ^0      ^0
+  223|       |
+  224|     81|    let mut schema = MessageSchema::new(name.to_string());
+  225|       |
+  226|    162|    for pair in pairs {
+                      ^81
+  227|       |        // schema = SOI ~ root_msg ~ (separator ~ dependency_msg)* ~ EOI
+  228|    314|        for item in pair.into_inner() {
+                                  ^81  ^81
+  229|    314|            match item.as_rule() {
+  230|     81|                Rule::EOI => {}
+  231|       |                Rule::root_msg => {
+  232|       |                    // Parse root message fields
+  233|     81|                    let mut msg_type = MessageType::new(name.to_string());
+  234|    744|                    for field_item in item.into_inner() {
+                                                    ^81  ^81
+  235|    744|                        if let Some(field) = parse_msg_line(field_item) {
+                                                  ^175
+  236|    175|                            msg_type.add_field(field);
+  237|    569|                        }
+  238|       |                    }
+  239|     81|                    schema.add_type(msg_type);
+  240|       |                }
+  241|       |                Rule::dependency_msg => {
+  242|       |                    // Parse dependency block: dependency_header ~ (msg_line | comment | empty_line)*
+  243|     76|                    let mut inner = item.into_inner();
+  244|       |
+  245|       |                    // First item is dependency_header: "MSG: std_msgs/Header"
+  246|     76|                    if let Some(header) = inner.next() {
+  247|       |                        // Try to extract the type name from the dependency header
+  248|       |                        // The format is "MSG: package/type" but we use the full string as type name
+  249|     76|                        let type_name = header.as_str().to_string();
+  250|       |
+  251|       |                        // Remove "MSG:" prefix if present
+  252|     76|                        let type_name = type_name.strip_prefix("MSG:").unwrap_or(&type_name).trim();
+  253|       |
+  254|     76|                        if !type_name.is_empty() {
+  255|     76|                            let mut msg_type = MessageType::new(type_name.to_string());
+  256|       |
+  257|       |                            // Remaining items are msg_line, comment, or empty_line
+  258|    573|                            for field_item in inner {
+                                              ^497
+  259|    497|                                if let Some(field) = parse_msg_line(field_item) {
+                                                          ^174
+  260|    174|                                    msg_type.add_field(field);
+  261|    323|                                }
+  262|       |                            }
+  263|       |
+  264|     76|                            schema.add_type(msg_type);
+  265|      0|                        }
+  266|      0|                    }
+  267|       |                }
+  268|     76|                _ => {}
+  269|       |            }
+  270|       |        }
+  271|       |    }
+  272|       |
+  273|       |    // Post-processing: Add seq field to Header types for ROS1 data
+  274|       |    // ROS1 Header has: seq, stamp, frame_id
+  275|       |    // ROS2 Header has: stamp, frame_id (no seq)
+  276|     81|    if ros_version == RosVersion::Ros1 {
+  277|     34|        add_seq_field_to_header_types(&mut schema);
+  278|     34|        // NOTE: We do NOT remove header fields from ROS1 messages.
+  279|     34|        // The Header data IS serialized in the message bytes.
+  280|     34|        // The timestamp in the BAG record header is separate metadata.
+  281|     47|    }
+  282|       |
+  283|     81|    Ok(schema)
+  284|     81|}
+  285|       |
+  286|       |/// Parse a single msg_line into a Field, if possible.
+  287|  1.24k|fn parse_msg_line(pair: pest::iterators::Pair<Rule>) -> Option<Field> {
+  288|  1.24k|    if pair.as_rule() != Rule::msg_line {
+  289|    892|        return None;
+  290|    349|    }
+  291|       |
+  292|       |    // msg_line structure: base_type ~ array_suffix? ~ WHITESPACE+ ~ field_name ~ ...
+  293|       |    // Since msg_line is atomic, we extract from the string directly
+  294|    349|    let content = pair.as_str();
+  295|       |
+  296|       |    // Skip constant declarations (lines containing "=" before the field name)
+  297|       |    // Constants look like: "byte DEBUG=10" while fields look like: "byte level"
+  298|       |    // We need to check if there's an "=" before any whitespace that would separate field name
+  299|    349|    if content.contains('=') {
+  300|       |        // This is a constant declaration, skip it
+  301|      0|        return None;
+  302|    349|    }
+  303|       |
+  304|       |    // Find the first space (after base_type and optional array_spec)
+  305|  3.61k|    let space_pos = content.find(|c: char| c.is_whitespace())?;
+                      ^349        ^349    ^349                             ^0
+  306|    349|    let type_part = &content[..space_pos];
+  307|       |
+  308|       |    // Extract base_type and array_spec from type_part
+  309|    349|    let (base_type_str, is_array, array_size) = if let Some(bracket_pos) = type_part.find('[') {
+                                                                          ^64
+  310|     64|        let base = &type_part[..bracket_pos];
+  311|     64|        let array_part = &type_part[bracket_pos..];
+  312|    139|        let digits: String = array_part.chars().filter(|c| c.is_ascii_digit()).collect();
+                          ^64     ^64      ^64        ^64     ^64                            ^64
+  313|     64|        let size = if !digits.is_empty() {
+  314|     10|            digits.parse().ok()
+  315|       |        } else {
+  316|     54|            None
+  317|       |        };
+  318|     64|        (base.to_string(), true, size)
+  319|       |    } else {
+  320|    285|        (type_part.to_string(), false, None)
+  321|       |    };
+  322|       |
+  323|       |    // Find field name (after the space)
+  324|    349|    let after_type = content[space_pos..].trim_start();
+  325|    349|    let field_end = after_type
+  326|  2.15k|        .find(|c: char| c.is_whitespace())
+                       ^349
+  327|    349|        .unwrap_or(after_type.len());
+  328|    349|    let field_name = after_type[..field_end].to_string();
+  329|       |
+  330|    349|    let field_type = build_field_type(&base_type_str, is_array, array_size);
+  331|    349|    Some(Field {
+  332|    349|        name: field_name,
+  333|    349|        type_name: field_type,
+  334|    349|    })
+  335|  1.24k|}
+  336|       |
+  337|       |/// Build a FieldType from a base type string and array info.
+  338|    349|fn build_field_type(base_type_str: &str, is_array: bool, array_size: Option<usize>) -> FieldType {
+  339|    349|    let base_type_str = base_type_str.trim();
+  340|    349|    let base = if let Some(prim) = PrimitiveType::try_from_str(base_type_str) {
+                                         ^265
+  341|    265|        FieldType::Primitive(prim)
+  342|       |    } else {
+  343|       |        // Nested type (e.g., "std_msgs/Header")
+  344|     84|        FieldType::Nested(base_type_str.to_string())
+  345|       |    };
+  346|       |
+  347|    349|    if is_array {
+  348|     64|        FieldType::Array {
+  349|     64|            base_type: Box::new(base),
+  350|     64|            size: array_size,
+  351|     64|        }
+  352|       |    } else {
+  353|    285|        base
+  354|       |    }
+  355|    349|}
+  356|       |
+  357|       |/// Add seq field to all std_msgs/Header variants for ROS1 compatibility.
+  358|       |///
+  359|       |/// ROS1 Header has: uint32 seq, time stamp, string frame_id
+  360|       |/// ROS2 Header has: builtin_interfaces/Time stamp, string frame_id
+  361|       |///
+  362|       |/// This function adds the seq field to Header types when parsing ROS1 data.
+  363|     34|fn add_seq_field_to_header_types(schema: &mut MessageSchema) {
+  364|       |    // Find all Header type variants in the schema
+  365|     34|    let header_variants: Vec<String> = schema
+  366|     34|        .types
+  367|     34|        .keys()
+  368|     65|        .filter(|k| {
+                       ^34
+  369|       |            // Match Header types (various naming conventions)
+  370|     65|            k.contains("Header") && (k.contains("std_msgs") || k.ends_with("/Header"))
+                                                   ^12                       ^0
+  371|     65|        })
+  372|     34|        .cloned()
+  373|     34|        .collect();
+  374|       |
+  375|     46|    for variant_name in &header_variants {
+                      ^12
+  376|     12|        if let Some(header_type) = schema.types.get_mut(variant_name) {
+  377|     16|            let has_seq = header_type.fields.iter().any(|f| f.name == "seq");
+                              ^12       ^12                       ^12
+  378|     12|            if !has_seq {
+  379|      5|                // Insert seq field at the beginning (index 0)
+  380|      5|                // ROS1 Header order: seq, stamp, frame_id
+  381|      5|                let seq_field = Field {
+  382|      5|                    name: "seq".to_string(),
+  383|      5|                    type_name: FieldType::Primitive(PrimitiveType::UInt32),
+  384|      5|                };
+  385|      5|
+  386|      5|                // Insert seq at the beginning (before stamp)
+  387|      5|                header_type.fields.insert(0, seq_field);
+  388|      5|                header_type.max_alignment = header_type.max_alignment.max(4);
+  389|      7|            }
+  390|      0|        }
+  391|       |    }
+  392|     34|}
+  393|       |
+  394|       |#[cfg(test)]
+  395|       |mod tests {
+  396|       |    use super::*;
+  397|       |
+  398|       |    #[test]
+  399|      1|    fn test_parse_simple_field() {
+  400|      1|        let schema = parse("TestMsg", "int32 value").unwrap();
+  401|      1|        let msg_type = schema.get_type("TestMsg").unwrap();
+  402|       |
+  403|      1|        assert_eq!(msg_type.fields.len(), 1);
+  404|      1|        assert_eq!(msg_type.fields[0].name, "value");
+  405|      1|    }
+  406|       |
+  407|       |    #[test]
+  408|      1|    fn test_parse_multiple_fields() {
+  409|      1|        let schema = parse("TestMsg", "int32 x\nint32 y").unwrap();
+  410|      1|        let msg_type = schema.get_type("TestMsg").unwrap();
+  411|       |
+  412|      1|        assert_eq!(msg_type.fields.len(), 2);
+  413|      1|        assert_eq!(msg_type.fields[0].name, "x");
+  414|      1|        assert_eq!(msg_type.fields[1].name, "y");
+  415|      1|    }
+  416|       |
+  417|       |    #[test]
+  418|      1|    fn test_parse_dynamic_array() {
+  419|      1|        let schema = parse("TestMsg", "int32[] values").unwrap();
+  420|      1|        let msg_type = schema.get_type("TestMsg").unwrap();
+  421|       |
+  422|      1|        assert_eq!(msg_type.fields.len(), 1);
+  423|      1|        assert_eq!(msg_type.fields[0].name, "values");
+  424|      1|        match &msg_type.fields[0].type_name {
+  425|      1|            FieldType::Array { size, .. } => {
+  426|      1|                assert!(size.is_none(), "Expected dynamic array");
+                                                      ^0
+  427|       |            }
+  428|      0|            _ => panic!("Expected Array type"),
+  429|       |        }
+  430|      1|    }
+  431|       |
+  432|       |    #[test]
+  433|      1|    fn test_parse_fixed_array() {
+  434|      1|        let schema = parse("TestMsg", "float32[3] position").unwrap();
+  435|      1|        let msg_type = schema.get_type("TestMsg").unwrap();
+  436|       |
+  437|      1|        assert_eq!(msg_type.fields.len(), 1);
+  438|      1|        assert_eq!(msg_type.fields[0].name, "position");
+  439|      1|        match &msg_type.fields[0].type_name {
+  440|      1|            FieldType::Array { size, .. } => {
+  441|      1|                assert_eq!(*size, Some(3));
+  442|       |            }
+  443|      0|            _ => panic!("Expected Array type"),
+  444|       |        }
+  445|      1|    }
+  446|       |
+  447|       |    #[test]
+  448|      1|    fn test_parse_nested_type() {
+  449|      1|        let schema = parse("TestMsg", "std_msgs/Header header").unwrap();
+  450|      1|        let msg_type = schema.get_type("TestMsg").unwrap();
+  451|       |
+  452|      1|        assert_eq!(msg_type.fields.len(), 1);
+  453|      1|        assert_eq!(msg_type.fields[0].name, "header");
+  454|      1|        match &msg_type.fields[0].type_name {
+  455|      1|            FieldType::Nested(name) => {
+  456|      1|                assert_eq!(name, "std_msgs/Header");
+  457|       |            }
+  458|      0|            _ => panic!("Expected Nested type"),
+  459|       |        }
+  460|      1|    }
+  461|       |
+  462|       |    #[test]
+  463|      1|    fn test_parse_with_comments() {
+  464|      1|        let schema = parse("TestMsg", "# This is a comment\nint32 value").unwrap();
+  465|      1|        let msg_type = schema.get_type("TestMsg").unwrap();
+  466|       |
+  467|      1|        assert_eq!(msg_type.fields.len(), 1);
+  468|      1|        assert_eq!(msg_type.fields[0].name, "value");
+  469|      1|    }
+  470|       |
+  471|       |    #[test]
+  472|      1|    fn test_parse_ros2_joint_state() {
+  473|      1|        let msg = r#"
+  474|      1|std_msgs/Header header
+  475|      1|
+  476|      1|string[] name
+  477|      1|float64[] position
+  478|      1|float64[] velocity
+  479|      1|float64[] effort
+  480|      1|"#;
+  481|      1|        let schema = parse("JointState", msg).unwrap();
+  482|      1|        let msg_type = schema.get_type("JointState").unwrap();
+  483|       |
+  484|      1|        assert_eq!(msg_type.fields.len(), 5);
+  485|      1|        assert_eq!(msg_type.fields[0].name, "header");
+  486|      1|        assert_eq!(msg_type.fields[1].name, "name");
+  487|      1|        assert_eq!(msg_type.fields[2].name, "position");
+  488|      1|        assert_eq!(msg_type.fields[3].name, "velocity");
+  489|      1|        assert_eq!(msg_type.fields[4].name, "effort");
+  490|      1|    }
+  491|       |
+  492|       |    #[test]
+  493|      1|    fn test_ros_version_detection() {
+  494|       |        // ROS2 types have /msg/ in the path
+  495|      1|        assert_eq!(
+  496|      1|            RosVersion::from_type_name("sensor_msgs/msg/Image"),
+  497|       |            RosVersion::Ros2
+  498|       |        );
+  499|      1|        assert_eq!(
+  500|      1|            RosVersion::from_type_name("std_msgs/msg/Header"),
+  501|       |            RosVersion::Ros2
+  502|       |        );
+  503|       |
+  504|       |        // ROS1 types don't have /msg/
+  505|      1|        assert_eq!(
+  506|      1|            RosVersion::from_type_name("sensor_msgs/Image"),
+  507|       |            RosVersion::Ros1
+  508|       |        );
+  509|      1|        assert_eq!(
+  510|      1|            RosVersion::from_type_name("std_msgs/Header"),
+  511|       |            RosVersion::Ros1
+  512|       |        );
+  513|       |
+  514|       |        // Encoding detection
+  515|      1|        assert_eq!(RosVersion::from_encoding("ros1msg"), RosVersion::Ros1);
+  516|      1|        assert_eq!(RosVersion::from_encoding("cdr"), RosVersion::Ros2);
+  517|      1|        assert_eq!(RosVersion::from_encoding("CDR"), RosVersion::Ros2);
+  518|      1|    }
+  519|       |
+  520|       |    #[test]
+  521|      1|    fn test_ros1_header_has_seq() {
+  522|      1|        let msg = r#"
+  523|      1|std_msgs/Header header
+  524|      1|"#;
+  525|       |        // Parse as ROS1 - should add seq field
+  526|      1|        let schema = parse_with_encoding("test/Msg", msg, "ros1msg").unwrap();
+  527|       |
+  528|       |        // Check if Header type exists and has seq field
+  529|      1|        if let Some(header_type) = schema.get_type("std_msgs/Header") {
+                                  ^0
+  530|      0|            let has_seq = header_type.fields.iter().any(|f| f.name == "seq");
+  531|      0|            assert!(has_seq, "ROS1 Header should have seq field");
+  532|      1|        }
+  533|      1|    }
+  534|       |
+  535|       |    #[test]
+  536|      1|    fn test_ros2_header_no_seq() {
+  537|      1|        let msg = r#"
+  538|      1|std_msgs/Header header
+  539|      1|===
+  540|      1|MSG: std_msgs/Header
+  541|      1|builtin_interfaces/Time stamp
+  542|      1|string frame_id
+  543|      1|"#;
+  544|       |        // Parse as ROS2 - should NOT add seq field
+  545|      1|        let schema = parse_with_encoding("sensor_msgs/msg/Image", msg, "cdr").unwrap();
+  546|       |
+  547|      1|        if let Some(header_type) = schema.get_type("std_msgs/Header") {
+  548|      2|            let has_seq = header_type.fields.iter().any(|f| f.name == "seq");
+                              ^1        ^1                        ^1
+  549|      1|            assert!(!has_seq, "ROS2 Header should NOT have seq field");
+                                            ^0
+  550|      0|        }
+  551|      1|    }
+  552|       |}
+

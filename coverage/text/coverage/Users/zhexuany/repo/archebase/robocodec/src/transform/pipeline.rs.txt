@@ -1,0 +1,513 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/transform/pipeline.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Transformation pipeline for applying multiple transforms in sequence.
+    6|       |
+    7|       |use std::collections::HashMap;
+    8|       |use std::fmt;
+    9|       |
+   10|       |use super::{ChannelInfo, McapTransform, TransformError, TransformedChannel};
+   11|       |
+   12|       |/// Multi-transform that applies multiple transforms in sequence.
+   13|       |///
+   14|       |/// Transforms are applied in the order they were added. Each transform
+   15|       |/// receives the output of the previous transform.
+   16|       |///
+   17|       |/// # Example
+   18|       |///
+   19|       |/// ```no_run
+   20|       |/// use robocodec::transform::{MultiTransform, TopicRenameTransform, TypeRenameTransform};
+   21|       |///
+   22|       |/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+   23|       |/// let mut pipeline = MultiTransform::new();
+   24|       |/// pipeline.add_transform(Box::new(TopicRenameTransform::new()));
+   25|       |/// pipeline.add_transform(Box::new(TypeRenameTransform::new()));
+   26|       |///
+   27|       |/// // Validate against channels
+   28|       |/// // pipeline.validate(&channels)?;
+   29|       |///
+   30|       |/// // Apply transformations
+   31|       |/// // let transformed = pipeline.transform_channel(&channel);
+   32|       |/// // // Access: transformed.topic, transformed.message_type, transformed.schema
+   33|       |/// # Ok(())
+   34|       |/// # }
+   35|       |/// ```
+   36|       |pub struct MultiTransform {
+   37|       |    transforms: Vec<Box<dyn McapTransform>>,
+   38|       |}
+   39|       |
+   40|       |impl Clone for MultiTransform {
+   41|      1|    fn clone(&self) -> Self {
+   42|       |        Self {
+   43|      2|            transforms: self.transforms.iter().map(|t| t.box_clone()).collect(),
+                                      ^1                     ^1                     ^1
+   44|       |        }
+   45|      1|    }
+   46|       |}
+   47|       |
+   48|       |impl fmt::Debug for MultiTransform {
+   49|      0|    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+   50|      0|        f.debug_struct("MultiTransform")
+   51|      0|            .field("transform_count", &self.transforms.len())
+   52|      0|            .finish()
+   53|      0|    }
+   54|       |}
+   55|       |
+   56|       |impl Default for MultiTransform {
+   57|      0|    fn default() -> Self {
+   58|      0|        Self::new()
+   59|      0|    }
+   60|       |}
+   61|       |
+   62|       |impl MultiTransform {
+   63|       |    /// Create a new empty pipeline.
+   64|     26|    pub fn new() -> Self {
+   65|     26|        Self {
+   66|     26|            transforms: Vec::new(),
+   67|     26|        }
+   68|     26|    }
+   69|       |
+   70|       |    /// Add a transform to the pipeline.
+   71|       |    ///
+   72|       |    /// Transforms are applied in the order they are added.
+   73|     25|    pub fn add_transform(&mut self, transform: Box<dyn McapTransform>) {
+   74|     25|        self.transforms.push(transform);
+   75|     25|    }
+   76|       |
+   77|       |    /// Get the number of transforms in the pipeline.
+   78|      6|    pub fn transform_count(&self) -> usize {
+   79|      6|        self.transforms.len()
+   80|      6|    }
+   81|       |
+   82|       |    /// Check if the pipeline is empty.
+   83|      4|    pub fn is_empty(&self) -> bool {
+   84|      4|        self.transforms.is_empty()
+   85|      4|    }
+   86|       |
+   87|       |    /// Validate all transforms against the channels.
+   88|       |    ///
+   89|       |    /// This checks for collisions, missing sources, and other validation issues.
+   90|      5|    pub fn validate(&self, channels: &[ChannelInfo]) -> std::result::Result<(), TransformError> {
+   91|     10|        for transform in &self.transforms {
+                          ^5
+   92|      5|            transform.validate(channels)?;
+                                                      ^0
+   93|       |        }
+   94|      5|        Ok(())
+   95|      5|    }
+   96|       |
+   97|       |    /// Apply all transforms to a topic name.
+   98|       |    ///
+   99|       |    /// Returns `None` if any transform drops the topic.
+  100|     38|    pub fn transform_topic(&self, topic: &str) -> Option<String> {
+  101|     38|        let mut current = topic.to_string();
+  102|     83|        for transform in &self.transforms {
+                          ^45
+  103|     45|            current = transform.transform_topic(&current)?;
+                                                                       ^0
+  104|       |        }
+  105|     38|        Some(current)
+  106|     38|    }
+  107|       |
+  108|       |    /// Apply all transforms to a type name and schema text.
+  109|       |    ///
+  110|       |    /// Returns (new_type_name, new_schema_text).
+  111|       |    /// The schema text is `Some(rewritten)` if modified, `Some(original)` if unchanged,
+  112|       |    /// or `None` if there was no schema.
+  113|     17|    pub fn transform_type(
+  114|     17|        &self,
+  115|     17|        type_name: &str,
+  116|     17|        schema_text: Option<&str>,
+  117|     17|    ) -> (String, Option<String>) {
+  118|     17|        let mut current_type = type_name.to_string();
+  119|     17|        let mut current_schema = schema_text.map(|s| s.to_string());
+                                                                   ^6^6
+  120|       |
+  121|     39|        for transform in &self.transforms {
+                          ^22
+  122|     22|            let (new_type, new_schema) =
+  123|     22|                transform.transform_type(&current_type, current_schema.as_deref());
+  124|     22|            current_type = new_type;
+  125|       |            // Only update schema if the transform provided a new one
+  126|     22|            if let Some(schema) = new_schema {
+                                      ^4
+  127|      4|                current_schema = Some(schema);
+  128|     18|            }
+  129|       |        }
+  130|       |
+  131|     17|        (current_type, current_schema)
+  132|     17|    }
+  133|       |
+  134|       |    /// Apply all transforms to a type name with topic context.
+  135|       |    ///
+  136|       |    /// This method enables topic-specific type transformations. If a TopicAwareTypeRenameTransform
+  137|       |    /// is present in the pipeline, it will be queried for (topic, type) specific mappings.
+  138|       |    ///
+  139|       |    /// All transforms are applied in sequence, allowing both topic-aware and global
+  140|       |    /// type transformations to work together.
+  141|       |    ///
+  142|       |    /// Returns (new_type_name, new_schema_text).
+  143|       |    ///
+  144|       |    /// # Arguments
+  145|       |    ///
+  146|       |    /// * `topic` - The channel topic
+  147|       |    /// * `type_name` - Original type name
+  148|       |    /// * `schema_text` - Optional schema text
+  149|       |    ///
+  150|       |    /// # Example
+  151|       |    ///
+  152|       |    /// ```no_run
+  153|       |    /// use robocodec::transform::TransformBuilder;
+  154|       |    ///
+  155|       |    /// # fn main() {
+  156|       |    /// let pipeline = TransformBuilder::new()
+  157|       |    ///     .with_topic_type_rename("/lowdim/joint", "nmx.msg.LowdimData", "nmx.msg.JointStates")
+  158|       |    ///     .build();
+  159|       |    ///
+  160|       |    /// let (new_type, schema) = pipeline.transform_type_with_topic("/lowdim/joint", "nmx.msg.LowdimData", Some("schema"));
+  161|       |    /// assert_eq!(new_type, "nmx.msg.JointStates");
+  162|       |    /// # }
+  163|       |    /// ```
+  164|     20|    pub fn transform_type_with_topic(
+  165|     20|        &self,
+  166|     20|        topic: &str,
+  167|     20|        type_name: &str,
+  168|     20|        schema_text: Option<&str>,
+  169|     20|    ) -> (String, Option<String>) {
+  170|       |        use super::TopicAwareTypeRenameTransform;
+  171|       |
+  172|     20|        let mut current_type = type_name.to_string();
+  173|     20|        let mut current_schema = schema_text.map(|s| s.to_string());
+                                                                   ^1^1
+  174|       |
+  175|     40|        for transform in &self.transforms {
+                          ^20
+  176|       |            // Try topic-aware transformation first
+  177|     20|            if let Some(aware) = transform
+                                      ^0
+  178|     20|                .as_any()
+  179|     20|                .downcast_ref::<TopicAwareTypeRenameTransform>()
+  180|       |            {
+  181|      0|                let (new_type, new_schema) = aware.apply_for_topic_with_schema(
+  182|      0|                    topic,
+  183|      0|                    &current_type,
+  184|      0|                    current_schema.as_deref(),
+  185|      0|                );
+  186|      0|                current_type = new_type;
+  187|      0|                if let Some(schema) = new_schema {
+  188|      0|                    current_schema = Some(schema);
+  189|      0|                }
+  190|       |            } else {
+  191|       |                // Apply regular transform
+  192|     20|                let (new_type, new_schema) =
+  193|     20|                    transform.transform_type(&current_type, current_schema.as_deref());
+  194|     20|                current_type = new_type;
+  195|     20|                if let Some(schema) = new_schema {
+                                          ^1
+  196|      1|                    current_schema = Some(schema);
+  197|     19|                }
+  198|       |            }
+  199|       |        }
+  200|       |
+  201|     20|        (current_type, current_schema)
+  202|     20|    }
+  203|       |
+  204|       |    /// Apply all transforms to a channel, returning the transformed metadata.
+  205|       |    ///
+  206|       |    /// This is the main entry point for transforming channel information.
+  207|      1|    pub fn transform_channel(&self, channel: &ChannelInfo) -> TransformedChannel {
+  208|      1|        let topic = self.transform_topic(&channel.topic).unwrap_or_default();
+  209|      1|        let (message_type, schema) =
+  210|      1|            self.transform_type(&channel.message_type, channel.schema.as_deref());
+  211|       |
+  212|      1|        TransformedChannel {
+  213|      1|            original_id: channel.id,
+  214|      1|            topic,
+  215|      1|            message_type,
+  216|      1|            schema,
+  217|      1|            encoding: channel.encoding.clone(),
+  218|      1|            schema_encoding: channel.schema_encoding.clone(),
+  219|      1|        }
+  220|      1|    }
+  221|       |
+  222|       |    /// Build a map from original topic to transformed topic.
+  223|       |    ///
+  224|       |    /// Useful for quick lookups during message processing.
+  225|      1|    pub fn build_topic_map(&self, channels: &[ChannelInfo]) -> HashMap<String, String> {
+  226|      1|        channels
+  227|      1|            .iter()
+  228|      3|            .filter_map(|ch| {
+                           ^1
+  229|      3|                let transformed = self.transform_topic(&ch.topic)?;
+                                                                               ^0
+  230|      3|                Some((ch.topic.clone(), transformed))
+  231|      3|            })
+  232|      1|            .collect()
+  233|      1|    }
+  234|       |
+  235|       |    /// Build a map from original type to transformed type.
+  236|      1|    pub fn build_type_map(&self, channels: &[ChannelInfo]) -> HashMap<String, String> {
+  237|      1|        channels
+  238|      1|            .iter()
+  239|      3|            .map(|ch| {
+                           ^1
+  240|      3|                let (transformed, _) = self.transform_type(&ch.message_type, None);
+  241|      3|                (ch.message_type.clone(), transformed)
+  242|      3|            })
+  243|      1|            .collect()
+  244|      1|    }
+  245|       |
+  246|       |    /// Check if any transform in the pipeline modifies topics.
+  247|      2|    pub fn modifies_topics(&self) -> bool {
+  248|      2|        self.transforms.iter().any(|t| t.modifies_topics())
+                                                     ^1^1
+  249|      2|    }
+  250|       |
+  251|       |    /// Check if any transform in the pipeline modifies types.
+  252|      2|    pub fn modifies_types(&self) -> bool {
+  253|      2|        self.transforms.iter().any(|t| t.modifies_types())
+                                                     ^1^1
+  254|      2|    }
+  255|       |
+  256|       |    /// Check if any transform in the pipeline modifies schemas.
+  257|      2|    pub fn modifies_schemas(&self) -> bool {
+  258|      2|        self.transforms.iter().any(|t| t.modifies_schemas())
+                                                     ^1^1
+  259|      2|    }
+  260|       |}
+  261|       |
+  262|       |#[cfg(test)]
+  263|       |mod tests {
+  264|       |    use super::super::{TopicRenameTransform, TypeRenameTransform};
+  265|       |    use super::*;
+  266|       |
+  267|      9|    fn make_channel(id: u16, topic: &str, msg_type: &str) -> ChannelInfo {
+  268|      9|        ChannelInfo::new(
+  269|      9|            id,
+  270|      9|            topic.to_string(),
+  271|      9|            msg_type.to_string(),
+  272|      9|            "cdr".to_string(),
+  273|      9|            Some("schema text".to_string()),
+  274|      9|            Some("ros2msg".to_string()),
+  275|       |        )
+  276|      9|    }
+  277|       |
+  278|       |    #[test]
+  279|      1|    fn test_new() {
+  280|      1|        let pipeline = MultiTransform::new();
+  281|      1|        assert!(pipeline.is_empty());
+  282|      1|        assert_eq!(pipeline.transform_count(), 0);
+  283|      1|    }
+  284|       |
+  285|       |    #[test]
+  286|      1|    fn test_add_transform() {
+  287|      1|        let mut pipeline = MultiTransform::new();
+  288|      1|        pipeline.add_transform(Box::new(TopicRenameTransform::new()));
+  289|      1|        assert_eq!(pipeline.transform_count(), 1);
+  290|      1|    }
+  291|       |
+  292|       |    #[test]
+  293|      1|    fn test_transform_topic_empty() {
+  294|      1|        let pipeline = MultiTransform::new();
+  295|      1|        assert_eq!(pipeline.transform_topic("/test"), Some("/test".to_string()));
+  296|      1|    }
+  297|       |
+  298|       |    #[test]
+  299|      1|    fn test_transform_topic_single() {
+  300|      1|        let mut pipeline = MultiTransform::new();
+  301|      1|        let mut rename = TopicRenameTransform::new();
+  302|      1|        rename.add_mapping("/old", "/new");
+  303|      1|        pipeline.add_transform(Box::new(rename));
+  304|       |
+  305|      1|        assert_eq!(pipeline.transform_topic("/old"), Some("/new".to_string()));
+  306|      1|        assert_eq!(
+  307|      1|            pipeline.transform_topic("/other"),
+  308|      1|            Some("/other".to_string())
+  309|       |        );
+  310|      1|    }
+  311|       |
+  312|       |    #[test]
+  313|      1|    fn test_transform_topic_chained() {
+  314|      1|        let mut pipeline = MultiTransform::new();
+  315|       |
+  316|      1|        let mut rename1 = TopicRenameTransform::new();
+  317|      1|        rename1.add_mapping("/a", "/b");
+  318|      1|        pipeline.add_transform(Box::new(rename1));
+  319|       |
+  320|      1|        let mut rename2 = TopicRenameTransform::new();
+  321|      1|        rename2.add_mapping("/b", "/c");
+  322|      1|        pipeline.add_transform(Box::new(rename2));
+  323|       |
+  324|       |        // /a -> /b -> /c
+  325|      1|        assert_eq!(pipeline.transform_topic("/a"), Some("/c".to_string()));
+  326|       |        // /b -> /c
+  327|      1|        assert_eq!(pipeline.transform_topic("/b"), Some("/c".to_string()));
+  328|       |        // /x unchanged
+  329|      1|        assert_eq!(pipeline.transform_topic("/x"), Some("/x".to_string()));
+  330|      1|    }
+  331|       |
+  332|       |    #[test]
+  333|      1|    fn test_transform_type_empty() {
+  334|      1|        let pipeline = MultiTransform::new();
+  335|      1|        let (new_type, schema) = pipeline.transform_type("old/Type", Some("schema"));
+  336|      1|        assert_eq!(new_type, "old/Type");
+  337|      1|        assert_eq!(schema, Some("schema".to_string()));
+  338|      1|    }
+  339|       |
+  340|       |    #[test]
+  341|      1|    fn test_transform_type_single() {
+  342|      1|        let mut pipeline = MultiTransform::new();
+  343|      1|        let mut rename = TypeRenameTransform::new();
+  344|      1|        rename.add_mapping("old/Type", "new/Type");
+  345|      1|        pipeline.add_transform(Box::new(rename));
+  346|       |
+  347|      1|        let (new_type, schema) = pipeline.transform_type("old/Type", Some("schema text"));
+  348|      1|        assert_eq!(new_type, "new/Type");
+  349|      1|        assert_eq!(schema, Some("schema text".to_string()));
+  350|      1|    }
+  351|       |
+  352|       |    #[test]
+  353|      1|    fn test_transform_channel() {
+  354|      1|        let mut pipeline = MultiTransform::new();
+  355|      1|        let mut topic_rename = TopicRenameTransform::new();
+  356|      1|        topic_rename.add_mapping("/old_topic", "/new_topic");
+  357|      1|        pipeline.add_transform(Box::new(topic_rename));
+  358|       |
+  359|      1|        let mut type_rename = TypeRenameTransform::new();
+  360|      1|        type_rename.add_mapping("old/Type", "new/Type");
+  361|      1|        pipeline.add_transform(Box::new(type_rename));
+  362|       |
+  363|      1|        let channel = make_channel(1, "/old_topic", "old/Type");
+  364|      1|        let transformed = pipeline.transform_channel(&channel);
+  365|       |
+  366|      1|        assert_eq!(transformed.original_id, 1);
+  367|      1|        assert_eq!(transformed.topic, "/new_topic");
+  368|      1|        assert_eq!(transformed.message_type, "new/Type");
+  369|      1|        assert_eq!(transformed.encoding, "cdr");
+  370|      1|        assert!(transformed.schema.is_some());
+  371|      1|    }
+  372|       |
+  373|       |    #[test]
+  374|      1|    fn test_validate_empty() {
+  375|      1|        let pipeline = MultiTransform::new();
+  376|      1|        let channels = vec![make_channel(1, "/test", "std_msgs/String")];
+  377|      1|        assert!(pipeline.validate(&channels).is_ok());
+  378|      1|    }
+  379|       |
+  380|       |    #[test]
+  381|      1|    fn test_validate_success() {
+  382|      1|        let mut pipeline = MultiTransform::new();
+  383|      1|        let mut rename = TopicRenameTransform::new();
+  384|      1|        rename.add_mapping("/test", "/renamed");
+  385|      1|        pipeline.add_transform(Box::new(rename));
+  386|       |
+  387|      1|        let channels = vec![make_channel(1, "/test", "std_msgs/String")];
+  388|      1|        assert!(pipeline.validate(&channels).is_ok());
+  389|      1|    }
+  390|       |
+  391|       |    #[test]
+  392|      1|    fn test_build_topic_map() {
+  393|      1|        let mut pipeline = MultiTransform::new();
+  394|      1|        let mut rename = TopicRenameTransform::new();
+  395|      1|        rename.add_mapping("/a", "/x");
+  396|      1|        rename.add_mapping("/b", "/y");
+  397|      1|        pipeline.add_transform(Box::new(rename));
+  398|       |
+  399|      1|        let channels = vec![
+  400|      1|            make_channel(1, "/a", "std_msgs/String"),
+  401|      1|            make_channel(2, "/b", "std_msgs/String"),
+  402|      1|            make_channel(3, "/c", "std_msgs/String"),
+  403|       |        ];
+  404|       |
+  405|      1|        let map = pipeline.build_topic_map(&channels);
+  406|      1|        assert_eq!(map.get("/a"), Some(&"/x".to_string()));
+  407|      1|        assert_eq!(map.get("/b"), Some(&"/y".to_string()));
+  408|      1|        assert_eq!(map.get("/c"), Some(&"/c".to_string()));
+  409|      1|    }
+  410|       |
+  411|       |    #[test]
+  412|      1|    fn test_build_type_map() {
+  413|      1|        let mut pipeline = MultiTransform::new();
+  414|      1|        let mut rename = TypeRenameTransform::new();
+  415|      1|        rename.add_mapping("a/Type", "x/Type");
+  416|      1|        rename.add_mapping("b/Type", "y/Type");
+  417|      1|        pipeline.add_transform(Box::new(rename));
+  418|       |
+  419|      1|        let channels = vec![
+  420|      1|            make_channel(1, "/test1", "a/Type"),
+  421|      1|            make_channel(2, "/test2", "b/Type"),
+  422|      1|            make_channel(3, "/test3", "c/Type"),
+  423|       |        ];
+  424|       |
+  425|      1|        let map = pipeline.build_type_map(&channels);
+  426|      1|        assert_eq!(map.get("a/Type"), Some(&"x/Type".to_string()));
+  427|      1|        assert_eq!(map.get("b/Type"), Some(&"y/Type".to_string()));
+  428|      1|        assert_eq!(map.get("c/Type"), Some(&"c/Type".to_string()));
+  429|      1|    }
+  430|       |
+  431|       |    #[test]
+  432|      1|    fn test_modifies_topics() {
+  433|      1|        let mut pipeline = MultiTransform::new();
+  434|      1|        assert!(!pipeline.modifies_topics());
+  435|       |
+  436|      1|        let mut rename = TopicRenameTransform::new();
+  437|      1|        rename.add_mapping("/a", "/b");
+  438|      1|        pipeline.add_transform(Box::new(rename));
+  439|      1|        assert!(pipeline.modifies_topics());
+  440|      1|    }
+  441|       |
+  442|       |    #[test]
+  443|      1|    fn test_modifies_types() {
+  444|      1|        let mut pipeline = MultiTransform::new();
+  445|      1|        assert!(!pipeline.modifies_types());
+  446|       |
+  447|      1|        let mut rename = TypeRenameTransform::new();
+  448|      1|        rename.add_mapping("a/A", "b/A");
+  449|      1|        pipeline.add_transform(Box::new(rename));
+  450|      1|        assert!(pipeline.modifies_types());
+  451|      1|    }
+  452|       |
+  453|       |    #[test]
+  454|      1|    fn test_modifies_schemas() {
+  455|      1|        let mut pipeline = MultiTransform::new();
+  456|      1|        assert!(!pipeline.modifies_schemas());
+  457|       |
+  458|      1|        let mut rename = TypeRenameTransform::new();
+  459|      1|        rename.add_mapping("a/A", "b/A");
+  460|      1|        pipeline.add_transform(Box::new(rename));
+  461|      1|        assert!(pipeline.modifies_schemas());
+  462|      1|    }
+  463|       |
+  464|       |    #[test]
+  465|      1|    fn test_clone() {
+  466|      1|        let mut pipeline = MultiTransform::new();
+  467|      1|        let mut topic_rename = TopicRenameTransform::new();
+  468|      1|        topic_rename.add_mapping("/a", "/b");
+  469|      1|        pipeline.add_transform(Box::new(topic_rename));
+  470|       |
+  471|      1|        let mut type_rename = TypeRenameTransform::new();
+  472|      1|        type_rename.add_mapping("old/Type", "new/Type");
+  473|      1|        pipeline.add_transform(Box::new(type_rename));
+  474|       |
+  475|       |        // Clone the pipeline
+  476|      1|        let cloned = pipeline.clone();
+  477|       |
+  478|       |        // Verify both have same number of transforms
+  479|      1|        assert_eq!(pipeline.transform_count(), 2);
+  480|      1|        assert_eq!(cloned.transform_count(), 2);
+  481|       |
+  482|       |        // Verify both produce the same results
+  483|      1|        assert_eq!(pipeline.transform_topic("/a"), Some("/b".to_string()));
+  484|      1|        assert_eq!(cloned.transform_topic("/a"), Some("/b".to_string()));
+  485|       |
+  486|      1|        let (type1, _) = pipeline.transform_type("old/Type", None);
+  487|      1|        let (type2, _) = cloned.transform_type("old/Type", None);
+  488|      1|        assert_eq!(type1, "new/Type");
+  489|      1|        assert_eq!(type2, "new/Type");
+  490|      1|    }
+  491|       |}
+

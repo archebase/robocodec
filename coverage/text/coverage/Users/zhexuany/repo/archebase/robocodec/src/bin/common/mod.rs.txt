@@ -1,0 +1,246 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/bin/common/mod.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Common utilities for CLI commands.
+    6|       |
+    7|       |use std::io::IsTerminal as _;
+    8|       |use std::path::Path;
+    9|       |
+   10|       |use robocodec::RoboReader;
+   11|       |
+   12|       |pub use anyhow::Result as CliResult;
+   13|       |pub type Result<T = ()> = CliResult<T>;
+   14|       |
+   15|       |/// Format a duration in nanoseconds to human-readable string.
+   16|      9|pub fn format_duration(nanos: u64) -> String {
+   17|      9|    let secs = nanos / 1_000_000_000;
+   18|      9|    let millis = (nanos % 1_000_000_000) / 1_000_000;
+   19|       |
+   20|      9|    if secs >= 3600 {
+   21|      1|        let hours = secs / 3600;
+   22|      1|        let minutes = (secs % 3600) / 60;
+   23|      1|        format!("{}h {}m", hours, minutes)
+   24|      8|    } else if secs >= 60 {
+   25|      1|        let minutes = secs / 60;
+   26|      1|        let remaining_secs = secs % 60;
+   27|      1|        format!("{}m {}s", minutes, remaining_secs)
+   28|      7|    } else if secs > 0 {
+   29|      1|        format!("{}.{:03}s", secs, millis)
+   30|       |    } else {
+   31|      6|        format!("{}ms", millis)
+   32|       |    }
+   33|      9|}
+   34|       |
+   35|       |/// Format a timestamp in nanoseconds to human-readable string.
+   36|      8|pub fn format_timestamp(nanos: u64) -> String {
+   37|      8|    let secs = nanos / 1_000_000_000;
+   38|      8|    let datetime = chrono::DateTime::<chrono::Utc>::from_timestamp(secs as i64, 0);
+   39|       |
+   40|      8|    match datetime {
+   41|      8|        Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+   42|      0|        None => format!("{} ns", nanos),
+   43|       |    }
+   44|      8|}
+   45|       |
+   46|       |/// Parse a timestamp string to nanoseconds.
+   47|       |///
+   48|       |/// Accepts:
+   49|       |/// - Unix timestamp in seconds: "1234567890"
+   50|       |/// - Unix timestamp in nanoseconds: "1234567890000000000"
+   51|       |/// - ISO 8601: "2023-01-01T00:00:00Z"
+   52|       |///
+   53|       |/// # Notes
+   54|       |///
+   55|       |/// - Numeric timestamps smaller than ~year 3000 are treated as seconds
+   56|       |/// - Numeric timestamps larger than ~year 3000 are treated as nanoseconds
+   57|       |/// - ISO 8601 timestamps outside chrono's range (year > 262000000+) will error
+   58|     13|pub fn parse_timestamp(s: &str) -> CliResult<u64> {
+   59|       |    // Approximate seconds from epoch to year 3000
+   60|       |    const SECONDS_THRESHOLD: u64 = 32_503_680_000;
+   61|       |
+   62|       |    // Try as nanoseconds first
+   63|     13|    if let Ok(n) = s.parse::<u64>() {
+                            ^10
+   64|       |        // If it's reasonably small (< year 3000), treat as seconds
+   65|     10|        return Ok(if n < SECONDS_THRESHOLD {
+   66|     10|            n * 1_000_000_000
+   67|       |        } else {
+   68|      0|            n
+   69|       |        });
+   70|      3|    }
+   71|       |
+   72|       |    // Try ISO 8601
+   73|      3|    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                            ^0
+   74|      0|        let nanos = dt
+   75|      0|            .timestamp_nanos_opt()
+   76|      0|            .ok_or_else(|| anyhow::anyhow!("Timestamp out of range (year > ~262000000): {s}"))?;
+   77|      0|        return Ok(nanos as u64);
+   78|      3|    }
+   79|       |
+   80|      3|    Err(anyhow::anyhow!("Invalid timestamp: {s}"))
+   81|     13|}
+   82|       |
+   83|       |/// Parse a time range string.
+   84|       |///
+   85|       |/// Formats: "start,end" or "start:duration" or "start-end"
+   86|      6|pub fn parse_time_range(s: &str) -> CliResult<(u64, u64)> {
+   87|      6|    let (start, end) = if s.contains(',') {
+   88|      4|        let parts: Vec<&str> = s.splitn(2, ',').collect();
+   89|      4|        (parts[0], parts[1])
+   90|      2|    } else if s.contains(':') {
+   91|      1|        let parts: Vec<&str> = s.splitn(2, ':').collect();
+   92|      1|        (parts[0], parts[1])
+   93|      1|    } else if s.contains('-') {
+   94|      1|        let parts: Vec<&str> = s.splitn(2, '-').collect();
+   95|      1|        (parts[0], parts[1])
+   96|       |    } else {
+   97|      0|        return Err(anyhow::anyhow!(
+   98|      0|            "Time range must be in format: start,end or start:duration"
+   99|      0|        ));
+  100|       |    };
+  101|       |
+  102|      6|    let start_ns = parse_timestamp(start)?;
+                      ^5                               ^1
+  103|      5|    let end_ns = parse_timestamp(end)?;
+                      ^3                           ^2
+  104|       |
+  105|      3|    if end_ns <= start_ns {
+  106|      0|        return Err(anyhow::anyhow!("End time must be after start time"));
+  107|      3|    }
+  108|       |
+  109|      3|    Ok((start_ns, end_ns))
+  110|      6|}
+  111|       |
+  112|       |/// Simple progress indicator for long-running operations.
+  113|       |pub struct Progress {
+  114|       |    /// Current progress
+  115|       |    current: u64,
+  116|       |    /// Total expected
+  117|       |    total: u64,
+  118|       |    /// Prefix message
+  119|       |    prefix: String,
+  120|       |    /// Whether to show progress
+  121|       |    enabled: bool,
+  122|       |    /// Last update width (for clearing)
+  123|       |    last_width: usize,
+  124|       |}
+  125|       |
+  126|       |impl Progress {
+  127|       |    /// Create a new progress indicator.
+  128|      1|    pub fn new(total: u64, prefix: impl Into<String>) -> Self {
+  129|      1|        let prefix = prefix.into();
+  130|      1|        let enabled = std::io::stderr().is_terminal();
+  131|      1|        Self {
+  132|      1|            current: 0,
+  133|      1|            total,
+  134|      1|            prefix,
+  135|      1|            enabled,
+  136|      1|            last_width: 0,
+  137|      1|        }
+  138|      1|    }
+  139|       |
+  140|       |    /// Increment progress by 1.
+  141|       |    #[allow(dead_code)]
+  142|      0|    pub fn inc(&mut self) {
+  143|      0|        self.current += 1;
+  144|      0|        self.draw();
+  145|      0|    }
+  146|       |
+  147|       |    /// Set progress to a specific value.
+  148|      6|    pub fn set(&mut self, value: u64) {
+  149|      6|        self.current = value.min(self.total);
+  150|      6|        self.draw();
+  151|      6|    }
+  152|       |
+  153|       |    /// Finish the progress bar with a completion message.
+  154|      1|    pub fn finish(mut self, msg: impl Into<String>) {
+  155|      1|        self.current = self.total;
+  156|      1|        self.draw();
+  157|      1|        if self.enabled {
+  158|      0|            eprintln!();
+  159|      1|        }
+  160|      1|        let msg = msg.into();
+  161|      1|        if !msg.is_empty() {
+  162|      1|            eprintln!("  {}", msg);
+  163|      1|        }
+                      ^0
+  164|      1|    }
+  165|       |
+  166|       |    /// Draw the current progress state.
+  167|      7|    fn draw(&mut self) {
+  168|      7|        if !self.enabled {
+  169|      7|            return;
+  170|      0|        }
+  171|       |
+  172|      0|        let percent = if self.total > 0 {
+  173|      0|            (self.current * 100 / self.total).min(100)
+  174|       |        } else {
+  175|      0|            100
+  176|       |        };
+  177|       |
+  178|      0|        let bar_width = 30;
+  179|      0|        let filled = ((percent as usize) * bar_width / 100).min(bar_width);
+  180|      0|        let empty = bar_width.saturating_sub(filled);
+  181|       |
+  182|      0|        let bar = "=".repeat(filled);
+  183|      0|        let rest = " ".repeat(empty);
+  184|       |
+  185|      0|        let line = format!(
+  186|      0|            "\r  {} [{}{}] {}/{} ({:>3}%)",
+  187|       |            self.prefix, bar, rest, self.current, self.total, percent
+  188|       |        );
+  189|       |
+  190|       |        // Clear previous output by padding with spaces
+  191|      0|        if line.len() < self.last_width {
+  192|      0|            eprint!("{}", " ".repeat(self.last_width - line.len()));
+  193|      0|        }
+  194|       |
+  195|      0|        eprint!("{}", line);
+  196|      0|        self.last_width = line.len();
+  197|      7|    }
+  198|       |}
+  199|       |
+  200|       |/// Open a file with automatic format detection.
+  201|     56|pub fn open_reader(path: &Path) -> Result<RoboReader> {
+  202|     56|    Ok(RoboReader::open(path)?)
+                                           ^14
+  203|     56|}
+  204|       |
+  205|       |#[cfg(test)]
+  206|       |mod tests {
+  207|       |    use super::*;
+  208|       |
+  209|       |    #[test]
+  210|      1|    fn test_format_duration() {
+  211|      1|        assert_eq!(format_duration(500_000_000), "500ms");
+  212|      1|        assert_eq!(format_duration(1_500_000_000), "1.500s");
+  213|      1|        assert_eq!(format_duration(90_000_000_000), "1m 30s");
+  214|      1|        assert_eq!(format_duration(3_600_000_000_000), "1h 0m");
+  215|      1|    }
+  216|       |
+  217|       |    #[test]
+  218|      1|    fn test_parse_timestamp() {
+  219|      1|        assert_eq!(parse_timestamp("0").unwrap(), 0);
+  220|      1|        assert_eq!(
+  221|      1|            parse_timestamp("1234567890").unwrap(),
+  222|       |            1_234_567_890_000_000_000
+  223|       |        );
+  224|      1|    }
+  225|       |
+  226|       |    #[test]
+  227|      1|    fn test_parse_time_range() {
+  228|      1|        let (start, end) = parse_time_range("0,1").unwrap();
+  229|      1|        assert_eq!(start, 0);
+  230|      1|        assert_eq!(end, 1_000_000_000);
+  231|       |
+  232|      1|        let (start, end) = parse_time_range("1234567890:1234567900").unwrap();
+  233|      1|        assert_eq!(start, 1_234_567_890_000_000_000);
+  234|      1|        assert_eq!(end, 1_234_567_900_000_000_000);
+  235|      1|    }
+  236|       |}
+

@@ -1,0 +1,471 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/encoding/cdr/plan.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Decode plan generation for CDR decoding.
+    6|       |//!
+    7|       |//! A decode plan is a sequence of operations that can be executed
+    8|       |//! to decode a CDR-encoded message. Plans are generated once per
+    9|       |//! schema and cached for reuse.
+   10|       |
+   11|       |use std::fmt;
+   12|       |
+   13|       |/// A single decode operation in the execution plan.
+   14|       |#[derive(Debug, Clone, PartialEq)]
+   15|       |pub enum DecodeOp {
+   16|       |    /// Align the cursor to a specific boundary.
+   17|       |    Align {
+   18|       |        /// Alignment boundary in bytes
+   19|       |        alignment: u64,
+   20|       |    },
+   21|       |
+   22|       |    /// Read a primitive value.
+   23|       |    ReadPrimitive {
+   24|       |        /// Field path for the value (e.g., "position.x")
+   25|       |        field_path: String,
+   26|       |        /// Primitive type to read
+   27|       |        type_name: crate::PrimitiveType,
+   28|       |    },
+   29|       |
+   30|       |    /// Read a string value (4-byte length prefix + UTF-8 bytes).
+   31|       |    ReadString {
+   32|       |        /// Field path for the value
+   33|       |        field_path: String,
+   34|       |    },
+   35|       |
+   36|       |    /// Read bytes value (4-byte length prefix + raw bytes).
+   37|       |    ReadBytes {
+   38|       |        /// Field path for the value
+   39|       |        field_path: String,
+   40|       |    },
+   41|       |
+   42|       |    /// Read a time value (ROS time: sec:int32, nsec:uint32).
+   43|       |    ReadTime {
+   44|       |        /// Field path for the value
+   45|       |        field_path: String,
+   46|       |    },
+   47|       |
+   48|       |    /// Read a duration value (ROS duration: sec:int32, nsec:uint32).
+   49|       |    ReadDuration {
+   50|       |        /// Field path for the value
+   51|       |        field_path: String,
+   52|       |    },
+   53|       |
+   54|       |    /// Begin decoding an array.
+   55|       |    ReadArray {
+   56|       |        /// Field path for the array
+   57|       |        field_path: String,
+   58|       |        /// Element type
+   59|       |        element_type: ElementType,
+   60|       |        /// Number of elements (None = dynamic, Some(N) = fixed)
+   61|       |        count: Option<usize>,
+   62|       |    },
+   63|       |
+   64|       |    /// Decode a nested message.
+   65|       |    DecodeNested {
+   66|       |        /// Field path for the nested value
+   67|       |        field_path: String,
+   68|       |        /// Type name of the nested message
+   69|       |        type_name: String,
+   70|       |    },
+   71|       |
+   72|       |    /// End of the current scope (array or nested message).
+   73|       |    EndScope,
+   74|       |}
+   75|       |
+   76|       |/// Element type for arrays.
+   77|       |#[derive(Debug, Clone, PartialEq)]
+   78|       |pub enum ElementType {
+   79|       |    /// Primitive element
+   80|       |    Primitive(crate::PrimitiveType),
+   81|       |    /// String element (for string arrays)
+   82|       |    String,
+   83|       |    /// Bytes element (for bytes arrays)
+   84|       |    Bytes,
+   85|       |    /// Nested message element
+   86|       |    Nested { type_name: String, alignment: u64 },
+   87|       |}
+   88|       |
+   89|       |impl ElementType {
+   90|       |    /// Get the alignment for this element type.
+   91|     14|    pub fn alignment(&self) -> u64 {
+   92|     14|        match self {
+   93|     10|            ElementType::Primitive(p) => p.alignment(),
+   94|      2|            ElementType::String | ElementType::Bytes => 4,
+   95|      2|            ElementType::Nested { alignment, .. } => *alignment,
+   96|       |        }
+   97|     14|    }
+   98|       |}
+   99|       |
+  100|       |/// A decode plan is a sequence of decode operations.
+  101|       |#[derive(Debug, Clone, PartialEq)]
+  102|       |pub struct DecodePlan {
+  103|       |    /// Ordered sequence of decode operations
+  104|       |    pub ops: Vec<DecodeOp>,
+  105|       |    /// Name of the message type this plan decodes
+  106|       |    pub type_name: String,
+  107|       |}
+  108|       |
+  109|       |impl DecodePlan {
+  110|       |    /// Create a new decode plan.
+  111|     41|    pub fn new(type_name: String) -> Self {
+  112|     41|        Self {
+  113|     41|            ops: Vec::new(),
+  114|     41|            type_name,
+  115|     41|        }
+  116|     41|    }
+  117|       |
+  118|       |    /// Add an operation to the plan.
+  119|    363|    pub fn add_op(&mut self, op: DecodeOp) {
+  120|    363|        self.ops.push(op);
+  121|    363|    }
+  122|       |
+  123|       |    /// Get the current length (number of operations).
+  124|     10|    pub fn len(&self) -> usize {
+  125|     10|        self.ops.len()
+  126|     10|    }
+  127|       |
+  128|       |    /// Check if the plan is empty.
+  129|      3|    pub fn is_empty(&self) -> bool {
+  130|      3|        self.ops.is_empty()
+  131|      3|    }
+  132|       |}
+  133|       |
+  134|       |impl fmt::Display for DecodePlan {
+  135|      1|    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+  136|      1|        writeln!(f, "DecodePlan for '{}':", self.type_name)?;
+                                                                         ^0
+  137|      2|        for (idx, op) in self.ops.iter().enumerate() {
+                                       ^1              ^1
+  138|      2|            writeln!(f, "  {idx:3}: {op:?}")?;
+                                                          ^0
+  139|       |        }
+  140|      1|        Ok(())
+  141|      1|    }
+  142|       |}
+  143|       |
+  144|       |#[cfg(test)]
+  145|       |mod tests {
+  146|       |    use super::*;
+  147|       |    use crate::PrimitiveType;
+  148|       |
+  149|       |    #[test]
+  150|      1|    fn test_decode_op_align_variant() {
+  151|      1|        let op = DecodeOp::Align { alignment: 4 };
+  152|      1|        assert_eq!(op, DecodeOp::Align { alignment: 4 });
+  153|      1|    }
+  154|       |
+  155|       |    #[test]
+  156|      1|    fn test_decode_op_read_primitive() {
+  157|      1|        let op = DecodeOp::ReadPrimitive {
+  158|      1|            field_path: "position.x".to_string(),
+  159|      1|            type_name: PrimitiveType::Float32,
+  160|      1|        };
+  161|      1|        assert!(matches!(op, DecodeOp::ReadPrimitive { .. }));
+                              ^0
+  162|      1|    }
+  163|       |
+  164|       |    #[test]
+  165|      1|    fn test_decode_op_read_string() {
+  166|      1|        let op = DecodeOp::ReadString {
+  167|      1|            field_path: "name".to_string(),
+  168|      1|        };
+  169|      1|        assert_eq!(
+  170|       |            op,
+  171|      1|            DecodeOp::ReadString {
+  172|      1|                field_path: "name".to_string()
+  173|      1|            }
+  174|       |        );
+  175|      1|    }
+  176|       |
+  177|       |    #[test]
+  178|      1|    fn test_decode_op_read_bytes() {
+  179|      1|        let op = DecodeOp::ReadBytes {
+  180|      1|            field_path: "data".to_string(),
+  181|      1|        };
+  182|      1|        assert!(matches!(op, DecodeOp::ReadBytes { .. }));
+                              ^0
+  183|      1|    }
+  184|       |
+  185|       |    #[test]
+  186|      1|    fn test_decode_op_read_time() {
+  187|      1|        let op = DecodeOp::ReadTime {
+  188|      1|            field_path: "header.stamp".to_string(),
+  189|      1|        };
+  190|      1|        assert_eq!(
+  191|       |            op,
+  192|      1|            DecodeOp::ReadTime {
+  193|      1|                field_path: "header.stamp".to_string()
+  194|      1|            }
+  195|       |        );
+  196|      1|    }
+  197|       |
+  198|       |    #[test]
+  199|      1|    fn test_decode_op_read_duration() {
+  200|      1|        let op = DecodeOp::ReadDuration {
+  201|      1|            field_path: "duration".to_string(),
+  202|      1|        };
+  203|      1|        assert!(matches!(op, DecodeOp::ReadDuration { .. }));
+                              ^0
+  204|      1|    }
+  205|       |
+  206|       |    #[test]
+  207|      1|    fn test_decode_op_read_array_fixed() {
+  208|      1|        let op = DecodeOp::ReadArray {
+  209|      1|            field_path: "position".to_string(),
+  210|      1|            element_type: ElementType::Primitive(PrimitiveType::Float64),
+  211|      1|            count: Some(3),
+  212|      1|        };
+  213|      1|        assert!(matches!(op, DecodeOp::ReadArray { count: Some(3), .. }));
+                              ^0
+  214|      1|    }
+  215|       |
+  216|       |    #[test]
+  217|      1|    fn test_decode_op_read_array_dynamic() {
+  218|      1|        let op = DecodeOp::ReadArray {
+  219|      1|            field_path: "names".to_string(),
+  220|      1|            element_type: ElementType::String,
+  221|      1|            count: None,
+  222|      1|        };
+  223|      1|        assert!(matches!(op, DecodeOp::ReadArray { count: None, .. }));
+                              ^0
+  224|      1|    }
+  225|       |
+  226|       |    #[test]
+  227|      1|    fn test_decode_op_decode_nested() {
+  228|      1|        let op = DecodeOp::DecodeNested {
+  229|      1|            field_path: "nested_msg".to_string(),
+  230|      1|            type_name: "geometry_msgs/Pose".to_string(),
+  231|      1|        };
+  232|      1|        assert_eq!(
+  233|       |            op,
+  234|      1|            DecodeOp::DecodeNested {
+  235|      1|                field_path: "nested_msg".to_string(),
+  236|      1|                type_name: "geometry_msgs/Pose".to_string()
+  237|      1|            }
+  238|       |        );
+  239|      1|    }
+  240|       |
+  241|       |    #[test]
+  242|      1|    fn test_decode_op_end_scope() {
+  243|      1|        let op = DecodeOp::EndScope;
+  244|      1|        assert_eq!(op, DecodeOp::EndScope);
+  245|      1|    }
+  246|       |
+  247|       |    #[test]
+  248|      1|    fn test_element_type_primitive() {
+  249|      1|        let elem = ElementType::Primitive(PrimitiveType::Int32);
+  250|      1|        assert_eq!(elem.alignment(), 4);
+  251|      1|    }
+  252|       |
+  253|       |    #[test]
+  254|      1|    fn test_element_type_string() {
+  255|      1|        let elem = ElementType::String;
+  256|      1|        assert_eq!(elem.alignment(), 4);
+  257|      1|    }
+  258|       |
+  259|       |    #[test]
+  260|      1|    fn test_element_type_bytes() {
+  261|      1|        let elem = ElementType::Bytes;
+  262|      1|        assert_eq!(elem.alignment(), 4);
+  263|      1|    }
+  264|       |
+  265|       |    #[test]
+  266|      1|    fn test_element_type_nested() {
+  267|      1|        let elem = ElementType::Nested {
+  268|      1|            type_name: "std_msgs/Header".to_string(),
+  269|      1|            alignment: 8,
+  270|      1|        };
+  271|      1|        assert_eq!(elem.alignment(), 8);
+  272|      1|    }
+  273|       |
+  274|       |    #[test]
+  275|      1|    fn test_element_type_alignment_for_float64() {
+  276|      1|        let elem = ElementType::Primitive(PrimitiveType::Float64);
+  277|      1|        assert_eq!(elem.alignment(), 8);
+  278|      1|    }
+  279|       |
+  280|       |    #[test]
+  281|      1|    fn test_element_type_alignment_for_bool() {
+  282|      1|        let elem = ElementType::Primitive(PrimitiveType::Bool);
+  283|      1|        assert_eq!(elem.alignment(), 1);
+  284|      1|    }
+  285|       |
+  286|       |    #[test]
+  287|      1|    fn test_decode_plan_new() {
+  288|      1|        let plan = DecodePlan::new("test/Message".to_string());
+  289|      1|        assert!(plan.is_empty());
+  290|      1|        assert_eq!(plan.len(), 0);
+  291|      1|        assert_eq!(plan.type_name, "test/Message");
+  292|      1|    }
+  293|       |
+  294|       |    #[test]
+  295|      1|    fn test_decode_plan_add_op() {
+  296|      1|        let mut plan = DecodePlan::new("test".to_string());
+  297|      1|        plan.add_op(DecodeOp::Align { alignment: 4 });
+  298|      1|        assert_eq!(plan.len(), 1);
+  299|      1|        assert!(!plan.is_empty());
+  300|      1|    }
+  301|       |
+  302|       |    #[test]
+  303|      1|    fn test_decode_plan_add_multiple_ops() {
+  304|      1|        let mut plan = DecodePlan::new("test".to_string());
+  305|      1|        plan.add_op(DecodeOp::Align { alignment: 8 });
+  306|      1|        plan.add_op(DecodeOp::ReadPrimitive {
+  307|      1|            field_path: "value".to_string(),
+  308|      1|            type_name: PrimitiveType::Int32,
+  309|      1|        });
+  310|      1|        plan.add_op(DecodeOp::EndScope);
+  311|      1|        assert_eq!(plan.len(), 3);
+  312|      1|    }
+  313|       |
+  314|       |    #[test]
+  315|      1|    fn test_decode_plan_is_empty() {
+  316|      1|        let plan = DecodePlan::new("test".to_string());
+  317|      1|        assert!(plan.is_empty());
+  318|      1|        assert_eq!(plan.len(), 0);
+  319|      1|    }
+  320|       |
+  321|       |    #[test]
+  322|      1|    fn test_decode_plan_len() {
+  323|      1|        let mut plan = DecodePlan::new("test".to_string());
+  324|      1|        assert_eq!(plan.len(), 0);
+  325|      1|        plan.add_op(DecodeOp::Align { alignment: 4 });
+  326|      1|        assert_eq!(plan.len(), 1);
+  327|      1|        plan.add_op(DecodeOp::Align { alignment: 8 });
+  328|      1|        assert_eq!(plan.len(), 2);
+  329|      1|    }
+  330|       |
+  331|       |    #[test]
+  332|      1|    fn test_decode_plan_clone() {
+  333|      1|        let mut plan = DecodePlan::new("test".to_string());
+  334|      1|        plan.add_op(DecodeOp::ReadPrimitive {
+  335|      1|            field_path: "x".to_string(),
+  336|      1|            type_name: PrimitiveType::Float32,
+  337|      1|        });
+  338|      1|        let cloned = plan.clone();
+  339|      1|        assert_eq!(cloned.len(), plan.len());
+  340|      1|        assert_eq!(cloned.type_name, plan.type_name);
+  341|      1|    }
+  342|       |
+  343|       |    #[test]
+  344|      1|    fn test_decode_plan_equality() {
+  345|      1|        let mut plan1 = DecodePlan::new("test".to_string());
+  346|      1|        plan1.add_op(DecodeOp::Align { alignment: 4 });
+  347|       |
+  348|      1|        let mut plan2 = DecodePlan::new("test".to_string());
+  349|      1|        plan2.add_op(DecodeOp::Align { alignment: 4 });
+  350|       |
+  351|      1|        assert_eq!(plan1, plan2);
+  352|      1|    }
+  353|       |
+  354|       |    #[test]
+  355|      1|    fn test_decode_plan_inequality() {
+  356|      1|        let mut plan1 = DecodePlan::new("test".to_string());
+  357|      1|        plan1.add_op(DecodeOp::Align { alignment: 4 });
+  358|       |
+  359|      1|        let mut plan2 = DecodePlan::new("test".to_string());
+  360|      1|        plan2.add_op(DecodeOp::Align { alignment: 8 });
+  361|       |
+  362|      1|        assert_ne!(plan1, plan2);
+  363|      1|    }
+  364|       |
+  365|       |    #[test]
+  366|      1|    fn test_decode_plan_display() {
+  367|      1|        let mut plan = DecodePlan::new("test/Msg".to_string());
+  368|      1|        plan.add_op(DecodeOp::Align { alignment: 4 });
+  369|      1|        plan.add_op(DecodeOp::ReadPrimitive {
+  370|      1|            field_path: "value".to_string(),
+  371|      1|            type_name: PrimitiveType::Int32,
+  372|      1|        });
+  373|       |
+  374|      1|        let display = format!("{plan}");
+  375|      1|        assert!(display.contains("test/Msg"));
+  376|      1|        assert!(display.contains("Align"));
+  377|      1|    }
+  378|       |
+  379|       |    #[test]
+  380|      1|    fn test_element_type_partial_eq() {
+  381|      1|        let elem1 = ElementType::Primitive(PrimitiveType::Int32);
+  382|      1|        let elem2 = ElementType::Primitive(PrimitiveType::Int32);
+  383|      1|        assert_eq!(elem1, elem2);
+  384|      1|    }
+  385|       |
+  386|       |    #[test]
+  387|      1|    fn test_element_type_not_equal() {
+  388|      1|        let elem1 = ElementType::Primitive(PrimitiveType::Int32);
+  389|      1|        let elem2 = ElementType::Primitive(PrimitiveType::Float32);
+  390|      1|        assert_ne!(elem1, elem2);
+  391|      1|    }
+  392|       |
+  393|       |    #[test]
+  394|      1|    fn test_decode_op_clone() {
+  395|      1|        let op = DecodeOp::ReadPrimitive {
+  396|      1|            field_path: "test.field".to_string(),
+  397|      1|            type_name: PrimitiveType::Float64,
+  398|      1|        };
+  399|      1|        let cloned = op.clone();
+  400|      1|        assert_eq!(op, cloned);
+  401|      1|    }
+  402|       |
+  403|       |    #[test]
+  404|      1|    fn test_decode_op_array_with_nested_element() {
+  405|      1|        let op = DecodeOp::ReadArray {
+  406|      1|            field_path: "nested_array".to_string(),
+  407|      1|            element_type: ElementType::Nested {
+  408|      1|                type_name: "geometry_msgs/Point".to_string(),
+  409|      1|                alignment: 4,
+  410|      1|            },
+  411|      1|            count: Some(10),
+  412|      1|        };
+  413|      1|        assert!(matches!(
+                              ^0
+  414|      1|            op,
+  415|       |            DecodeOp::ReadArray {
+  416|       |                element_type: ElementType::Nested { .. },
+  417|       |                ..
+  418|       |            }
+  419|       |        ));
+  420|      1|    }
+  421|       |
+  422|       |    #[test]
+  423|      1|    fn test_element_type_nested_with_different_alignment() {
+  424|      1|        let elem = ElementType::Nested {
+  425|      1|            type_name: "test/Type".to_string(),
+  426|      1|            alignment: 16,
+  427|      1|        };
+  428|      1|        assert_eq!(elem.alignment(), 16);
+  429|      1|    }
+  430|       |
+  431|       |    #[test]
+  432|      1|    fn test_decode_plan_with_various_operations() {
+  433|      1|        let mut plan = DecodePlan::new("ComplexMessage".to_string());
+  434|      1|        plan.add_op(DecodeOp::Align { alignment: 4 });
+  435|      1|        plan.add_op(DecodeOp::ReadPrimitive {
+  436|      1|            field_path: "header.seq".to_string(),
+  437|      1|            type_name: PrimitiveType::UInt32,
+  438|      1|        });
+  439|      1|        plan.add_op(DecodeOp::ReadTime {
+  440|      1|            field_path: "header.stamp".to_string(),
+  441|      1|        });
+  442|      1|        plan.add_op(DecodeOp::ReadString {
+  443|      1|            field_path: "header.frame_id".to_string(),
+  444|      1|        });
+  445|      1|        plan.add_op(DecodeOp::ReadArray {
+  446|      1|            field_path: "positions".to_string(),
+  447|      1|            element_type: ElementType::Primitive(PrimitiveType::Float64),
+  448|      1|            count: None,
+  449|      1|        });
+  450|      1|        plan.add_op(DecodeOp::DecodeNested {
+  451|      1|            field_path: "nested".to_string(),
+  452|      1|            type_name: "NestedType".to_string(),
+  453|      1|        });
+  454|      1|        plan.add_op(DecodeOp::EndScope);
+  455|       |
+  456|      1|        assert_eq!(plan.len(), 7);
+  457|      1|    }
+  458|       |}
+

@@ -1,0 +1,154 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/io/reader/config.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Reader configuration.
+    6|       |
+    7|       |/// Configuration for opening a `RoboReader`.
+    8|       |///
+    9|       |/// This config provides options for controlling reader behavior.
+   10|       |#[derive(Debug, Clone)]
+   11|       |pub struct ReaderConfig {
+   12|       |    /// Prefer parallel reading when available (default: true).
+   13|       |    pub prefer_parallel: bool,
+   14|       |    /// Number of threads for parallel reading (None = auto-detect).
+   15|       |    pub num_threads: Option<usize>,
+   16|       |    /// Enable chunk merging for small chunks (default: true).
+   17|       |    pub chunk_merge_enabled: bool,
+   18|       |    /// Target merged chunk size in bytes (default: 16MB).
+   19|       |    pub chunk_merge_target_size: usize,
+   20|       |}
+   21|       |
+   22|       |impl Default for ReaderConfig {
+   23|     99|    fn default() -> Self {
+   24|     99|        Self {
+   25|     99|            prefer_parallel: true,
+   26|     99|            num_threads: None,
+   27|     99|            chunk_merge_enabled: true,
+   28|     99|            chunk_merge_target_size: 16 * 1024 * 1024,
+   29|     99|        }
+   30|     99|    }
+   31|       |}
+   32|       |
+   33|       |impl ReaderConfig {
+   34|       |    /// Create a new builder for ReaderConfig.
+   35|      2|    pub fn builder() -> ReaderConfigBuilder {
+   36|      2|        ReaderConfigBuilder::new()
+   37|      2|    }
+   38|       |
+   39|       |    /// Create a config that prefers parallel reading.
+   40|      2|    pub fn parallel() -> Self {
+   41|      2|        Self {
+   42|      2|            prefer_parallel: true,
+   43|      2|            ..Default::default()
+   44|      2|        }
+   45|      2|    }
+   46|       |
+   47|       |    /// Create a config that prefers sequential reading.
+   48|     15|    pub fn sequential() -> Self {
+   49|     15|        Self {
+   50|     15|            prefer_parallel: false,
+   51|     15|            ..Default::default()
+   52|     15|        }
+   53|     15|    }
+   54|       |}
+   55|       |
+   56|       |/// Builder for `ReaderConfig`.
+   57|       |///
+   58|       |/// Provides a fluent API for creating reader configurations.
+   59|       |///
+   60|       |/// # Example
+   61|       |///
+   62|       |/// ```rust,no_run
+   63|       |/// use robocodec::io::ReaderConfig;
+   64|       |///
+   65|       |/// let config = ReaderConfig::builder()
+   66|       |///     .prefer_parallel(true)
+   67|       |///     .num_threads(4)
+   68|       |///     .build();
+   69|       |/// ```
+   70|       |#[derive(Debug, Clone, Default)]
+   71|       |pub struct ReaderConfigBuilder {
+   72|       |    config: ReaderConfig,
+   73|       |}
+   74|       |
+   75|       |impl ReaderConfigBuilder {
+   76|       |    /// Create a new builder with default configuration.
+   77|      2|    pub fn new() -> Self {
+   78|      2|        Self::default()
+   79|      2|    }
+   80|       |
+   81|       |    /// Set whether to prefer parallel reading.
+   82|      2|    pub fn prefer_parallel(mut self, value: bool) -> Self {
+   83|      2|        self.config.prefer_parallel = value;
+   84|      2|        self
+   85|      2|    }
+   86|       |
+   87|       |    /// Set the number of threads for parallel reading.
+   88|      2|    pub fn num_threads(mut self, count: usize) -> Self {
+   89|      2|        self.config.num_threads = Some(count);
+   90|      2|        self
+   91|      2|    }
+   92|       |
+   93|       |    /// Set whether chunk merging is enabled.
+   94|      2|    pub fn chunk_merge_enabled(mut self, enabled: bool) -> Self {
+   95|      2|        self.config.chunk_merge_enabled = enabled;
+   96|      2|        self
+   97|      2|    }
+   98|       |
+   99|       |    /// Set the target merged chunk size in bytes.
+  100|      1|    pub fn chunk_merge_target_size(mut self, size: usize) -> Self {
+  101|      1|        self.config.chunk_merge_target_size = size;
+  102|      1|        self
+  103|      1|    }
+  104|       |
+  105|       |    /// Build the configuration.
+  106|      2|    pub fn build(self) -> ReaderConfig {
+  107|      2|        self.config
+  108|      2|    }
+  109|       |}
+  110|       |
+  111|       |#[cfg(test)]
+  112|       |mod tests {
+  113|       |    use super::*;
+  114|       |
+  115|       |    #[test]
+  116|      1|    fn test_default_config() {
+  117|      1|        let config = ReaderConfig::default();
+  118|      1|        assert!(config.prefer_parallel);
+  119|      1|        assert!(config.chunk_merge_enabled);
+  120|      1|        assert_eq!(config.chunk_merge_target_size, 16 * 1024 * 1024);
+  121|      1|        assert!(config.num_threads.is_none());
+  122|      1|    }
+  123|       |
+  124|       |    #[test]
+  125|      1|    fn test_parallel_config() {
+  126|      1|        let config = ReaderConfig::parallel();
+  127|      1|        assert!(config.prefer_parallel);
+  128|      1|    }
+  129|       |
+  130|       |    #[test]
+  131|      1|    fn test_sequential_config() {
+  132|      1|        let config = ReaderConfig::sequential();
+  133|      1|        assert!(!config.prefer_parallel);
+  134|      1|    }
+  135|       |
+  136|       |    #[test]
+  137|      1|    fn test_builder() {
+  138|      1|        let config = ReaderConfig::builder()
+  139|      1|            .prefer_parallel(false)
+  140|      1|            .num_threads(4)
+  141|      1|            .chunk_merge_enabled(false)
+  142|      1|            .chunk_merge_target_size(8 * 1024 * 1024)
+  143|      1|            .build();
+  144|       |
+  145|      1|        assert!(!config.prefer_parallel);
+  146|      1|        assert_eq!(config.num_threads, Some(4));
+  147|      1|        assert!(!config.chunk_merge_enabled);
+  148|      1|        assert_eq!(config.chunk_merge_target_size, 8 * 1024 * 1024);
+  149|      1|    }
+  150|       |}
+

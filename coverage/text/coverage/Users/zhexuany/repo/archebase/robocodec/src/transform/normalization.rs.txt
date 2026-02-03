@@ -1,0 +1,228 @@
+Coverage Report
+Created: 2026-02-03 14:01
+/Users/zhexuany/repo/archebase/robocodec/src/transform/normalization.rs:
+    1|       |// SPDX-FileCopyrightText: 2026 ArcheBase
+    2|       |//
+    3|       |// SPDX-License-Identifier: MulanPSL-2.0
+    4|       |
+    5|       |//! Type normalization preset for brand-agnostic message types.
+    6|       |//!
+    7|       |//! Removes brand-specific package names and maps to generic equivalents.
+    8|       |
+    9|       |use super::{TopicAwareTypeRenameTransform, TypeRenameTransform};
+   10|       |use std::collections::HashMap;
+   11|       |
+   12|       |/// Brand-agnostic type normalization.
+   13|       |///
+   14|       |/// Combines topic-aware type mappings (for generic containers like nmx.msg.LowdimData)
+   15|       |/// with global type renames (for brand-specific packages).
+   16|       |pub struct TypeNormalization {
+   17|       |    /// Topic-aware type mappings for generic container types
+   18|       |    pub topic_aware: TopicAwareTypeRenameTransform,
+   19|       |    /// Global type mappings for brand-specific packages
+   20|       |    pub type_rename: TypeRenameTransform,
+   21|       |}
+   22|       |
+   23|       |/// Type alias for topic-aware type mappings.
+   24|       |pub type TopicAwareMappings = HashMap<(String, String), String>;
+   25|       |
+   26|       |/// Type alias for global type mappings.
+   27|       |pub type GlobalTypeMappings = HashMap<String, String>;
+   28|       |
+   29|       |impl TypeNormalization {
+   30|       |    /// Create the full normalization preset with all brand mappings.
+   31|      1|    pub fn full() -> Self {
+   32|      1|        Self {
+   33|      1|            topic_aware: Self::nmx_topic_mappings(),
+   34|      1|            type_rename: Self::global_type_mappings(),
+   35|      1|        }
+   36|      1|    }
+   37|       |
+   38|       |    /// Create nmx-specific normalization only.
+   39|      2|    pub fn nmx() -> Self {
+   40|      2|        Self {
+   41|      2|            topic_aware: Self::nmx_topic_mappings(),
+   42|      2|            type_rename: TypeRenameTransform::new(),
+   43|      2|        }
+   44|      2|    }
+   45|       |
+   46|       |    /// Create genie_msgs-specific normalization only.
+   47|      1|    pub fn genie() -> Self {
+   48|      1|        Self {
+   49|      1|            topic_aware: TopicAwareTypeRenameTransform::new(),
+   50|      1|            type_rename: Self::genie_type_mappings(),
+   51|      1|        }
+   52|      1|    }
+   53|       |
+   54|       |    /// Topic-aware mappings for nmx.msg.LowdimData container.
+   55|       |    ///
+   56|       |    /// The same schema type maps to different semantic types based on topic.
+   57|      3|    fn nmx_topic_mappings() -> TopicAwareTypeRenameTransform {
+   58|      3|        let mut mapping = TopicAwareTypeRenameTransform::new();
+   59|       |
+   60|       |        // nmx.msg.LowdimData → roboflow.msg.* based on topic
+   61|      3|        mapping.add_mapping(
+   62|       |            "/lowdim/joint",
+   63|       |            "nmx.msg.LowdimData",
+   64|       |            "roboflow.msg.JointStates",
+   65|       |        );
+   66|      3|        mapping.add_mapping("/lowdim/tcp", "nmx.msg.LowdimData", "roboflow.msg.eef_pose");
+   67|      3|        mapping.add_mapping(
+   68|       |            "/lowdim/ee_state",
+   69|       |            "nmx.msg.LowdimData",
+   70|       |            "roboflow.msg.ee_state",
+   71|       |        );
+   72|      3|        mapping.add_mapping(
+   73|       |            "/lowdim/airexo_joint",
+   74|       |            "nmx.msg.LowdimData",
+   75|       |            "roboflow.msg.airexo_joint",
+   76|       |        );
+   77|      3|        mapping.add_mapping(
+   78|       |            "/camera/intrinsic/camid_1",
+   79|       |            "nmx.msg.LowdimData",
+   80|       |            "roboflow.msg.camid_1_intrinsic",
+   81|       |        );
+   82|       |
+   83|       |        // nmx.msg.Image → sensor_msgs.msg.CompressedImage
+   84|      3|        mapping.add_mapping(
+   85|       |            "/camera/color/compressed/jpg/camid_1",
+   86|       |            "nmx.msg.Image",
+   87|       |            "sensor_msgs.msg.CompressedImage",
+   88|       |        );
+   89|      3|        mapping.add_mapping(
+   90|       |            "/camera/depth/compressed/png/camid_1",
+   91|       |            "nmx.msg.Image",
+   92|       |            "sensor_msgs.msg.CompressedImage",
+   93|       |        );
+   94|       |
+   95|      3|        mapping
+   96|      3|    }
+   97|       |
+   98|       |    /// Global type mappings for brand-specific packages.
+   99|      1|    fn global_type_mappings() -> TypeRenameTransform {
+  100|      1|        let mut mapping = TypeRenameTransform::new();
+  101|       |
+  102|       |        // genie_msgs/* → roboflow.msg/* or ROS standard types
+  103|      1|        mapping.add_mapping("genie_msgs/msg/ArmState", "roboflow.msg.ArmState");
+  104|      1|        mapping.add_mapping(
+  105|       |            "genie_msgs/msg/BatteryStatus",
+  106|       |            "sensor_msgs.msg.BatteryState",
+  107|       |        );
+  108|      1|        mapping.add_mapping("genie_msgs/msg/EndState", "roboflow.msg.EndEffectorState");
+  109|      1|        mapping.add_mapping("genie_msgs/msg/FaultStatus", "roboflow.msg.FaultStatus");
+  110|      1|        mapping.add_mapping("genie_msgs/msg/HeadState", "roboflow.msg.HeadState");
+  111|      1|        mapping.add_mapping("genie_msgs/msg/PeriStatus", "roboflow.msg.PeripheralStatus");
+  112|      1|        mapping.add_mapping("genie_msgs/msg/Position", "geometry_msgs.msg.Pose");
+  113|      1|        mapping.add_mapping("genie_msgs/msg/PublicFaultMsg", "roboflow.msg.FaultStatus");
+  114|      1|        mapping.add_mapping("genie_msgs/msg/SceneStatus", "roboflow.msg.SceneStatus");
+  115|      1|        mapping.add_mapping("genie_msgs/msg/WaistState", "roboflow.msg.TorsoState");
+  116|      1|        mapping.add_mapping(
+  117|       |            "genie_msgs/msg/WholeBodyStatus",
+  118|       |            "roboflow.msg.WholeBodyStatus",
+  119|       |        );
+  120|       |
+  121|       |        // kuovo_msgs → roboflow.msg
+  122|      1|        mapping.add_mapping("kuavo_msgs/sensorsData", "roboflow.msg.SensorsData");
+  123|       |
+  124|       |        // upperlimb → roboflow.msg
+  125|      1|        mapping.add_mapping("upperlimb/Pose", "roboflow.msg.EndEffectorPose");
+  126|       |
+  127|       |        // nmx specific types (non-LowdimData)
+  128|      1|        mapping.add_mapping("nmx.msg.CameraExtrinsic", "geometry_msgs.msg.Transform");
+  129|      1|        mapping.add_mapping("nmx.msg.JointStates", "sensor_msgs.msg.JointState");
+  130|       |
+  131|      1|        mapping
+  132|      1|    }
+  133|       |
+  134|       |    /// Genie-specific type mappings only.
+  135|      1|    fn genie_type_mappings() -> TypeRenameTransform {
+  136|      1|        let mut mapping = TypeRenameTransform::new();
+  137|       |
+  138|      1|        mapping.add_mapping("genie_msgs/msg/ArmState", "roboflow.msg.ArmState");
+  139|      1|        mapping.add_mapping(
+  140|       |            "genie_msgs/msg/BatteryStatus",
+  141|       |            "sensor_msgs.msg.BatteryState",
+  142|       |        );
+  143|      1|        mapping.add_mapping("genie_msgs/msg/EndState", "roboflow.msg.EndEffectorState");
+  144|      1|        mapping.add_mapping("genie_msgs/msg/FaultStatus", "roboflow.msg.FaultStatus");
+  145|      1|        mapping.add_mapping("genie_msgs/msg/HeadState", "roboflow.msg.HeadState");
+  146|      1|        mapping.add_mapping("genie_msgs/msg/PeriStatus", "roboflow.msg.PeripheralStatus");
+  147|      1|        mapping.add_mapping("genie_msgs/msg/Position", "geometry_msgs.msg.Pose");
+  148|      1|        mapping.add_mapping("genie_msgs/msg/PublicFaultMsg", "roboflow.msg.FaultStatus");
+  149|      1|        mapping.add_mapping("genie_msgs/msg/SceneStatus", "roboflow.msg.SceneStatus");
+  150|      1|        mapping.add_mapping("genie_msgs/msg/WaistState", "roboflow.msg.TorsoState");
+  151|      1|        mapping.add_mapping(
+  152|       |            "genie_msgs/msg/WholeBodyStatus",
+  153|       |            "roboflow.msg.WholeBodyStatus",
+  154|       |        );
+  155|       |
+  156|      1|        mapping
+  157|      1|    }
+  158|       |
+  159|       |    /// Get all mappings as a HashMap for serialization.
+  160|      0|    pub fn as_maps(&self) -> (TopicAwareMappings, GlobalTypeMappings) {
+  161|      0|        (
+  162|      0|            self.topic_aware.mappings().clone(),
+  163|      0|            self.type_rename.mappings().clone(),
+  164|      0|        )
+  165|      0|    }
+  166|       |}
+  167|       |
+  168|       |impl Default for TypeNormalization {
+  169|      0|    fn default() -> Self {
+  170|      0|        Self::full()
+  171|      0|    }
+  172|       |}
+  173|       |
+  174|       |#[cfg(test)]
+  175|       |mod tests {
+  176|       |    use super::*;
+  177|       |
+  178|       |    #[test]
+  179|      1|    fn test_nmx_joint_mapping() {
+  180|      1|        let norm = TypeNormalization::nmx();
+  181|      1|        assert_eq!(
+  182|      1|            norm.topic_aware
+  183|      1|                .apply_for_topic("/lowdim/joint", "nmx.msg.LowdimData"),
+  184|       |            "roboflow.msg.JointStates"
+  185|       |        );
+  186|      1|    }
+  187|       |
+  188|       |    #[test]
+  189|      1|    fn test_nmx_tcp_mapping() {
+  190|      1|        let norm = TypeNormalization::nmx();
+  191|      1|        assert_eq!(
+  192|      1|            norm.topic_aware
+  193|      1|                .apply_for_topic("/lowdim/tcp", "nmx.msg.LowdimData"),
+  194|       |            "roboflow.msg.eef_pose"
+  195|       |        );
+  196|      1|    }
+  197|       |
+  198|       |    #[test]
+  199|      1|    fn test_genie_arm_state_mapping() {
+  200|      1|        let norm = TypeNormalization::genie();
+  201|      1|        assert_eq!(
+  202|      1|            norm.type_rename.apply_type("genie_msgs/msg/ArmState"),
+  203|       |            "roboflow.msg.ArmState"
+  204|       |        );
+  205|      1|    }
+  206|       |
+  207|       |    #[test]
+  208|      1|    fn test_full_normalization() {
+  209|      1|        let norm = TypeNormalization::full();
+  210|       |
+  211|       |        // nmx topic-aware
+  212|      1|        assert_eq!(
+  213|      1|            norm.topic_aware
+  214|      1|                .apply_for_topic("/lowdim/joint", "nmx.msg.LowdimData"),
+  215|       |            "roboflow.msg.JointStates"
+  216|       |        );
+  217|       |
+  218|       |        // genie global
+  219|      1|        assert_eq!(
+  220|      1|            norm.type_rename.apply_type("genie_msgs/msg/ArmState"),
+  221|       |            "roboflow.msg.ArmState"
+  222|       |        );
+  223|      1|    }
+  224|       |}
+
