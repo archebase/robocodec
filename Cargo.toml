@@ -60,6 +60,12 @@ async-trait = "0.1"
 futures = "0.3"
 
 [features]
+default = ["s3"]
 python = ["pyo3"]
 jemalloc = ["dep:tikv-jemallocator"]
 s3 = ["aws-config", "aws-credential-types"]
+
+[dev-dependencies]
+proptest = "1.4"
+wiremock = "0.6"
+tokio-test = "0.4"
