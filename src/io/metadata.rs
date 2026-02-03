@@ -10,6 +10,84 @@
 use crate::core::DecodedMessage;
 use std::collections::HashMap;
 
+use crate::core::DecodedMessage;
+
+/// Result of decoding a message with complete metadata.
+///
+/// This type combines the decoded message data with all available
+/// metadata from the file format, providing a unified interface
+/// regardless of whether the source is MCAP or ROS1 bag.
+///
+/// # Timestamp Availability
+///
+/// Timestamps are available when using `decoded_with_timestamp()` for MCAP files.
+/// When using the generic `decoded()` method, timestamps will be `None` since
+/// the underlying decode streams don't expose timing information.
+#[derive(Debug, Clone)]
+pub struct DecodedMessageResult {
+    /// The decoded message fields
+    pub message: DecodedMessage,
+    /// Channel information
+    pub channel: ChannelInfo,
+    /// Log timestamp (nanoseconds since Unix epoch, if available)
+    pub log_time: Option<u64>,
+    /// Publish timestamp (nanoseconds since Unix epoch, if available)
+    pub publish_time: Option<u64>,
+    /// Sequence number (if available from the format)
+    pub sequence: Option<u64>,
+}
+
+impl DecodedMessageResult {
+    /// Create a new decoded message result.
+    pub fn new(
+        message: DecodedMessage,
+        channel: ChannelInfo,
+        log_time: Option<u64>,
+        publish_time: Option<u64>,
+    ) -> Self {
+        Self {
+            message,
+            channel,
+            log_time,
+            publish_time,
+            sequence: None,
+        }
+    }
+
+    /// Create with sequence number.
+    pub fn with_sequence(mut self, sequence: u64) -> Self {
+        self.sequence = Some(sequence);
+        self
+    }
+
+    /// Get a reference to the decoded message.
+    pub fn message(&self) -> &DecodedMessage {
+        &self.message
+    }
+
+    /// Get the topic name.
+    pub fn topic(&self) -> &str {
+        &self.channel.topic
+    }
+
+    /// Get the message type.
+    pub fn message_type(&self) -> &str {
+        &self.channel.message_type
+    }
+
+    /// Get the time range as (log_time, publish_time).
+    ///
+    /// Returns `None` for either timestamp if not available.
+    pub fn times(&self) -> (Option<u64>, Option<u64>) {
+        (self.log_time, self.publish_time)
+    }
+
+    /// Check if timestamps are available for this result.
+    pub fn has_timestamps(&self) -> bool {
+        self.log_time.is_some() && self.publish_time.is_some()
+    }
+}
+
 /// Information about a channel/topic in a robotics data file.
 ///
 /// A channel (also called a "topic" in ROS terminology) represents

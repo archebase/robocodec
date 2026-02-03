@@ -8,7 +8,26 @@ use std::path::PathBuf;
 
 use crate::{CodecError, Result};
 
-use super::write_strategy::WriteStrategy;
+/// Writing strategy selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WriteStrategy {
+    /// Auto-detect optimal strategy
+    #[default]
+    Auto,
+    /// Sequential writing
+    Sequential,
+    /// Parallel writing
+    Parallel,
+}
+
+impl WriteStrategy {
+    fn resolve(self) -> Self {
+        match self {
+            WriteStrategy::Auto => WriteStrategy::Sequential,
+            other => other,
+        }
+    }
+}
 
 /// Configuration for creating a writer.
 #[derive(Debug, Clone)]
@@ -34,6 +53,62 @@ impl Default for WriterConfig {
             chunk_size: None,
             num_threads: None,
         }
+    }
+}
+
+impl WriterConfig {
+    /// Create a new builder for WriterConfig.
+    pub fn builder() -> WriterConfigBuilder {
+        WriterConfigBuilder::new()
+    }
+}
+
+/// Builder for `WriterConfig`.
+///
+/// Provides a fluent API for creating writer configurations.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use robocodec::io::WriterConfig;
+///
+/// let config = WriterConfig::builder()
+///     .compression_level(3)
+///     .chunk_size(1024 * 1024)
+///     .build();
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct WriterConfigBuilder {
+    config: WriterConfig,
+}
+
+impl WriterConfigBuilder {
+    /// Create a new builder with default configuration.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the compression level.
+    pub fn compression_level(mut self, level: i32) -> Self {
+        self.config.compression_level = Some(level);
+        self
+    }
+
+    /// Set the chunk size in bytes.
+    pub fn chunk_size(mut self, size: usize) -> Self {
+        self.config.chunk_size = Some(size);
+        self
+    }
+
+    /// Set the number of threads.
+    pub fn num_threads(mut self, count: usize) -> Self {
+        self.config.num_threads = Some(count);
+        self
+    }
+
+    /// Build the configuration.
+    pub fn build(self) -> WriterConfig {
+        self.config
     }
 }
 
@@ -87,6 +162,16 @@ impl WriterBuilder {
             return Err(CodecError::parse("WriterBuilder", "Path is not set"));
         }
 
+        // Validate parent directory exists
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                return Err(CodecError::parse(
+                    "WriterBuilder",
+                    format!("Parent directory does not exist: {}", parent.display()),
+                ));
+            }
+        }
+
         // Detect format from extension
         let format = crate::io::detection::detect_format(&path);
 
@@ -138,6 +223,37 @@ impl WriterBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_config_default() {
+        let config = WriterConfig::default();
+        assert_eq!(config.strategy, WriteStrategy::Auto);
+        assert_eq!(config.compression_level, None);
+        assert_eq!(config.chunk_size, None);
+    }
+
+    #[test]
+    fn test_config_builder() {
+        let config = WriterConfig::builder()
+            .compression_level(3)
+            .chunk_size(1024 * 1024)
+            .num_threads(4)
+            .build();
+
+        assert_eq!(config.compression_level, Some(3));
+        assert_eq!(config.chunk_size, Some(1024 * 1024));
+        assert_eq!(config.num_threads, Some(4));
+    }
+
+    #[test]
+    fn test_write_strategy_resolve() {
+        assert_eq!(WriteStrategy::Auto.resolve(), WriteStrategy::Sequential);
+        assert_eq!(
+            WriteStrategy::Sequential.resolve(),
+            WriteStrategy::Sequential
+        );
+        assert_eq!(WriteStrategy::Parallel.resolve(), WriteStrategy::Parallel);
+    }
 
     #[test]
     fn test_builder_default() {

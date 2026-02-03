@@ -13,8 +13,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use robocodec::io::reader::ReadStrategy;
 use robocodec::io::traits::{FormatReader, FormatWriter};
+use robocodec::io::ReaderConfig;
 use robocodec::io::RoboReader;
 use robocodec::io::RoboWriter;
 
@@ -73,7 +73,7 @@ fn test_round_trip_bag_to_mcap_sequential() {
     let (mcap_file, _guard) = temp_path("round_trip_bag_to_mcap.mcap");
 
     // Step 1: Read the bag file with sequential strategy
-    let reader = RoboReader::open_with_strategy(&bag_file, ReadStrategy::Sequential)
+    let reader = RoboReader::open_with_config(&bag_file, ReaderConfig::sequential())
         .expect("Failed to open bag file");
 
     let original_channels = reader.channels().clone();
@@ -119,7 +119,7 @@ fn test_round_trip_bag_to_mcap_sequential() {
     writer.finish().expect("Failed to finish writer");
 
     // Step 3: Read back the MCAP file and verify
-    let mcap_reader = RoboReader::open_with_strategy(&mcap_file, ReadStrategy::Sequential)
+    let mcap_reader = RoboReader::open_with_config(&mcap_file, ReaderConfig::sequential())
         .expect("Failed to open MCAP file");
 
     let mcap_channels = mcap_reader.channels();
@@ -173,7 +173,7 @@ fn test_round_trip_bag_to_mcap_preserves_topics() {
     let (mcap_file, _guard) = temp_path("round_trip_topics.mcap");
 
     // Read bag and collect topics
-    let reader = RoboReader::open_with_strategy(&bag_file, ReadStrategy::Sequential)
+    let reader = RoboReader::open_with_config(&bag_file, ReaderConfig::sequential())
         .expect("Failed to open bag file");
 
     let original_topics: std::collections::HashSet<String> = reader
@@ -216,7 +216,7 @@ fn test_round_trip_bag_to_mcap_preserves_topics() {
     writer.finish().expect("Failed to finish writer");
 
     // Verify topics are preserved
-    let mcap_reader = RoboReader::open_with_strategy(&mcap_file, ReadStrategy::Sequential)
+    let mcap_reader = RoboReader::open_with_config(&mcap_file, ReaderConfig::sequential())
         .expect("Failed to open MCAP file");
 
     let mcap_topics: std::collections::HashSet<String> = mcap_reader
@@ -241,7 +241,7 @@ fn test_round_trip_bag_to_mcap_preserves_message_types() {
     let (mcap_file, _guard) = temp_path("round_trip_types.mcap");
 
     // Read bag and collect message types
-    let reader = RoboReader::open_with_strategy(&bag_file, ReadStrategy::Sequential)
+    let reader = RoboReader::open_with_config(&bag_file, ReaderConfig::sequential())
         .expect("Failed to open bag file");
 
     let original_types: std::collections::HashMap<String, String> = reader
@@ -267,7 +267,7 @@ fn test_round_trip_bag_to_mcap_preserves_message_types() {
     writer.finish().ok();
 
     // Verify message types are preserved
-    let mcap_reader = RoboReader::open_with_strategy(&mcap_file, ReadStrategy::Sequential)
+    let mcap_reader = RoboReader::open_with_config(&mcap_file, ReaderConfig::sequential())
         .expect("Failed to open MCAP file");
 
     let mcap_types: std::collections::HashMap<String, String> = mcap_reader
@@ -310,7 +310,7 @@ fn test_round_trip_mcap_to_bag_sequential() {
     let (bag_file, _guard) = temp_path("round_trip_mcap_to_bag.bag");
 
     // Step 1: Read the MCAP file with sequential strategy
-    let reader = RoboReader::open_with_strategy(&mcap_file, ReadStrategy::Sequential)
+    let reader = RoboReader::open_with_config(&mcap_file, ReaderConfig::sequential())
         .expect("Failed to open MCAP file");
 
     let original_channels = reader.channels().clone();
@@ -339,7 +339,7 @@ fn test_round_trip_mcap_to_bag_sequential() {
     writer.finish().expect("Failed to finish writer");
 
     // Step 3: Read back the bag file and verify
-    let bag_reader = RoboReader::open_with_strategy(&bag_file, ReadStrategy::Sequential)
+    let bag_reader = RoboReader::open_with_config(&bag_file, ReaderConfig::sequential())
         .expect("Failed to open bag file");
 
     let bag_channels = bag_reader.channels();
@@ -380,7 +380,7 @@ fn test_round_trip_bag_mcap_bag() {
     let (final_bag, _guard2) = temp_path("final.bag");
 
     // Step 1: Read original bag
-    let reader1 = RoboReader::open_with_strategy(&original_bag, ReadStrategy::Sequential)
+    let reader1 = RoboReader::open_with_config(&original_bag, ReaderConfig::sequential())
         .expect("Failed to open original bag");
 
     let original_channels: Vec<(String, String)> = reader1
@@ -404,7 +404,7 @@ fn test_round_trip_bag_mcap_bag() {
     writer.finish().ok();
 
     // Step 3: Read MCAP and write to final bag
-    let reader2 = RoboReader::open_with_strategy(&intermediate_mcap, ReadStrategy::Sequential)
+    let reader2 = RoboReader::open_with_config(&intermediate_mcap, ReaderConfig::sequential())
         .expect("Failed to open MCAP file");
 
     let mut writer2 = RoboWriter::create(&final_bag).expect("Failed to create bag writer");
@@ -421,7 +421,7 @@ fn test_round_trip_bag_mcap_bag() {
     writer2.finish().ok();
 
     // Step 4: Verify final bag matches original
-    let final_reader = RoboReader::open_with_strategy(&final_bag, ReadStrategy::Sequential)
+    let final_reader = RoboReader::open_with_config(&final_bag, ReaderConfig::sequential())
         .expect("Failed to open final bag");
 
     let final_channels: Vec<(String, String)> = final_reader
@@ -449,14 +449,8 @@ fn test_sequential_strategy_bag_reader() {
     }
 
     // Test that sequential strategy works for bag files
-    let reader = RoboReader::open_with_strategy(&bag_file, ReadStrategy::Sequential)
+    let reader = RoboReader::open_with_config(&bag_file, ReaderConfig::sequential())
         .expect("Failed to open bag with sequential strategy");
-
-    assert_eq!(
-        reader.strategy(),
-        &ReadStrategy::Sequential,
-        "Reader should use sequential strategy"
-    );
 
     // Verify we can access channels
     assert!(!reader.channels().is_empty(), "Should have channels");
@@ -470,14 +464,8 @@ fn test_sequential_strategy_mcap_reader() {
     }
 
     // Test that sequential strategy works for MCAP files
-    let reader = RoboReader::open_with_strategy(&mcap_file, ReadStrategy::Sequential)
+    let reader = RoboReader::open_with_config(&mcap_file, ReaderConfig::sequential())
         .expect("Failed to open MCAP with sequential strategy");
-
-    assert_eq!(
-        reader.strategy(),
-        &ReadStrategy::Sequential,
-        "Reader should use sequential strategy"
-    );
 
     // Verify we can access channels
     assert!(!reader.channels().is_empty(), "Should have channels");

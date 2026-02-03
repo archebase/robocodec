@@ -17,8 +17,8 @@ use std::path::PathBuf;
 use robocodec::io::formats::bag::{BagFormat, BagWriter};
 use robocodec::io::traits::FormatReader;
 use robocodec::io::traits::FormatWriter;
-use robocodec::io::writer::{WriteStrategy, WriterBuilder};
 use robocodec::io::RoboWriter;
+use robocodec::io::{WriterBuilder, WriterConfig};
 
 // ============================================================================
 // Test Fixtures
@@ -101,14 +101,15 @@ fn test_robowriter_create_with_unknown_extension() {
 }
 
 #[test]
-fn test_robowriter_create_with_strategy() {
+fn test_robowriter_create_with_config() {
     let (path, _guard) = temp_path("bag");
 
-    // Strategy parameter is currently ignored but should still work
-    let writer = RoboWriter::create_with_strategy(&path, WriteStrategy::Parallel);
+    // Create writer with config
+    let config = WriterConfig::builder().compression_level(3).build();
+    let writer = RoboWriter::create_with_config(&path, config);
     assert!(
         writer.is_ok(),
-        "RoboWriter::create_with_strategy should succeed: {:?}",
+        "RoboWriter::create_with_config should succeed: {:?}",
         writer.err()
     );
 }
@@ -264,8 +265,8 @@ fn test_robowriter_downcast_bag_writer() {
 
     let writer = RoboWriter::create(&path).unwrap();
 
-    // Downcast to BagWriter should succeed
-    let bag_writer = writer.downcast_ref::<BagWriter>();
+    // Downcast to BagWriter should succeed using as_any
+    let bag_writer = writer.as_any().downcast_ref::<BagWriter>();
     assert!(
         bag_writer.is_some(),
         "should be able to downcast to BagWriter"
@@ -293,8 +294,8 @@ fn test_robowriter_downcast_mut() {
 
     let mut writer = RoboWriter::create(&path).unwrap();
 
-    // Downcast to mutable BagWriter should succeed
-    let bag_writer = writer.downcast_mut::<BagWriter>();
+    // Downcast to mutable BagWriter should succeed using as_any_mut
+    let bag_writer = writer.as_any_mut().downcast_mut::<BagWriter>();
     assert!(
         bag_writer.is_some(),
         "should be able to downcast mut to BagWriter"
@@ -310,7 +311,7 @@ fn test_robowriter_downcast_wrong_type() {
     // Try to downcast BagWriter to something it's not (e.g., a different concrete type)
     // We can't test this with ParallelMcapWriter due to the generic parameter,
     // so we just verify the BagWriter downcast works
-    let bag_writer = writer.downcast_ref::<BagWriter>();
+    let bag_writer = writer.as_any().downcast_ref::<BagWriter>();
     assert!(bag_writer.is_some(), "BagWriter should downcast to itself");
 }
 
