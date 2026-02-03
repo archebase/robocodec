@@ -5,7 +5,7 @@
 //! CDR cursor for reading CDR-encoded data with proper alignment.
 //!
 //! Based on the TypeScript implementation at:
-//! https://github.com/emulated-devices/rtps-cdr/blob/main/src/CdrReader.ts
+//! <https://github.com/emulated-devices/rtps-cdr/blob/main/src/CdrReader.ts>
 
 use crate::CodecError;
 use crate::Result as CoreResult;

@@ -7,7 +7,7 @@
 //! Provides CDR encoding, decoding, and size calculation for ROS1/ROS2 messages.
 //!
 //! Based on the TypeScript implementation at:
-//! https://github.com/emulated-devices/rtps-cdr
+//! <https://github.com/emulated-devices/rtps-cdr>
 
 pub mod calculator;
 pub mod codec;
