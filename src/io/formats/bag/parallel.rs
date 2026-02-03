@@ -526,7 +526,15 @@ impl<'a> Iterator for BagRawIter<'a> {
                         channel_info.clone(),
                     )));
                 }
-                continue;
+                // Return error for unknown channel instead of silently skipping
+                // This indicates data corruption or an indexing bug
+                return Some(Err(CodecError::parse(
+                    "BagRawIter",
+                    format!(
+                        "Unknown channel_id {}: message refers to non-existent channel. This indicates data corruption or an indexing bug.",
+                        msg.channel_id
+                    ),
+                )));
             }
 
             // Load next chunk
@@ -808,7 +816,10 @@ impl<'a> Iterator for BagDecodedMessageWithTimestampStream<'a> {
                 ))),
                 Err(e) => Some(Err(CodecError::parse(
                     &channel_info.message_type,
-                    format!("Decode failed: {e}"),
+                    format!(
+                        "Decode failed for topic '{}' with log_time {}: {}",
+                        channel_info.topic, raw_msg.log_time, e
+                    ),
                 ))),
             }
         } else {
