@@ -31,6 +31,9 @@ pub use mcap_stream::{
 pub use crate::io::formats::mcap::constants::MCAP_MAGIC;
 pub use reader::{S3MessageStream, S3Reader, S3ReaderState};
 
+// Test-only exports - these are public but only intended for testing
+pub use reader::{S3ReaderConstructor, SummarySchemaInfo};
+
 #[cfg(test)]
 mod tests {
     use super::*;

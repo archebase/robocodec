@@ -6,6 +6,7 @@
 //!
 //! This file contains all tests for S3 functionality, organized by module:
 //! - Streaming parser tests (chunk boundary handling)
+//! - Two-tier reading tests (footer-first, summary parsing, fallback scanning)
 //! - Golden file comparison tests
 //! - Wiremock mock server tests
 //! - MinIO integration tests
@@ -14,8 +15,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use robocodec::io::s3::{
-    S3Client, S3Location, S3Reader, S3ReaderConfig, StreamingBagParser, StreamingMcapParser,
-    MCAP_MAGIC,
+    S3Client, S3Location, S3Reader, S3ReaderConfig, S3ReaderConstructor, StreamingBagParser,
+    StreamingMcapParser, SummarySchemaInfo, MCAP_MAGIC,
 };
 use robocodec::io::traits::FormatReader;
 
@@ -397,6 +398,159 @@ mod streaming_tests {
         let channel = &channels[&1];
         assert_eq!(channel.topic, "/camera/image_raw");
         assert_eq!(channel.encoding, "cdr");
+    }
+}
+
+// ============================================================================
+// Two-Tier Reading Tests (Footer-First + Fallback Scanning)
+// ============================================================================
+
+mod two_tier_tests {
+    use super::*;
+
+    /// Test MCAP footer parsing with valid footer data.
+    #[test]
+    fn test_mcap_footer_parsing() {
+        // Create minimal valid MCAP footer data:
+        // - summary_offset: u64 (8 bytes)
+        // - summary_section_start: u64 (8 bytes)
+        // - summary_crc: u32 (4 bytes)
+        let mut footer_data = Vec::new();
+
+        // summary_offset = 1000
+        footer_data.extend_from_slice(&1000u64.to_le_bytes());
+        // summary_section_start = 500
+        footer_data.extend_from_slice(&500u64.to_le_bytes());
+        // summary_crc = 0
+        footer_data.extend_from_slice(&0u32.to_le_bytes());
+
+        let constructor = S3ReaderConstructor::new_mcap();
+        let reader = constructor.build();
+
+        let result = reader.parse_mcap_footer(&footer_data);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1000);
+    }
+
+    /// Test MCAP footer parsing with insufficient data.
+    #[test]
+    fn test_mcap_footer_too_short() {
+        let footer_data = vec![1, 2, 3, 4]; // Less than 8 bytes
+
+        let constructor = S3ReaderConstructor::new_mcap();
+        let reader = constructor.build();
+
+        let result = reader.parse_mcap_footer(&footer_data);
+        assert!(result.is_err());
+    }
+
+    /// Test schema record parsing from summary section.
+    #[test]
+    fn test_schema_record_parsing() {
+        // Create a valid Schema record:
+        // id=1, name="TestMsg" (7 bytes), encoding="ros2msg" (7 bytes), data=b"# test"
+        let schema_bytes = [
+            0x01, 0x00, // id = 1
+            0x07, 0x00, // name_len = 7
+            b'T', b'e', b's', b't', b'M', b's', b'g', // name = "TestMsg"
+            0x07, 0x00, // encoding_len = 7
+            b'r', b'o', b's', b'2', b'm', b's', b'g', // encoding = "ros2msg"
+            b'#', b' ', b't', b'e', b's', b't', // data = "# test"
+        ];
+
+        let constructor = S3ReaderConstructor::new_mcap();
+        let reader = constructor.build();
+
+        let result = reader.parse_schema_record(&schema_bytes);
+        assert!(result.is_ok());
+        let schema = result.unwrap();
+        assert_eq!(schema.id, 1);
+        assert_eq!(schema.name, "TestMsg");
+        assert_eq!(schema.encoding, "ros2msg");
+    }
+
+    /// Test channel record parsing from summary section.
+    #[test]
+    fn test_channel_record_parsing() {
+        // First create a schema map
+        use std::collections::HashMap;
+        let mut schemas = HashMap::new();
+        schemas.insert(
+            1,
+            SummarySchemaInfo {
+                id: 1,
+                name: "TestMsg".to_string(),
+                encoding: "ros2msg".to_string(),
+                data: b"# test".to_vec(),
+            },
+        );
+
+        // Create a valid Channel record:
+        // id=2, topic="/test" (5 bytes), encoding="cdr" (3 bytes), schema_id=1
+        let channel_bytes = [
+            0x02, 0x00, // channel_id = 2
+            0x05, 0x00, // topic_len = 5
+            b'/', b't', b'e', b's', b't', // topic = "/test"
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding = "cdr"
+            0x01, 0x00, // schema_id = 1
+        ];
+
+        let mut channels = HashMap::new();
+
+        let constructor = S3ReaderConstructor::new_mcap();
+        let reader = constructor.build();
+
+        let result = reader.parse_channel_record(&channel_bytes, &schemas, &mut channels);
+        assert!(result.is_ok());
+        assert_eq!(channels.len(), 1);
+        assert!(channels.contains_key(&2));
+        let channel = &channels[&2];
+        assert_eq!(channel.topic, "/test");
+        assert_eq!(channel.encoding, "cdr");
+        assert_eq!(channel.message_type, "TestMsg");
+    }
+
+    /// Test summary data parsing with multiple records.
+    #[test]
+    fn test_summary_data_parsing() {
+        // Create a summary section with Schema and Channel records
+        let mut summary_data = Vec::new();
+
+        // Schema record: id=1, name="Msg", encoding="ros2msg", data="# test"
+        let schema = [
+            0x01, 0x00, // id = 1
+            0x03, 0x00, // name_len = 3
+            b'M', b's', b'g', // name = "Msg"
+            0x07, 0x00, // encoding_len = 7
+            b'r', b'o', b's', b'2', b'm', b's', b'g', // encoding
+            b'#', b' ', b't', b'e', b's', b't', // data
+        ];
+        summary_data.push(0x03); // OP_SCHEMA
+        summary_data.extend_from_slice(&(schema.len() as u64).to_le_bytes());
+        summary_data.extend_from_slice(&schema);
+
+        // Channel record: id=1, topic="/test", encoding="cdr", schema_id=1
+        let channel = [
+            0x01, 0x00, // channel_id = 1
+            0x05, 0x00, // topic_len = 5
+            b'/', b't', b'e', b's', b't', // topic
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            0x01, 0x00, // schema_id = 1
+        ];
+        summary_data.push(0x04); // OP_CHANNEL
+        summary_data.extend_from_slice(&(channel.len() as u64).to_le_bytes());
+        summary_data.extend_from_slice(&channel);
+
+        let constructor = S3ReaderConstructor::new_mcap();
+        let reader = constructor.build();
+
+        let result = reader.parse_mcap_summary_data(&summary_data);
+        assert!(result.is_ok());
+        let channels = result.unwrap();
+        assert_eq!(channels.len(), 1);
+        assert!(channels.contains_key(&1));
     }
 }
 

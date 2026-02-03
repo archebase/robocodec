@@ -10,7 +10,6 @@ use std::fmt;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use bytes::BytesMut;
 use futures::stream::Stream;
 
 use crate::io::formats::mcap::constants::{
@@ -32,25 +31,17 @@ use crate::io::traits::FormatReader;
 /// State machine for S3 streaming reader.
 ///
 /// The reader progresses through states as it:
-/// 1. Fetches and parses the header (discovers channels)
+/// 1. Initializes (discovers channels via two-tier approach)
 /// 2. Streams message data
 /// 3. Reaches end of file
 #[derive(Debug, Clone)]
 pub enum S3ReaderState {
-    /// Initial state - about to fetch first chunk
+    /// Initial state - about to initialize
     Initial,
 
-    /// Scanning header for metadata
-    ScanningHeader {
-        /// Buffer containing header data
-        buffer: BytesMut,
-        /// Number of bytes read so far
-        bytes_read: u64,
-    },
-
-    /// Ready to stream messages (index built)
+    /// Ready to stream messages (channels discovered via two-tier approach)
     Ready {
-        /// Channel info discovered during scan
+        /// Channel info discovered during initialization
         channels: HashMap<u16, ChannelInfo>,
         /// Current position in the stream
         stream_position: u64,
@@ -67,18 +58,17 @@ pub enum S3ReaderState {
 
 /// Schema information for MCAP summary parsing.
 #[derive(Clone)]
-struct SummarySchemaInfo {
-    id: u16,
-    name: String,
-    encoding: String,
-    data: Vec<u8>,
+pub struct SummarySchemaInfo {
+    pub id: u16,
+    pub name: String,
+    pub encoding: String,
+    pub data: Vec<u8>,
 }
 
 impl fmt::Display for S3ReaderState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             S3ReaderState::Initial => write!(f, "Initial"),
-            S3ReaderState::ScanningHeader { .. } => write!(f, "Scanning header"),
             S3ReaderState::Ready { .. } => write!(f, "Ready"),
             S3ReaderState::Eof => write!(f, "End of file"),
             S3ReaderState::Error(msg) => write!(f, "Error: {}", msg),
@@ -250,7 +240,9 @@ impl S3Reader {
     }
 
     /// Parse MCAP footer to extract summary offset.
-    fn parse_mcap_footer(&self, data: &[u8]) -> Result<u64, FatalError> {
+    ///
+    /// This is public for testing purposes only.
+    pub fn parse_mcap_footer(&self, data: &[u8]) -> Result<u64, FatalError> {
         // Footer structure (from MCAP spec):
         // summary_offset: u64 (8 bytes)
         // summary_section_start: u64 (8 bytes)
@@ -283,19 +275,12 @@ impl S3Reader {
     }
 
     /// Parse MCAP summary data from fetched bytes.
-    fn parse_mcap_summary_data(
+    ///
+    /// This is public for testing purposes only.
+    pub fn parse_mcap_summary_data(
         &self,
         data: &[u8],
     ) -> Result<HashMap<u16, ChannelInfo>, FatalError> {
-        // Local schema representation for summary parsing
-        #[derive(Clone)]
-        struct SchemaInfo {
-            id: u16,
-            name: String,
-            encoding: String,
-            data: Vec<u8>,
-        }
-
         let mut schemas: HashMap<u16, SummarySchemaInfo> = HashMap::new();
         let mut channels: HashMap<u16, ChannelInfo> = HashMap::new();
         let mut pos = 0;
@@ -340,7 +325,9 @@ impl S3Reader {
     }
 
     /// Parse a Schema record from summary data.
-    fn parse_schema_record(&self, body: &[u8]) -> Result<SummarySchemaInfo, FatalError> {
+    ///
+    /// This is public for testing purposes only.
+    pub fn parse_schema_record(&self, body: &[u8]) -> Result<SummarySchemaInfo, FatalError> {
         if body.len() < 4 {
             return Err(FatalError::invalid_format(
                 "MCAP Schema record",
@@ -396,7 +383,9 @@ impl S3Reader {
     }
 
     /// Parse a Channel record from summary data.
-    fn parse_channel_record(
+    ///
+    /// This is public for testing purposes only.
+    pub fn parse_channel_record(
         &self,
         body: &[u8],
         schemas: &HashMap<u16, SummarySchemaInfo>,
@@ -691,6 +680,46 @@ fn empty_channels() -> &'static HashMap<u16, ChannelInfo> {
     use std::sync::OnceLock;
     static EMPTY: OnceLock<HashMap<u16, ChannelInfo>> = OnceLock::new();
     EMPTY.get_or_init(HashMap::new)
+}
+
+/// Test-only constructor for creating S3Reader instances directly.
+///
+/// This is public for testing purposes only. Normal usage should use
+/// `S3Reader::open()` or `S3Reader::open_with_config()`.
+pub struct S3ReaderConstructor {
+    pub location: S3Location,
+    pub config: S3ReaderConfig,
+    pub client: S3Client,
+}
+
+impl S3ReaderConstructor {
+    pub fn new_mcap() -> Self {
+        Self {
+            location: S3Location::new("test-bucket", "test.mcap"),
+            config: S3ReaderConfig::default(),
+            client: S3Client::default_client().unwrap(),
+        }
+    }
+
+    pub fn build(&self) -> S3Reader {
+        S3Reader {
+            location: self.location.clone(),
+            config: self.config.clone(),
+            client: self.client.clone(),
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        }
+    }
+
+    pub fn build_bag(&self) -> S3Reader {
+        S3Reader {
+            location: S3Location::new("test-bucket", "test.bag"),
+            config: self.config.clone(),
+            client: self.client.clone(),
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Bag,
+        }
+    }
 }
 
 /// Async stream over messages in an S3 file.
