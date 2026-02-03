@@ -15,7 +15,9 @@ pub mod metadata;
 // Re-exports
 pub use arena::{MmapArena, MmapArenaRef};
 pub use detection::{detect_format, is_bag_file, is_mcap_file, FormatDetector};
-pub use metadata::{ChannelInfo, FileFormat, FileInfo, MessageMetadata, RawMessage};
+pub use metadata::{
+    ChannelInfo, FileFormat, FileInfo, MessageMetadata, RawMessage, TimestampedDecodedMessage,
+};
 
 // Channel iterator (tightly coupled with pipeline - keep in roboflow)
 // pub mod channel_iterator;

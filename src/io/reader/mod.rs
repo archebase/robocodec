@@ -89,22 +89,60 @@ impl<'a> Iterator for DecodedMessageStream<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Mcap(ref mut stream) => stream.next().map(|result| {
-                result.map(|(msg, ch)| {
-                    let ch = ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic,
-                        message_type: ch.message_type,
-                        encoding: ch.encoding,
-                        schema: ch.schema,
-                        schema_data: ch.schema_data,
-                        schema_encoding: ch.schema_encoding,
-                        message_count: ch.message_count,
-                        callerid: ch.callerid,
-                    };
-                    (msg, ch)
-                })
-            }),
+            Self::Mcap(ref mut stream) => stream.next(),
+            Self::Bag(ref mut stream) => stream.next(),
+        }
+    }
+}
+
+/// Unified decoded message with timestamp iterator for both BAG and MCAP formats.
+///
+/// This enum wraps format-specific timestamped iterators to provide a consistent API.
+pub enum DecodedMessageWithTimestampIter<'a> {
+    /// MCAP format decoded message with timestamp iterator
+    Mcap(
+        crate::io::formats::mcap::reader::DecodedMessageWithTimestampIter<'a>,
+        std::collections::HashMap<u16, ChannelInfo>,
+    ),
+    /// BAG format decoded message with timestamp iterator
+    Bag(crate::io::formats::bag::BagDecodedMessageWithTimestampIter<'a>),
+}
+
+impl<'a> DecodedMessageWithTimestampIter<'a> {
+    /// Get the channels for this iterator.
+    pub fn channels(&self) -> &std::collections::HashMap<u16, ChannelInfo> {
+        match self {
+            Self::Mcap(_, channels) => channels,
+            Self::Bag(iter) => iter.channels(),
+        }
+    }
+
+    /// Create a proper streaming iterator over decoded messages with timestamps.
+    pub fn stream(&self) -> Result<DecodedMessageWithTimestampStream<'a>> {
+        match self {
+            Self::Mcap(iter, _) => Ok(DecodedMessageWithTimestampStream::Mcap(iter.stream()?)),
+            Self::Bag(iter) => Ok(DecodedMessageWithTimestampStream::Bag(iter.stream()?)),
+        }
+    }
+}
+
+/// Streaming iterator over decoded messages with timestamps (unified for BAG and MCAP).
+pub enum DecodedMessageWithTimestampStream<'a> {
+    /// MCAP format decoded message with timestamp stream
+    Mcap(crate::io::formats::mcap::reader::DecodedMessageWithTimestampStream<'a>),
+    /// BAG format decoded message with timestamp stream
+    Bag(crate::io::formats::bag::BagDecodedMessageWithTimestampStream<'a>),
+}
+
+impl<'a> Iterator for DecodedMessageWithTimestampStream<'a> {
+    type Item = std::result::Result<
+        (crate::io::metadata::TimestampedDecodedMessage, ChannelInfo),
+        CodecError,
+    >;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Mcap(ref mut stream) => stream.next(),
             Self::Bag(ref mut stream) => stream.next(),
         }
     }
@@ -266,14 +304,58 @@ impl RoboReader {
     /// Decode messages with timestamps from the reader.
     ///
     /// Similar to `decode_messages` but includes log_time and publish_time
-    /// for each message.
-    pub fn decode_messages_with_timestamp(
-        &self,
-    ) -> Result<crate::io::formats::mcap::reader::DecodedMessageWithTimestampIter<'_>> {
+    /// for each message. Works for both MCAP and BAG formats.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use robocodec::io::RoboReader;
+    /// # fn test() -> Result<(), Box<dyn std::error::Error>> {
+    /// let reader = RoboReader::open("data.mcap")?;
+    /// let timestamped_iter = reader.decode_messages_with_timestamp()?;
+    /// let mut stream = timestamped_iter.stream()?;
+    ///
+    /// while let Some(result) = stream.next() {
+    ///     let (timestamped_msg, channel_info) = result?;
+    ///     println!("Topic: {}, Log Time: {}", channel_info.topic, timestamped_msg.log_time);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn decode_messages_with_timestamp(&self) -> Result<DecodedMessageWithTimestampIter<'_>> {
+        use crate::io::formats::bag::ParallelBagReader;
         use crate::io::formats::mcap::reader::McapReader;
 
+        // Try MCAP first
         if let Some(mcap) = self.downcast_ref::<McapReader>() {
-            return mcap.decode_messages_with_timestamp();
+            let mcap_iter = mcap.decode_messages_with_timestamp()?;
+            // Convert MCAP's ChannelInfo to unified ChannelInfo
+            let mcap_channels = mcap_iter.channels();
+            let mut channels = std::collections::HashMap::new();
+            for (&id, ch) in mcap_channels {
+                channels.insert(
+                    id,
+                    ChannelInfo {
+                        id: ch.id,
+                        topic: ch.topic.clone(),
+                        message_type: ch.message_type.clone(),
+                        encoding: ch.encoding.clone(),
+                        schema: ch.schema.clone(),
+                        schema_data: ch.schema_data.clone(),
+                        schema_encoding: ch.schema_encoding.clone(),
+                        message_count: ch.message_count,
+                        callerid: ch.callerid.clone(),
+                    },
+                );
+            }
+            return Ok(DecodedMessageWithTimestampIter::Mcap(mcap_iter, channels));
+        }
+
+        // Try BAG
+        if let Some(bag) = self.downcast_ref::<ParallelBagReader>() {
+            return Ok(DecodedMessageWithTimestampIter::Bag(
+                bag.decode_messages_with_timestamp()?,
+            ));
         }
 
         Err(crate::CodecError::parse(

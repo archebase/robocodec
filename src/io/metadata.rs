@@ -7,6 +7,7 @@
 //! This module provides unified types for representing metadata that
 //! is common across different formats (MCAP, ROS1 bag, etc.).
 
+use crate::core::DecodedMessage;
 use std::collections::HashMap;
 
 /// Information about a channel/topic in a robotics data file.
@@ -133,6 +134,42 @@ impl RawMessage {
     /// Check if the message has no data.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
+    }
+}
+
+/// Decoded message with timestamps.
+///
+/// This type wraps a decoded message with its log and publish timestamps,
+/// providing a unified way to access timestamped decoded messages across
+/// different formats (MCAP, BAG, etc.).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimestampedDecodedMessage {
+    /// The decoded message fields
+    pub message: DecodedMessage,
+    /// Log timestamp (nanoseconds since Unix epoch)
+    pub log_time: u64,
+    /// Publish timestamp (nanoseconds since Unix epoch)
+    pub publish_time: u64,
+}
+
+impl TimestampedDecodedMessage {
+    /// Create a new TimestampedDecodedMessage.
+    pub fn new(message: DecodedMessage, log_time: u64, publish_time: u64) -> Self {
+        Self {
+            message,
+            log_time,
+            publish_time,
+        }
+    }
+
+    /// Get a reference to the decoded message.
+    pub fn message(&self) -> &DecodedMessage {
+        &self.message
+    }
+
+    /// Convert into the decoded message, discarding timestamps.
+    pub fn into_message(self) -> DecodedMessage {
+        self.message
     }
 }
 
