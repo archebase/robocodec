@@ -96,16 +96,8 @@ pub struct RawMessage {
     pub sequence: Option<u64>,
 }
 
-/// Decoded message with timestamp metadata.
-#[derive(Debug, Clone)]
-pub struct TimestampedDecodedMessage {
-    /// The decoded message fields
-    pub message: DecodedMessage,
-    /// Log timestamp (nanoseconds)
-    pub log_time: u64,
-    /// Publish timestamp (nanoseconds)
-    pub publish_time: u64,
-}
+// Re-export the shared TimestampedDecodedMessage type
+pub use crate::io::metadata::TimestampedDecodedMessage;
 
 /// Robotics data reader - handles MCAP files with automatic encoding detection.
 pub struct McapReader {

@@ -24,7 +24,7 @@ use rayon::prelude::*;
 use crate::core::DecodedMessage;
 use crate::encoding::CdrDecoder;
 use crate::io::filter::ChannelFilter;
-use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
+use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage, TimestampedDecodedMessage};
 use crate::io::traits::{
     FormatReader, MessageChunkData, ParallelReader, ParallelReaderConfig, ParallelReaderStats,
 };
@@ -208,6 +208,35 @@ impl ParallelBagReader {
     /// ```
     pub fn decode_messages(&self) -> Result<BagDecodedMessageIter<'_>> {
         Ok(BagDecodedMessageIter::new(
+            &self.parser,
+            &self.channels,
+            &self.conn_id_map,
+        ))
+    }
+
+    /// Decode messages with timestamps from the BAG file.
+    ///
+    /// Returns an iterator that yields decoded messages with their log_time and publish_time.
+    /// Similar to `decode_messages` but includes timestamp information for each message.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use robocodec::io::formats::bag::BagFormat;
+    /// # fn test() -> Result<(), Box<dyn std::error::Error>> {
+    /// let reader = BagFormat::open("test.bag")?;
+    /// let decoded_iter = reader.decode_messages_with_timestamp()?;
+    /// let mut stream = decoded_iter.stream()?;
+    ///
+    /// while let Some(result) = stream.next() {
+    ///     let (timestamped_msg, channel_info) = result?;
+    ///     println!("Topic: {}, Log Time: {}", channel_info.topic, timestamped_msg.log_time);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn decode_messages_with_timestamp(&self) -> Result<BagDecodedMessageWithTimestampIter<'_>> {
+        Ok(BagDecodedMessageWithTimestampIter::new(
             &self.parser,
             &self.channels,
             &self.conn_id_map,
@@ -633,6 +662,150 @@ impl<'a> Iterator for BagDecodedMessageStream<'a> {
                 Some(&channel_info.message_type),
             ) {
                 Ok(msg) => Some(Ok((msg, channel_info))),
+                Err(e) => Some(Err(CodecError::parse(
+                    &channel_info.message_type,
+                    format!("Decode failed: {e}"),
+                ))),
+            }
+        } else {
+            Some(Err(CodecError::parse(
+                &channel_info.message_type,
+                "No schema available (message_definition not found in connection)",
+            )))
+        }
+    }
+}
+
+/// Iterator over decoded BAG messages with timestamps.
+///
+/// Yields `(TimestampedDecodedMessage, ChannelInfo)` tuples where each
+/// message includes both the decoded field values and the log/publish timestamps.
+pub struct BagDecodedMessageWithTimestampIter<'a> {
+    parser: &'a BagParser,
+    channels: &'a HashMap<u16, ChannelInfo>,
+    conn_id_map: &'a HashMap<u32, u16>,
+    decoder: Arc<CdrDecoder>,
+}
+
+impl<'a> BagDecodedMessageWithTimestampIter<'a> {
+    /// Create a new decoded message iterator with timestamps.
+    fn new(
+        parser: &'a BagParser,
+        channels: &'a HashMap<u16, ChannelInfo>,
+        conn_id_map: &'a HashMap<u32, u16>,
+    ) -> Self {
+        Self {
+            parser,
+            channels,
+            conn_id_map,
+            decoder: Arc::new(CdrDecoder::new()),
+        }
+    }
+
+    /// Get the channels for this iterator.
+    pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
+        self.channels
+    }
+
+    /// Create a proper streaming iterator over decoded messages with timestamps.
+    pub fn stream(&self) -> Result<BagDecodedMessageWithTimestampStream<'a>> {
+        BagDecodedMessageWithTimestampStream::new(
+            self.parser,
+            self.channels,
+            self.conn_id_map,
+            Arc::clone(&self.decoder),
+        )
+    }
+}
+
+impl<'a> Iterator for BagDecodedMessageWithTimestampIter<'a> {
+    type Item = std::result::Result<(TimestampedDecodedMessage, ChannelInfo), CodecError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Note: This placeholder implementation doesn't work properly
+        // Use stream() instead to get a proper streaming iterator
+        None
+    }
+}
+
+/// Streaming iterator over decoded BAG messages with timestamps.
+pub struct BagDecodedMessageWithTimestampStream<'a> {
+    raw_iter: BagRawIter<'a>,
+    decoder: Arc<CdrDecoder>,
+    /// Cache for parsed schemas (message_type -> MessageSchema)
+    schema_cache: HashMap<String, crate::schema::MessageSchema>,
+}
+
+impl<'a> BagDecodedMessageWithTimestampStream<'a> {
+    /// Create a new decoded message stream with timestamps.
+    fn new(
+        parser: &'a BagParser,
+        channels: &'a HashMap<u16, ChannelInfo>,
+        conn_id_map: &'a HashMap<u32, u16>,
+        decoder: Arc<CdrDecoder>,
+    ) -> Result<Self> {
+        Ok(Self {
+            raw_iter: BagRawIter::new(parser, channels, conn_id_map),
+            decoder,
+            schema_cache: HashMap::new(),
+        })
+    }
+
+    /// Get or parse a schema for the given message type.
+    fn get_or_parse_schema(
+        &mut self,
+        message_type: &str,
+        message_definition: &str,
+    ) -> std::result::Result<crate::schema::MessageSchema, CodecError> {
+        // Check cache first
+        if let Some(schema) = self.schema_cache.get(message_type) {
+            return Ok(schema.clone());
+        }
+
+        // Parse the schema from the message definition
+        let schema = crate::schema::parse_schema(message_type, message_definition)
+            .map_err(|e| CodecError::parse(message_type, format!("Failed to parse schema: {e}")))?;
+
+        // Cache it
+        self.schema_cache
+            .insert(message_type.to_string(), schema.clone());
+        Ok(schema)
+    }
+}
+
+impl<'a> Iterator for BagDecodedMessageWithTimestampStream<'a> {
+    type Item = std::result::Result<(TimestampedDecodedMessage, ChannelInfo), CodecError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (raw_msg, channel_info) = match self.raw_iter.next()? {
+            Ok(msg) => msg,
+            Err(e) => return Some(Err(e)),
+        };
+
+        // Decode using ROS1 CDR deserialization
+        // BAG files store message definitions in the connection's message_definition field
+        if let Some(schema) = &channel_info.schema {
+            let parsed_schema = match self.get_or_parse_schema(&channel_info.message_type, schema) {
+                Ok(s) => s,
+                Err(e) => return Some(Err(e)),
+            };
+
+            // Use decode_headerless_ros1 for ROS1 bag messages
+            // The BAG parser extracts just the CDR message data (without wrapper headers),
+            // so we need to decode from byte 0 with ROS1 alignment rules.
+            match self.decoder.decode_headerless_ros1(
+                &parsed_schema,
+                &raw_msg.data,
+                Some(&channel_info.message_type),
+            ) {
+                Ok(message) => Some(Ok((
+                    TimestampedDecodedMessage {
+                        message,
+                        log_time: raw_msg.log_time,
+                        publish_time: raw_msg.publish_time,
+                    },
+                    channel_info,
+                ))),
                 Err(e) => Some(Err(CodecError::parse(
                     &channel_info.message_type,
                     format!("Decode failed: {e}"),
