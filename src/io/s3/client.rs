@@ -163,6 +163,30 @@ impl S3Client {
         self.fetch_range(location, 0, length as u64).await
     }
 
+    /// Fetch the last N bytes from the S3 object (for footer scanning).
+    ///
+    /// Uses HTTP Range requests to efficiently fetch the end of the file.
+    /// This is used to find MCAP footers and summary offsets.
+    ///
+    /// # Arguments
+    ///
+    /// * `location` - The S3 location to fetch from
+    /// * `length` - Number of bytes to fetch from the end
+    /// * `file_size` - Total size of the file (for calculating offset)
+    ///
+    /// # Returns
+    ///
+    /// The requested bytes as a `Bytes` object.
+    pub async fn fetch_tail(
+        &self,
+        location: &S3Location,
+        length: u64,
+        file_size: u64,
+    ) -> Result<Bytes, FatalError> {
+        let offset = file_size.saturating_sub(length);
+        self.fetch_range(location, offset, length).await
+    }
+
     /// Get the size of the S3 object.
     ///
     /// Uses a HEAD request to get the object metadata.
