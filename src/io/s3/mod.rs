@@ -15,6 +15,7 @@ mod error;
 mod location;
 pub mod mcap_stream;
 mod reader;
+mod signer;
 
 pub use bag_stream::{
     BagMessageRecord, BagRecord, BagRecordFields, BagRecordHeader, StreamingBagParser,

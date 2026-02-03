@@ -727,13 +727,12 @@ impl S3ReaderConstructor {
 /// This stream fetches data in chunks as needed, providing constant
 /// memory usage regardless of file size. Uses async iteration pattern
 /// to fetch from S3 without blocking.
+///
+/// This stream borrows from the parent S3Reader, avoiding unnecessary
+/// cloning of client, location, and config.
 pub struct S3MessageStream<'a> {
-    /// Reference to the parent reader (cloning necessary fields)
-    client: S3Client,
-    location: S3Location,
-    config: S3ReaderConfig,
-    format: crate::io::metadata::FileFormat,
-    file_size: u64,
+    /// Reference to the parent reader
+    reader: &'a S3Reader,
 
     /// Format-specific streaming parser state
     mcap_parser: Option<StreamingMcapParser>,
@@ -746,11 +745,11 @@ pub struct S3MessageStream<'a> {
     /// Current stream position
     stream_position: u64,
 
+    /// File size (cached from reader to avoid repeated access)
+    file_size: u64,
+
     /// Whether we've reached EOF
     eof: bool,
-
-    /// Phantom lifetime
-    _phantom: std::marker::PhantomData<&'a ()>,
 }
 
 /// Parsed message from either MCAP or BAG format.
@@ -808,18 +807,14 @@ impl<'a> S3MessageStream<'a> {
         };
 
         Self {
-            client: reader.client.clone(),
-            location: reader.location.clone(),
-            config: reader.config.clone(),
-            format: reader.format,
-            file_size,
+            reader,
             mcap_parser,
             bag_parser,
             channels,
             pending_messages: Vec::new(),
             stream_position,
+            file_size,
             eof: false,
-            _phantom: std::marker::PhantomData,
         }
     }
 }
@@ -895,8 +890,9 @@ impl<'a> S3MessageStream<'a> {
             let remaining = self.file_size - self.stream_position;
             // Convert remaining to usize for chunk size calculation
             // Use saturating conversion to avoid panic on overflow
-            let remaining_usize = remaining.min(self.config.max_chunk_size() as u64) as usize;
-            let chunk_size = self.config.max_chunk_size().min(remaining_usize) as u64;
+            let remaining_usize =
+                remaining.min(self.reader.config.max_chunk_size() as u64) as usize;
+            let chunk_size = self.reader.config.max_chunk_size().min(remaining_usize) as u64;
 
             if chunk_size == 0 {
                 self.eof = true;
@@ -904,8 +900,9 @@ impl<'a> S3MessageStream<'a> {
             }
 
             match self
+                .reader
                 .client
-                .fetch_range(&self.location, self.stream_position, chunk_size)
+                .fetch_range(&self.reader.location, self.stream_position, chunk_size)
                 .await
             {
                 Ok(chunk_data) => {
@@ -915,7 +912,7 @@ impl<'a> S3MessageStream<'a> {
                     }
 
                     // Parse the chunk based on format
-                    match self.format {
+                    match self.reader.format {
                         crate::io::metadata::FileFormat::Mcap => {
                             if let Some(ref mut parser) = self.mcap_parser {
                                 if let Ok(msgs) = parser.parse_chunk(&chunk_data) {

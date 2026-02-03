@@ -56,6 +56,9 @@ bytes = "1.6"
 tokio = { version = "1.40", features = ["rt-multi-thread", "time"], default-features = false }
 aws-config = { version = "1.5", features = ["behavior-version-latest"], default-features = false, optional = true }
 aws-credential-types = { version = "1.2", default-features = false, optional = true }
+http = "1.1"
+hmac = "0.12"
+sha2 = "0.10"
 async-trait = "0.1"
 futures = "0.3"
 

@@ -4,30 +4,10 @@
 
 //! HTTP client for S3 streaming operations.
 
-use crate::io::s3::{config::S3ReaderConfig, error::FatalError, location::S3Location};
+use crate::io::s3::{config::S3ReaderConfig, error::FatalError, location::S3Location, signer};
 use bytes::Bytes;
-
-// ============================================================================
-// IMPORTANT: AWS CREDENTIALS ARE NOT CURRENTLY USED FOR AUTHENTICATION
-// ============================================================================
-//
-// The `AwsCredentials` struct in S3ReaderConfig is ACCEPTED but NOT USED for
-// AWS SigV4 signing. The current implementation relies on implicit
-// environment-based authentication through `reqwest`, which only works for:
-// - Public S3 buckets (no authentication required)
-// - S3-compatible services with custom authentication
-// - Instances with IAM instance profiles
-//
-// If you provide credentials via S3ReaderConfig::with_credentials(), they will
-// be IGNORED for HTTP request signing. This is a known limitation.
-//
-// For authenticated S3 access, you currently need to:
-// 1. Use IAM instance profiles (if running on EC2/ECS)
-// 2. Use an S3-compatible service that doesn't require SigV4
-// 3. Set up environment variables that reqwest's default credential chain can use
-//
-// TODO: Implement proper AWS SigV4 signing using the stored credentials
-// ============================================================================
+use http::{HeaderMap, Method, Uri};
+use std::str::FromStr;
 
 /// HTTP client for S3 operations.
 ///
@@ -92,16 +72,62 @@ impl S3Client {
         let url = location.url();
         let range_header = format!("bytes={}-{}", offset, offset + length.saturating_sub(1));
 
-        let request = self.client.get(&url).header("Range", range_header);
+        // Build the request with AWS SigV4 signing if credentials are provided
+        let response = if let Some(credentials) = self.config.credentials() {
+            if signer::should_sign(&credentials) {
+                // Build signed request
+                let uri = Uri::from_str(&url).map_err(|e| FatalError::HttpError {
+                    status: None,
+                    message: format!("Invalid URL: {}", e),
+                })?;
 
-        // Add AWS credentials if configured
-        // Note: For now we use a simplified approach. In Phase 4 with the `s3` feature,
-        // we'll add proper AWS SigV4 signing using aws-config
-        let _credentials = self.config.credentials();
-        // TODO: Add proper AWS SigV4 signing in Phase 4
-        // For now, we rely on the default credential chain from the environment
+                let mut headers = HeaderMap::new();
+                headers.insert("Range", range_header.parse().unwrap());
 
-        let response = request.send().await.map_err(|e| {
+                let region = location.region().unwrap_or("us-east-1");
+                if let Err(e) = signer::sign_request(
+                    &credentials,
+                    region,
+                    "s3",
+                    &Method::GET,
+                    &uri,
+                    &mut headers,
+                ) {
+                    return Err(FatalError::HttpError {
+                        status: None,
+                        message: format!("Failed to sign request: {}", e),
+                    });
+                }
+
+                // Build request with signed headers
+                let mut request_builder = self.client.get(&url);
+                for (name, value) in headers.iter() {
+                    if let Ok(value_str) = value.to_str() {
+                        if name.as_str() != "host" {
+                            // reqwest handles host automatically
+                            request_builder = request_builder.header(name.as_str(), value_str);
+                        }
+                    }
+                }
+                request_builder.send().await
+            } else {
+                // No valid credentials, use unsigned request
+                self.client
+                    .get(&url)
+                    .header("Range", range_header)
+                    .send()
+                    .await
+            }
+        } else {
+            // No credentials, use unsigned request
+            self.client
+                .get(&url)
+                .header("Range", range_header)
+                .send()
+                .await
+        };
+
+        let response = response.map_err(|e| {
             if e.is_connect() || e.is_timeout() {
                 FatalError::HttpError {
                     status: None,
@@ -193,7 +219,53 @@ impl S3Client {
     pub async fn object_size(&self, location: &S3Location) -> Result<u64, FatalError> {
         let url = location.url();
 
-        let response = self.client.head(&url).send().await.map_err(|e| {
+        // Build the HEAD request with AWS SigV4 signing if credentials are provided
+        let response = if let Some(credentials) = self.config.credentials() {
+            if signer::should_sign(&credentials) {
+                // Build signed request
+                let uri = Uri::from_str(&url).map_err(|e| FatalError::HttpError {
+                    status: None,
+                    message: format!("Invalid URL: {}", e),
+                })?;
+
+                let mut headers = HeaderMap::new();
+
+                let region = location.region().unwrap_or("us-east-1");
+                if let Err(e) = signer::sign_request(
+                    &credentials,
+                    region,
+                    "s3",
+                    &Method::HEAD,
+                    &uri,
+                    &mut headers,
+                ) {
+                    return Err(FatalError::HttpError {
+                        status: None,
+                        message: format!("Failed to sign request: {}", e),
+                    });
+                }
+
+                // Build request with signed headers
+                let mut request_builder = self.client.head(&url);
+                for (name, value) in headers.iter() {
+                    if let Ok(value_str) = value.to_str() {
+                        if name.as_str() != "host" {
+                            // reqwest handles host automatically
+                            request_builder = request_builder.header(name.as_str(), value_str);
+                        }
+                    }
+                }
+                request_builder.send().await
+            } else {
+                // No valid credentials, use unsigned request
+                self.client.head(&url).send().await
+            }
+        } else {
+            // No credentials, use unsigned request
+            self.client.head(&url).send().await
+        };
+
+        let response = response.map_err(|e| {
             if e.is_connect() || e.is_timeout() {
                 FatalError::HttpError {
                     status: None,
