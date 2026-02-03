@@ -135,6 +135,269 @@ mod streaming_tests {
         assert_eq!(msgs_4k, msgs_64k);
         assert_eq!(parser_4k.channels().len(), parser_64k.channels().len());
     }
+
+    #[test]
+    fn test_diagnostic_simple_mcap() {
+        // Test with a minimal manually constructed MCAP file
+        // to verify the parser works correctly
+        let mut mcap_data = Vec::new();
+
+        // Magic
+        mcap_data.extend_from_slice(b"\x89MCAP0\r\n");
+
+        // Header record
+        mcap_data.push(0x01); // OP_HEADER
+        mcap_data.extend_from_slice(&4u64.to_le_bytes()); // length = 4
+        mcap_data.extend_from_slice(&0u32.to_le_bytes()); // profile = 0
+
+        // Schema record
+        let schema = [
+            0x01, 0x00, // id = 1
+            0x03, 0x00, // name_len = 3
+            b'F', b'o', b'o', // name = "Foo"
+            0x07, 0x00, // encoding_len = 7
+            b'r', b'o', b's', b'2', b'm', b's', b'g', // encoding = "ros2msg"
+            b'#', b' ', b't', b'e', b's', b't', // data
+        ];
+        mcap_data.push(0x03); // OP_SCHEMA
+        mcap_data.extend_from_slice(&(schema.len() as u64).to_le_bytes());
+        mcap_data.extend_from_slice(&schema);
+
+        // Channel record
+        let channel = [
+            0x00, 0x01, // channel_id = 256
+            0x05, 0x00, // topic_len = 5
+            b'/', b't', b'e', b's', b't', // topic = "/test"
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding = "cdr"
+            0x01, 0x00, // schema_id = 1
+        ];
+        mcap_data.push(0x04); // OP_CHANNEL
+        mcap_data.extend_from_slice(&(channel.len() as u64).to_le_bytes());
+        mcap_data.extend_from_slice(&channel);
+
+        // Message record
+        let msg = [
+            0x00, 0x01, // channel_id = 256
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sequence = 1
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // log_time = 0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // publish_time = 0
+            b'h', b'e', b'l', b'l', b'o', // data
+        ];
+        mcap_data.push(0x05); // OP_MESSAGE
+        mcap_data.extend_from_slice(&(msg.len() as u64).to_le_bytes());
+        mcap_data.extend_from_slice(&msg);
+
+        // Parse in small chunks
+        let mut parser = StreamingMcapParser::new();
+        for (i, chunk) in mcap_data.chunks(10).enumerate() {
+            let result = parser.parse_chunk(chunk);
+            assert!(result.is_ok(), "Chunk {} failed: {:?}", i, result);
+        }
+
+        // Should have found the channel
+        assert_eq!(parser.channels().len(), 1, "Should have 1 channel");
+        assert_eq!(parser.message_count(), 1, "Should have 1 message");
+    }
+
+    #[test]
+    fn test_diagnostic_with_chunk() {
+        // Test with a MCAP file that has a CHUNK record
+        let mut mcap_data = Vec::new();
+
+        // Magic
+        mcap_data.extend_from_slice(b"\x89MCAP0\r\n");
+
+        // Header record
+        mcap_data.push(0x01); // OP_HEADER
+        mcap_data.extend_from_slice(&4u64.to_le_bytes()); // length = 4
+        mcap_data.extend_from_slice(&0u32.to_le_bytes()); // profile = 0
+
+        // CHUNK record (large record with compressed data)
+        let chunk_size = 1000; // Small chunk for testing
+        mcap_data.push(0x06); // OP_CHUNK
+        mcap_data.extend_from_slice(&(chunk_size as u64).to_le_bytes());
+        // Add chunk body (could be compressed data)
+        for i in 0..chunk_size {
+            mcap_data.push((i % 256) as u8);
+        }
+
+        // Schema record (after the chunk)
+        let schema = [
+            0x01, 0x00, // id = 1
+            0x03, 0x00, // name_len = 3
+            b'F', b'o', b'o', // name = "Foo"
+            0x07, 0x00, // encoding_len = 7
+            b'r', b'o', b's', b'2', b'm', b's', b'g', // encoding = "ros2msg"
+            b'#', b' ', b't', b'e', b's', b't', // data
+        ];
+        mcap_data.push(0x03); // OP_SCHEMA
+        mcap_data.extend_from_slice(&(schema.len() as u64).to_le_bytes());
+        mcap_data.extend_from_slice(&schema);
+
+        // Channel record
+        let channel = [
+            0x00, 0x01, // channel_id = 256
+            0x05, 0x00, // topic_len = 5
+            b'/', b't', b'e', b's', b't', // topic = "/test"
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding = "cdr"
+            0x01, 0x00, // schema_id = 1
+        ];
+        mcap_data.push(0x04); // OP_CHANNEL
+        mcap_data.extend_from_slice(&(channel.len() as u64).to_le_bytes());
+        mcap_data.extend_from_slice(&channel);
+
+        // Parse in small chunks to test chunk boundary handling
+        let mut parser = StreamingMcapParser::new();
+        for (i, chunk) in mcap_data.chunks(100).enumerate() {
+            let result = parser.parse_chunk(chunk);
+            if let Err(e) = &result {
+                eprintln!("Error at chunk {}: {:?}", i, e);
+                eprintln!(
+                    "Parser state: initialized={}, channels={}",
+                    parser.is_initialized(),
+                    parser.channels().len()
+                );
+            }
+            assert!(result.is_ok(), "Chunk {} failed: {:?}", i, result);
+        }
+
+        // Should have found the channel (after skipping the CHUNK)
+        assert_eq!(
+            parser.channels().len(),
+            1,
+            "Should have 1 channel after CHUNK"
+        );
+    }
+
+    #[test]
+    fn test_diagnostic_realistic_structure() {
+        // Test with a MCAP file structure similar to the real file:
+        // HEADER -> CHUNK -> MESSAGE_INDEX -> DATA_END -> SCHEMA -> CHANNEL -> MESSAGE
+        let mut mcap_data = Vec::new();
+
+        // Magic
+        mcap_data.extend_from_slice(b"\x89MCAP0\r\n");
+
+        // Header record
+        mcap_data.push(0x01); // OP_HEADER
+        mcap_data.extend_from_slice(&4u64.to_le_bytes()); // length = 4
+        mcap_data.extend_from_slice(&0u32.to_le_bytes()); // profile = 0
+
+        // CHUNK record (simulating compressed data)
+        let chunk_size = 200; // Small chunk for testing
+        mcap_data.push(0x06); // OP_CHUNK
+        mcap_data.extend_from_slice(&(chunk_size as u64).to_le_bytes());
+        // Add chunk body (simulated compressed data)
+        for i in 0..chunk_size {
+            mcap_data.push((i % 256) as u8);
+        }
+
+        // MESSAGE_INDEX records (before schemas in real files)
+        for _i in 0..3 {
+            mcap_data.push(0x07); // OP_MESSAGE_INDEX
+            mcap_data.extend_from_slice(&22u64.to_le_bytes());
+            // Add dummy index data
+            for _ in 0..22 {
+                mcap_data.push(0);
+            }
+        }
+
+        // DATA_END record
+        mcap_data.push(0x0F); // OP_DATA_END
+        mcap_data.extend_from_slice(&4u64.to_le_bytes());
+        mcap_data.extend_from_slice(&0u32.to_le_bytes());
+
+        // Schema record (after DATA_END in real files)
+        let schema = [
+            0x01, 0x00, // id = 1
+            0x03, 0x00, // name_len = 3
+            b'F', b'o', b'o', // name = "Foo"
+            0x07, 0x00, // encoding_len = 7
+            b'r', b'o', b's', b'2', b'm', b's', b'g', // encoding = "ros2msg"
+            b'#', b' ', b't', b'e', b's', b't', // data
+        ];
+        mcap_data.push(0x03); // OP_SCHEMA
+        mcap_data.extend_from_slice(&(schema.len() as u64).to_le_bytes());
+        mcap_data.extend_from_slice(&schema);
+
+        // Channel record
+        let channel = [
+            0x00, 0x01, // channel_id = 256
+            0x05, 0x00, // topic_len = 5
+            b'/', b't', b'e', b's', b't', // topic = "/test"
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding = "cdr"
+            0x01, 0x00, // schema_id = 1
+        ];
+        mcap_data.push(0x04); // OP_CHANNEL
+        mcap_data.extend_from_slice(&(channel.len() as u64).to_le_bytes());
+        mcap_data.extend_from_slice(&channel);
+
+        // Message record
+        let msg = [
+            0x00, 0x01, // channel_id = 256
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sequence = 1
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // log_time = 0
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // publish_time = 0
+            b'h', b'e', b'l', b'l', b'o', // data
+        ];
+        mcap_data.push(0x05); // OP_MESSAGE
+        mcap_data.extend_from_slice(&(msg.len() as u64).to_le_bytes());
+        mcap_data.extend_from_slice(&msg);
+
+        // Parse in small chunks to test chunk boundary handling
+        let mut parser = StreamingMcapParser::new();
+        for (i, chunk) in mcap_data.chunks(50).enumerate() {
+            let result = parser.parse_chunk(chunk);
+            if let Err(e) = &result {
+                eprintln!("Error at chunk {}: {:?}", i, e);
+                eprintln!("Total bytes so far: {}", i * 50);
+                eprintln!(
+                    "Parser state: initialized={}, channels={}",
+                    parser.is_initialized(),
+                    parser.channels().len()
+                );
+            }
+            assert!(result.is_ok(), "Chunk {} failed: {:?}", i, result);
+        }
+
+        // Should have found the channel
+        assert_eq!(parser.channels().len(), 1, "Should have 1 channel");
+        assert_eq!(parser.message_count(), 1, "Should have 1 message");
+    }
+
+    #[test]
+    fn test_simple_mcap_file() {
+        // Test with a simple MCAP file that has Schema -> Channel -> Message
+        // This file was created to work with the streaming parser
+        // (unlike the fixture files which have CHUNK records)
+        let path = fixture_path("simple_streaming_test.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(&path).unwrap();
+        let mut parser = StreamingMcapParser::new();
+
+        // Parse in small chunks to test chunk boundaries
+        for (i, chunk) in data.chunks(10).enumerate() {
+            let result = parser.parse_chunk(chunk);
+            assert!(result.is_ok(), "Chunk {} failed: {:?}", i, result);
+        }
+
+        // Verify results
+        assert_eq!(parser.channels().len(), 1, "Should have 1 channel");
+        assert_eq!(parser.message_count(), 1, "Should have 1 message");
+
+        // Check channel details
+        let channels = parser.channels();
+        assert!(channels.contains_key(&1), "Should have channel id 1");
+        let channel = &channels[&1];
+        assert_eq!(channel.topic, "/camera/image_raw");
+        assert_eq!(channel.encoding, "cdr");
+    }
 }
 
 // ============================================================================

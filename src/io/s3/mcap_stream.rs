@@ -617,4 +617,83 @@ mod tests {
         assert!(result.is_ok());
         assert!(parser.is_initialized());
     }
+
+    #[test]
+    fn test_parse_schema_simple() {
+        // Create a minimal Schema record:
+        // id=1, name="TestMsg" (7 bytes), encoding="ros2msg" (7 bytes), data=b"# test"
+        // id: 2 bytes = 0x01 0x00
+        // name_len: 2 bytes = 0x07 0x00
+        // name: 7 bytes = "TestMsg"
+        // encoding_len: 2 bytes = 0x07 0x00
+        // encoding: 7 bytes = "ros2msg"
+        // data: 6 bytes = "# test"
+        let schema_bytes = [
+            0x01, 0x00, // id
+            0x07, 0x00, // name_len
+            b'T', b'e', b's', b't', b'M', b's', b'g', // name
+            0x07, 0x00, // encoding_len
+            b'r', b'o', b's', b'2', b'm', b's', b'g', // encoding
+            b'#', b' ', b't', b'e', b's', b't', // data
+        ];
+
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_SCHEMA, 22, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap(); // header
+
+        let result = parser.parse_chunk(&schema_bytes);
+        assert!(result.is_ok(), "Schema parse should succeed: {:?}", result);
+        assert_eq!(parser.channels().len(), 0, "No channels yet");
+    }
+
+    #[test]
+    fn test_parse_schema_with_zero_length_encoding() {
+        // Test a schema where the encoding field itself is 0 length
+        // This might be the issue - some schemas have empty encoding strings
+        let schema_bytes = [
+            0x01, 0x00, // id = 1
+            0x03, 0x00, // name_len = 3
+            b'F', b'o', b'o', // name = "Foo"
+            0x00, 0x00, // encoding_len = 0
+            // No encoding bytes
+            b'#', b' ', b't', b'e', b's', b't', // data
+        ];
+
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_SCHEMA, 15, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap(); // header (body length = 15)
+
+        let result = parser.parse_chunk(&schema_bytes);
+        assert!(
+            result.is_ok(),
+            "Schema with 0-length encoding should succeed: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_parse_schema_with_large_name_len() {
+        // Test what happens if name_len is larger than the body
+        // This could happen if the record length is wrong
+        let schema_bytes = [
+            0x01, 0x00, // id = 1
+            0xFF, 0xFF, // name_len = 65535 (way too large)
+        ];
+
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_SCHEMA, 4, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap(); // header (body length = 4)
+
+        let result = parser.parse_chunk(&schema_bytes);
+        assert!(
+            result.is_err(),
+            "Should fail when name_len exceeds body length"
+        );
+    }
 }
