@@ -43,4 +43,4 @@ pub use filter::{ChannelFilter, TopicFilter};
 pub mod reader;
 pub mod writer;
 pub use reader::{ReadStrategy, ReaderBuilder, RoboReader};
-pub use writer::RoboWriter;
+pub use writer::{RoboWriter, WriteStrategy};

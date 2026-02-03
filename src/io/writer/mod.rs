@@ -16,7 +16,6 @@ pub use write_strategy::{AutoWrite, ParallelWrite, SequentialWrite, WriteStrateg
 use crate::io::metadata::RawMessage;
 use crate::io::traits::FormatWriter;
 use crate::Result;
-use std::path::Path;
 
 /// Unified writer that delegates to format-specific implementations.
 pub struct RoboWriter {
@@ -27,90 +26,90 @@ pub struct RoboWriter {
 impl RoboWriter {
     /// Create a new writer with automatic format detection based on file extension.
     ///
+    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    ///
     /// # Arguments
     ///
-    /// * `path` - Path to the output file
+    /// * `path` - Path to the output file, or S3 URL (s3://bucket/key)
     ///
     /// # Example
     ///
     /// ```rust,no_run
     /// use robocodec::io::RoboWriter;
     ///
+    /// // Local file
     /// let writer = RoboWriter::create("output.mcap")?;
+    ///
+    /// // S3 object (requires tokio runtime)
+    /// let writer = RoboWriter::create("s3://my-bucket/path/to/output.mcap")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
-        WriterBuilder::new().path(path).build()
+    pub fn create(path: &str) -> Result<Self> {
+        Self::create_with_strategy(path, WriteStrategy::Auto)
     }
 
     /// Create a writer with a specific strategy.
-    pub fn create_with_strategy<P: AsRef<Path>>(path: P, _strategy: WriteStrategy) -> Result<Self> {
-        // For now, strategy doesn't affect writer creation
-        Self::create(path)
-    }
-
-    /// Create a writer from a URL string.
     ///
-    /// This method supports both local file paths and S3 URLs (s3://...).
-    /// The URL format is automatically detected and the appropriate writer is created.
-    ///
-    /// For S3 URLs, this method will block on async initialization using
-    /// the current tokio runtime. If no tokio runtime is active, a new runtime
-    /// will be created for this operation.
+    /// Supports both local file paths and S3 URLs (s3://bucket/key).
     ///
     /// # Arguments
     ///
-    /// * `url` - URL string to write to (local path or s3://bucket/key format)
+    /// * `path` - Path to the output file, or S3 URL (s3://bucket/key)
+    /// * `strategy` - The writing strategy to use
     ///
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use robocodec::io::RoboWriter;
-    /// #
-    /// # #[tokio::main]
-    /// # async fn try_main() -> Result<(), Box<dyn std::error::Error>> {
-    /// // Local file (works without tokio)
-    /// let writer = RoboWriter::create("output.mcap")?;
+    /// use robocodec::io::{RoboWriter, WriteStrategy};
     ///
-    /// // S3 object (requires tokio runtime)
-    /// let writer = RoboWriter::create_url("s3://my-bucket/path/to/output.mcap")?;
-    /// # Ok(())
-    /// # }
+    /// // Local file
+    /// let writer = RoboWriter::create_with_strategy(
+    ///     "output.mcap",
+    ///     WriteStrategy::Sequential
+    /// )?;
+    ///
+    /// // S3 object
+    /// let writer = RoboWriter::create_with_strategy(
+    ///     "s3://my-bucket/output.mcap",
+    ///     WriteStrategy::Sequential
+    /// )?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    #[cfg(feature = "s3")]
-    pub fn create_url(url: &str) -> Result<Self> {
-        use tokio::runtime::Runtime;
-
+    pub fn create_with_strategy(path: &str, _strategy: WriteStrategy) -> Result<Self> {
         // Check if this is an S3 URL
-        if let Ok(location) = crate::io::s3::S3Location::from_s3_url(url) {
-            // Use S3Writer for s3:// URLs
-            // Block on the async initialization
-            let rt = Runtime::new().map_err(|e| {
-                crate::CodecError::parse(
-                    "RoboWriter::create_url",
-                    format!("Failed to create tokio runtime: {}", e),
-                )
-            })?;
+        #[cfg(feature = "s3")]
+        {
+            use tokio::runtime::Runtime;
 
-            let writer = rt.block_on(async {
-                // Create S3 client
-                let client = crate::io::s3::S3Client::default_client().map_err(|e| {
-                    crate::CodecError::EncodeError {
-                        codec: "S3".to_string(),
-                        message: e.to_string(),
-                    }
+            if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
+                // Use S3Writer for s3:// URLs
+                // Block on the async initialization
+                let rt = Runtime::new().map_err(|e| {
+                    crate::CodecError::parse(
+                        "RoboWriter::create",
+                        format!("Failed to create tokio runtime: {}", e),
+                    )
                 })?;
-                Ok::<_, crate::CodecError>(crate::io::s3::S3Writer::new(location, client)?)
-            })?;
 
-            return Ok(Self {
-                inner: Box::new(writer),
-            });
+                let writer = rt.block_on(async {
+                    // Create S3 client
+                    let client = crate::io::s3::S3Client::default_client().map_err(|e| {
+                        crate::CodecError::EncodeError {
+                            codec: "S3".to_string(),
+                            message: e.to_string(),
+                        }
+                    })?;
+                    Ok::<_, crate::CodecError>(crate::io::s3::S3Writer::new(location, client)?)
+                })?;
+
+                return Ok(Self {
+                    inner: Box::new(writer),
+                });
+            }
         }
 
         // Fall back to local file path
-        let path = std::path::PathBuf::from(url);
-        Self::create(&path)
+        WriterBuilder::new().path(path).build()
     }
 
     /// Downcast to the inner writer for format-specific operations.

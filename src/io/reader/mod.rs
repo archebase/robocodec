@@ -43,7 +43,6 @@ use crate::core::DecodedMessage;
 use crate::io::metadata::ChannelInfo;
 use crate::io::traits::FormatReader;
 use crate::{CodecError, Result};
-use std::path::Path;
 
 /// Unified decoded message iterator that works for both BAG and MCAP formats.
 ///
@@ -128,20 +127,26 @@ impl RoboReader {
     /// This is the simplest way to open a file - the reader will
     /// automatically detect the format and choose the optimal strategy.
     ///
+    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    ///
     /// # Arguments
     ///
-    /// * `path` - Path to the file to open
+    /// * `path` - Path to the file to open, or S3 URL (s3://bucket/key)
     ///
     /// # Example
     ///
     /// ```rust,no_run
     /// use robocodec::io::RoboReader;
     ///
+    /// // Local file
     /// let reader = RoboReader::open("data.mcap")?;
+    ///
+    /// // S3 object (requires tokio runtime)
+    /// let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        ReaderBuilder::new().path(path).build()
+    pub fn open(path: &str) -> Result<Self> {
+        Self::open_with_strategy(path, ReadStrategy::Auto)
     }
 
     /// Open a file with a specific strategy.
@@ -149,9 +154,11 @@ impl RoboReader {
     /// Use this when you want to force a particular reading strategy
     /// instead of relying on automatic detection.
     ///
+    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    ///
     /// # Arguments
     ///
-    /// * `path` - Path to the file to open
+    /// * `path` - Path to the file to open, or S3 URL (s3://bucket/key)
     /// * `strategy` - The strategy to use for reading
     ///
     /// # Example
@@ -159,70 +166,47 @@ impl RoboReader {
     /// ```rust,no_run
     /// use robocodec::io::{RoboReader, ReadStrategy};
     ///
+    /// // Local file
     /// let reader = RoboReader::open_with_strategy(
     ///     "data.mcap",
     ///     ReadStrategy::Sequential
     /// )?;
+    ///
+    /// // S3 object
+    /// let reader = RoboReader::open_with_strategy(
+    ///     "s3://my-bucket/data.mcap",
+    ///     ReadStrategy::Sequential
+    /// )?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn open_with_strategy<P: AsRef<Path>>(path: P, strategy: ReadStrategy) -> Result<Self> {
-        ReaderBuilder::new().path(path).strategy(strategy).build()
-    }
-
-    /// Open a file from a URL string.
-    ///
-    /// This method supports both local file paths and S3 URLs (s3://...).
-    /// The URL format is automatically detected and the appropriate reader is created.
-    ///
-    /// For S3 URLs, this method will block on async initialization using
-    /// the current tokio runtime. If no tokio runtime is active, a new runtime
-    /// will be created for this operation.
-    ///
-    /// # Arguments
-    ///
-    /// * `url` - URL string to open (local path or s3://bucket/key format)
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use robocodec::io::RoboReader;
-    /// #
-    /// # #[tokio::main]
-    /// # async fn try_main() -> Result<(), Box<dyn std::error::Error>> {
-    /// // Local file (works without tokio)
-    /// let reader = RoboReader::open("data.mcap")?;
-    ///
-    /// // S3 object (requires tokio runtime)
-    /// let reader = RoboReader::open_url("s3://my-bucket/path/to/data.mcap")?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(feature = "s3")]
-    pub fn open_url(url: &str) -> Result<Self> {
-        use tokio::runtime::Runtime;
-
+    pub fn open_with_strategy(path: &str, strategy: ReadStrategy) -> Result<Self> {
         // Check if this is an S3 URL
-        if let Ok(location) = crate::io::s3::S3Location::from_s3_url(url) {
-            // Use S3Reader for s3:// URLs
-            // Block on the async initialization
-            let rt = Runtime::new().map_err(|e| {
-                crate::CodecError::parse(
-                    "RoboReader::open_url",
-                    format!("Failed to create tokio runtime: {}", e),
-                )
-            })?;
+        #[cfg(feature = "s3")]
+        {
+            use tokio::runtime::Runtime;
 
-            let reader = rt.block_on(async { crate::io::s3::S3Reader::open(location).await })?;
+            if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
+                // Use S3Reader for s3:// URLs
+                // Block on the async initialization
+                let rt = Runtime::new().map_err(|e| {
+                    crate::CodecError::parse(
+                        "RoboReader::open",
+                        format!("Failed to create tokio runtime: {}", e),
+                    )
+                })?;
 
-            return Ok(Self {
-                inner: Box::new(reader),
-                strategy: ReadStrategy::Sequential, // S3 reading is inherently streaming
-            });
+                let reader =
+                    rt.block_on(async { crate::io::s3::S3Reader::open(location).await })?;
+
+                return Ok(Self {
+                    inner: Box::new(reader),
+                    strategy,
+                });
+            }
         }
 
         // Fall back to local file path
-        let path = std::path::PathBuf::from(url);
-        Self::open(&path)
+        ReaderBuilder::new().path(path).strategy(strategy).build()
     }
 
     /// Get the reading strategy being used.
