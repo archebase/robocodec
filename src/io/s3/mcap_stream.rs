@@ -10,7 +10,11 @@
 
 use std::collections::HashMap;
 
-use crate::io::formats::mcap::constants::*;
+use crate::io::formats::mcap::constants::{
+    MCAP_MAGIC, OP_ATTACHMENT, OP_ATTACHMENT_INDEX, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX,
+    OP_DATA_END, OP_FOOTER, OP_HEADER, OP_MESSAGE, OP_MESSAGE_INDEX, OP_METADATA,
+    OP_METADATA_INDEX, OP_SCHEMA, OP_STATISTICS, OP_SUMMARY_OFFSET,
+};
 use crate::io::metadata::ChannelInfo;
 use crate::io::s3::error::FatalError;
 

@@ -22,11 +22,13 @@ pub use bag_stream::{
 };
 pub use client::S3Client;
 pub use config::{AwsCredentials, RetryConfig, S3ReaderConfig};
-pub use error::{RecoverableError, S3Error};
+pub use error::{FatalError, RecoverableError, S3Error};
 pub use location::S3Location;
 pub use mcap_stream::{
     ChannelRecordInfo, McapRecord, McapRecordHeader, MessageRecord, SchemaInfo, StreamingMcapParser,
 };
+// Re-export MCAP magic from formats module
+pub use crate::io::formats::mcap::constants::MCAP_MAGIC;
 pub use reader::{S3MessageStream, S3Reader, S3ReaderState};
 
 #[cfg(test)]

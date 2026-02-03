@@ -374,7 +374,8 @@ impl StreamingBagParser {
     }
 
     /// Parse header bytes into named fields.
-    fn parse_record_header(header_bytes: &[u8]) -> Result<BagRecordFields, FatalError> {
+    /// Parse header bytes into named fields.
+    pub fn parse_record_header(header_bytes: &[u8]) -> Result<BagRecordFields, FatalError> {
         let mut fields = BagRecordFields::default();
         let mut pos = 0;
 
@@ -405,7 +406,7 @@ impl StreamingBagParser {
     }
 
     /// Parse a single field from name and value bytes.
-    fn parse_field(fields: &mut BagRecordFields, name: &[u8], value: &[u8]) {
+    pub fn parse_field(fields: &mut BagRecordFields, name: &[u8], value: &[u8]) {
         match name {
             b"op" if value.len() == 1 => {
                 fields.op = Some(value[0]);
