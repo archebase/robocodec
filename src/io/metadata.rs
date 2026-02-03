@@ -18,9 +18,10 @@ use std::collections::HashMap;
 ///
 /// # Timestamp Availability
 ///
-/// Timestamps are available when using `decoded_with_timestamp()` for MCAP files.
-/// When using the generic `decoded()` method, timestamps will be `None` since
-/// the underlying decode streams don't expose timing information.
+/// Timestamps are available when using `decode_messages_with_timestamp()` for
+/// both BAG and MCAP files. When using the generic `decoded()` method, timestamps
+/// will always be `None` since the underlying decode streams don't expose timing
+/// information through that API.
 #[derive(Debug, Clone)]
 pub struct DecodedMessageResult {
     /// The decoded message fields
@@ -59,28 +60,40 @@ impl DecodedMessageResult {
     }
 
     /// Get a reference to the decoded message.
+    ///
+    /// Provides access to the decoded message fields.
     pub fn message(&self) -> &DecodedMessage {
         &self.message
     }
 
-    /// Get the topic name.
+    /// Get the topic name for this message.
+    ///
+    /// Returns the topic name from the channel metadata.
     pub fn topic(&self) -> &str {
         &self.channel.topic
     }
 
-    /// Get the message type.
+    /// Get the message type name for this message.
+    ///
+    /// Returns the fully-qualified message type (e.g., "std_msgs/String").
     pub fn message_type(&self) -> &str {
         &self.channel.message_type
     }
 
     /// Get the time range as (log_time, publish_time).
     ///
-    /// Returns `None` for either timestamp if not available.
+    /// Returns `None` for either timestamp if not available. Note that when
+    /// using the `decoded()` method, both timestamps will always be `None`.
+    /// Use `decode_messages_with_timestamp()` to get actual timestamp values.
     pub fn times(&self) -> (Option<u64>, Option<u64>) {
         (self.log_time, self.publish_time)
     }
 
-    /// Check if timestamps are available for this result.
+    /// Check if both timestamps are available for this result.
+    ///
+    /// Returns `true` only if both `log_time` and `publish_time` are `Some`.
+    /// When using the `decoded()` method, this will always return `false`.
+    /// Use `decode_messages_with_timestamp()` for timestamped messages.
     pub fn has_timestamps(&self) -> bool {
         self.log_time.is_some() && self.publish_time.is_some()
     }

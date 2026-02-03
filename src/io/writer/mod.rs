@@ -69,11 +69,22 @@ impl RoboWriter {
 
         // Get parent directory and ensure it exists
         if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                return Err(CodecError::parse(
-                    "RoboWriter",
-                    format!("Parent directory does not exist: {}", parent.display()),
-                ));
+            if !parent.as_os_str().is_empty() {
+                match parent.try_exists() {
+                    Ok(false) => {
+                        return Err(CodecError::parse(
+                            "RoboWriter",
+                            format!("Parent directory does not exist: {}", parent.display()),
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(CodecError::parse(
+                            "RoboWriter",
+                            format!("Cannot access parent directory {}: {}", parent.display(), e),
+                        ));
+                    }
+                    Ok(true) => {} // Parent exists, continue
+                }
             }
         }
 

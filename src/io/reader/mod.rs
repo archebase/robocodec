@@ -253,7 +253,7 @@ impl RoboReader {
     /// # Note on Timestamps
     ///
     /// Timestamps are not currently exposed through this method.
-    /// Use `decode_messages_with_timestamp()` for MCAP files to get timestamps.
+    /// Use `decode_messages_with_timestamp()` for both BAG and MCAP files to get timestamps.
     ///
     /// # Example
     ///
@@ -290,9 +290,18 @@ impl RoboReader {
             });
         }
 
+        // Include format information in error for better debugging
+        let format_name = match self.inner.format() {
+            crate::io::metadata::FileFormat::Mcap => "MCAP",
+            crate::io::metadata::FileFormat::Bag => "ROS1 Bag",
+            crate::io::metadata::FileFormat::Unknown => "Unknown",
+        };
         Err(CodecError::parse(
             "RoboReader",
-            "decoded not supported for this format",
+            format!(
+                "decoded() not supported for this format (detected: {})",
+                format_name
+            ),
         ))
     }
 
@@ -353,9 +362,18 @@ impl RoboReader {
             ));
         }
 
+        // Include format information in error for better debugging
+        let format_name = match self.inner.format() {
+            crate::io::metadata::FileFormat::Mcap => "MCAP",
+            crate::io::metadata::FileFormat::Bag => "ROS1 Bag",
+            crate::io::metadata::FileFormat::Unknown => "Unknown",
+        };
         Err(CodecError::parse(
             "RoboReader",
-            "decode_messages_with_timestamp not supported for this format",
+            format!(
+                "decode_messages_with_timestamp() not supported for this format (detected: {})",
+                format_name
+            ),
         ))
     }
 
