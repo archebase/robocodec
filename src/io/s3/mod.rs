@@ -89,9 +89,9 @@ mod tests {
     #[test]
     fn test_s3_config_default() {
         let config = S3ReaderConfig::default();
-        assert_eq!(config.buffer_size, 64 * 1024);
-        assert_eq!(config.max_chunk_size, 10 * 1024 * 1024);
-        assert_eq!(config.header_scan_limit, 1024 * 1024);
+        assert_eq!(config.buffer_size(), 64 * 1024);
+        assert_eq!(config.max_chunk_size(), 10 * 1024 * 1024);
+        assert_eq!(config.header_scan_limit(), 1024 * 1024);
     }
 
     #[test]
@@ -101,9 +101,9 @@ mod tests {
             .with_max_chunk_size(20 * 1024 * 1024)
             .with_header_scan_limit(2 * 1024 * 1024);
 
-        assert_eq!(config.buffer_size, 128 * 1024);
-        assert_eq!(config.max_chunk_size, 20 * 1024 * 1024);
-        assert_eq!(config.header_scan_limit, 2 * 1024 * 1024);
+        assert_eq!(config.buffer_size(), 128 * 1024);
+        assert_eq!(config.max_chunk_size(), 20 * 1024 * 1024);
+        assert_eq!(config.header_scan_limit(), 2 * 1024 * 1024);
     }
 
     #[test]

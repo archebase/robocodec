@@ -150,7 +150,7 @@ impl S3Reader {
         // Fetch header data
         let header_data = self
             .client
-            .fetch_header(&self.location, self.config.header_scan_limit)
+            .fetch_header(&self.location, self.config.header_scan_limit())
             .await?;
 
         // Parse format-specific header
@@ -435,44 +435,34 @@ impl<'a> S3MessageStream<'a> {
 impl<'a> Stream for S3MessageStream<'a> {
     type Item = Result<(ChannelInfo, Vec<u8>), FatalError>;
 
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // This is a simplified implementation that processes data synchronously.
         // A fully async version would use a background task to fetch chunks.
-        let this = self.get_mut();
+        // For now, use next_message() instead which properly fetches chunks.
 
-        // Return pending message if available
-        if let Some(msg) = this.pending_messages.pop() {
+        // Try to return a pending message, filtering out unknown channels
+        while let Some(msg) = self.pending_messages.pop() {
             let channel_id = msg.channel_id();
             let data = msg.data();
 
-            // Find channel info
-            let channel_info = this
-                .channels
-                .get(&(channel_id as u16))
-                .cloned()
-                .unwrap_or_else(|| ChannelInfo {
-                    id: channel_id as u16,
-                    topic: format!("/unknown/{}", channel_id),
-                    message_type: "Unknown".to_string(),
-                    encoding: "unknown".to_string(),
-                    schema: None,
-                    schema_data: None,
-                    schema_encoding: None,
-                    message_count: 0,
-                    callerid: None,
-                });
-
-            return Poll::Ready(Some(Ok((channel_info, data))));
+            // Find channel info - skip message if channel not found
+            if let Some(channel_info) = self.channels.get(&(channel_id as u16)).cloned() {
+                return Poll::Ready(Some(Ok((channel_info, data))));
+            }
+            // Channel not found - log warning and continue to next message
+            tracing::warn!(
+                context = "S3MessageStream",
+                channel_id,
+                "Unknown channel ID, skipping message"
+            );
         }
 
         // Check if we've reached EOF
-        if this.eof || this.stream_position >= this.file_size {
+        if self.eof || self.stream_position >= self.file_size {
             return Poll::Ready(None);
         }
 
-        // For now, mark EOF since we can't do async operations in poll_next
-        // A proper implementation would spawn a background task to fetch chunks
-        this.eof = true;
+        // Mark EOF - use next_message() for proper async chunk fetching
         Poll::Ready(None)
     }
 }
@@ -484,13 +474,37 @@ impl<'a> S3MessageStream<'a> {
     /// This method is provided for convenience when async runtime is available.
     /// In an async context, use `StreamExt::next()` instead.
     pub async fn next_message(&mut self) -> Option<Result<(ChannelInfo, Vec<u8>), FatalError>> {
-        // Fetch next chunk if no pending messages
-        if self.pending_messages.is_empty() && !self.eof {
+        loop {
+            // Return pending message if available, filtering out unknown channels
+            if let Some(msg) = self.pending_messages.pop() {
+                let channel_id = msg.channel_id();
+                let data = msg.data();
+
+                // Find channel info - skip message if channel not found
+                if let Some(channel_info) = self.channels.get(&(channel_id as u16)).cloned() {
+                    return Some(Ok((channel_info, data)));
+                }
+                // Channel not found - log warning and continue to next message
+                tracing::warn!(
+                    context = "S3MessageStream",
+                    channel_id,
+                    "Unknown channel ID, skipping message"
+                );
+                // Continue loop to try next message
+                continue;
+            }
+
+            // No more pending messages - check if we should fetch more or return EOF
+            if self.eof || self.stream_position >= self.file_size {
+                return None;
+            }
+
+            // Fetch next chunk
             let remaining = self.file_size - self.stream_position;
             // Convert remaining to usize for chunk size calculation
             // Use saturating conversion to avoid panic on overflow
-            let remaining_usize = remaining.min(self.config.max_chunk_size as u64) as usize;
-            let chunk_size = self.config.max_chunk_size.min(remaining_usize) as u64;
+            let remaining_usize = remaining.min(self.config.max_chunk_size() as u64) as usize;
+            let chunk_size = self.config.max_chunk_size().min(remaining_usize) as u64;
 
             if chunk_size == 0 {
                 self.eof = true;
@@ -543,33 +557,8 @@ impl<'a> S3MessageStream<'a> {
                     return Some(Err(e));
                 }
             }
+            // Loop back to process the messages we just added
         }
-
-        // Return pending message
-        if let Some(msg) = self.pending_messages.pop() {
-            let channel_id = msg.channel_id();
-            let data = msg.data();
-
-            let channel_info = self
-                .channels
-                .get(&(channel_id as u16))
-                .cloned()
-                .unwrap_or_else(|| ChannelInfo {
-                    id: channel_id as u16,
-                    topic: format!("/unknown/{}", channel_id),
-                    message_type: "Unknown".to_string(),
-                    encoding: "unknown".to_string(),
-                    schema: None,
-                    schema_data: None,
-                    schema_encoding: None,
-                    message_count: 0,
-                    callerid: None,
-                });
-
-            return Some(Ok((channel_info, data)));
-        }
-
-        None
     }
 }
 

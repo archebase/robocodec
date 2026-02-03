@@ -192,7 +192,10 @@ impl StreamingMcapParser {
                 self.current_opcode = slice[0];
 
                 // Read length (little-endian u64 at offset 1)
-                self.remaining = u64::from_le_bytes(slice[1..9].try_into().unwrap_or([0u8; 8]));
+                let length_bytes: [u8; 8] = slice[1..9]
+                    .try_into()
+                    .expect("slice has exactly 9 bytes after checking available >= 9");
+                self.remaining = u64::from_le_bytes(length_bytes);
 
                 // Validate record length
                 if self.remaining > 100 * 1024 * 1024 {
@@ -266,12 +269,11 @@ impl StreamingMcapParser {
                 // Ignore these records for streaming
             }
             _ => {
-                // Unknown opcode - skip
-                tracing::warn!(
-                    context = "StreamingMcapParser",
-                    opcode,
-                    "Unknown MCAP opcode"
-                );
+                // Unknown opcode - this might indicate file corruption or version mismatch
+                return Err(FatalError::io_error(format!(
+                    "Unknown MCAP opcode: 0x{:02x}",
+                    opcode
+                )));
             }
         }
         Ok(())
@@ -280,14 +282,28 @@ impl StreamingMcapParser {
     /// Parse a Schema record.
     fn parse_schema(&self, body: &[u8]) -> Result<SchemaInfo, FatalError> {
         if body.len() < 6 {
-            return Err(FatalError::invalid_format("MCAP Schema record", vec![]));
+            return Err(FatalError::invalid_format(
+                "MCAP Schema record (need at least 6 bytes)",
+                body[..body.len().min(10)].to_vec(),
+            ));
         }
 
-        let id = u16::from_le_bytes(body[0..2].try_into().unwrap());
-        let name_len = u16::from_le_bytes(body[2..4].try_into().unwrap()) as usize;
+        let id = u16::from_le_bytes(
+            body[0..2]
+                .try_into()
+                .expect("slice is exactly 2 bytes after len >= 6 check"),
+        );
+        let name_len = u16::from_le_bytes(
+            body[2..4]
+                .try_into()
+                .expect("slice is exactly 2 bytes after len >= 6 check"),
+        ) as usize;
 
         if body.len() < 4 + name_len {
-            return Err(FatalError::invalid_format("MCAP Schema name", vec![]));
+            return Err(FatalError::invalid_format(
+                "MCAP Schema name (incomplete)",
+                vec![],
+            ));
         }
 
         let name = String::from_utf8(body[4..4 + name_len].to_vec())
@@ -301,10 +317,16 @@ impl StreamingMcapParser {
             ));
         }
 
-        let encoding_len =
-            u16::from_le_bytes(body[offset..offset + 2].try_into().unwrap()) as usize;
+        let encoding_len = u16::from_le_bytes(
+            body[offset..offset + 2]
+                .try_into()
+                .expect("slice is exactly 2 bytes after len check"),
+        ) as usize;
         if body.len() < offset + 2 + encoding_len {
-            return Err(FatalError::invalid_format("MCAP Schema encoding", vec![]));
+            return Err(FatalError::invalid_format(
+                "MCAP Schema encoding (incomplete)",
+                vec![],
+            ));
         }
 
         let encoding = String::from_utf8(body[offset + 2..offset + 2 + encoding_len].to_vec())
@@ -326,14 +348,28 @@ impl StreamingMcapParser {
     /// Parse a Channel record.
     fn parse_channel(&self, body: &[u8]) -> Result<ChannelRecordInfo, FatalError> {
         if body.len() < 6 {
-            return Err(FatalError::invalid_format("MCAP Channel record", vec![]));
+            return Err(FatalError::invalid_format(
+                "MCAP Channel record (need at least 6 bytes)",
+                body[..body.len().min(10)].to_vec(),
+            ));
         }
 
-        let id = u16::from_le_bytes(body[0..2].try_into().unwrap());
-        let topic_len = u16::from_le_bytes(body[2..4].try_into().unwrap()) as usize;
+        let id = u16::from_le_bytes(
+            body[0..2]
+                .try_into()
+                .expect("slice is exactly 2 bytes after len >= 6 check"),
+        );
+        let topic_len = u16::from_le_bytes(
+            body[2..4]
+                .try_into()
+                .expect("slice is exactly 2 bytes after len >= 6 check"),
+        ) as usize;
 
         if body.len() < 4 + topic_len {
-            return Err(FatalError::invalid_format("MCAP Channel topic", vec![]));
+            return Err(FatalError::invalid_format(
+                "MCAP Channel topic (incomplete)",
+                vec![],
+            ));
         }
 
         let topic = String::from_utf8(body[4..4 + topic_len].to_vec()).map_err(|_| {
@@ -348,11 +384,14 @@ impl StreamingMcapParser {
             ));
         }
 
-        let encoding_len =
-            u16::from_le_bytes(body[offset..offset + 2].try_into().unwrap()) as usize;
+        let encoding_len = u16::from_le_bytes(
+            body[offset..offset + 2]
+                .try_into()
+                .expect("slice is exactly 2 bytes after len check"),
+        ) as usize;
         if body.len() < offset + 2 + encoding_len {
             return Err(FatalError::invalid_format(
-                "MCAP Channel message encoding",
+                "MCAP Channel message encoding (incomplete)",
                 vec![],
             ));
         }
@@ -364,11 +403,17 @@ impl StreamingMcapParser {
 
         let schema_offset = offset + 2 + encoding_len;
         if body.len() < schema_offset + 2 {
-            return Err(FatalError::invalid_format("MCAP Channel schema id", vec![]));
+            return Err(FatalError::invalid_format(
+                "MCAP Channel schema id (incomplete)",
+                vec![],
+            ));
         }
 
-        let schema_id =
-            u16::from_le_bytes(body[schema_offset..schema_offset + 2].try_into().unwrap());
+        let schema_id = u16::from_le_bytes(
+            body[schema_offset..schema_offset + 2]
+                .try_into()
+                .expect("slice is exactly 2 bytes after len check"),
+        );
 
         Ok(ChannelRecordInfo {
             id,
@@ -381,13 +426,32 @@ impl StreamingMcapParser {
     /// Parse a Message record.
     fn parse_message(&self, body: &[u8]) -> Result<MessageRecord, FatalError> {
         if body.len() < 20 {
-            return Err(FatalError::invalid_format("MCAP Message record", vec![]));
+            return Err(FatalError::invalid_format(
+                "MCAP Message record (need at least 20 bytes)",
+                body[..body.len().min(10)].to_vec(),
+            ));
         }
 
-        let channel_id = u16::from_le_bytes(body[0..2].try_into().unwrap());
-        let sequence = u64::from_le_bytes(body[2..10].try_into().unwrap());
-        let log_time = u64::from_le_bytes(body[10..18].try_into().unwrap());
-        let publish_time = u64::from_le_bytes(body[18..26].try_into().unwrap());
+        let channel_id = u16::from_le_bytes(
+            body[0..2]
+                .try_into()
+                .expect("slice is exactly 2 bytes after len >= 20 check"),
+        );
+        let sequence = u64::from_le_bytes(
+            body[2..10]
+                .try_into()
+                .expect("slice is exactly 8 bytes after len >= 20 check"),
+        );
+        let log_time = u64::from_le_bytes(
+            body[10..18]
+                .try_into()
+                .expect("slice is exactly 8 bytes after len >= 20 check"),
+        );
+        let publish_time = u64::from_le_bytes(
+            body[18..26]
+                .try_into()
+                .expect("slice is exactly 8 bytes after len >= 20 check"),
+        );
 
         let data = body[20..].to_vec();
 

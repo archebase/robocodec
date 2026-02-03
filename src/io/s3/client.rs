@@ -7,8 +7,27 @@
 use crate::io::s3::{config::S3ReaderConfig, error::FatalError, location::S3Location};
 use bytes::Bytes;
 
-// Note: We use a simplified credential approach that doesn't require full AWS SDK
-// The proper AWS SigV4 signing will be added in Phase 4 with the `s3` feature
+// ============================================================================
+// IMPORTANT: AWS CREDENTIALS ARE NOT CURRENTLY USED FOR AUTHENTICATION
+// ============================================================================
+//
+// The `AwsCredentials` struct in S3ReaderConfig is ACCEPTED but NOT USED for
+// AWS SigV4 signing. The current implementation relies on implicit
+// environment-based authentication through `reqwest`, which only works for:
+// - Public S3 buckets (no authentication required)
+// - S3-compatible services with custom authentication
+// - Instances with IAM instance profiles
+//
+// If you provide credentials via S3ReaderConfig::with_credentials(), they will
+// be IGNORED for HTTP request signing. This is a known limitation.
+//
+// For authenticated S3 access, you currently need to:
+// 1. Use IAM instance profiles (if running on EC2/ECS)
+// 2. Use an S3-compatible service that doesn't require SigV4
+// 3. Set up environment variables that reqwest's default credential chain can use
+//
+// TODO: Implement proper AWS SigV4 signing using the stored credentials
+// ============================================================================
 
 /// HTTP client for S3 operations.
 ///
@@ -30,10 +49,10 @@ impl S3Client {
         })?;
 
         let client_builder = reqwest::Client::builder()
-            .timeout(config.request_timeout)
-            .pool_max_idle_per_host(config.pool_max_idle);
+            .timeout(config.request_timeout())
+            .pool_max_idle_per_host(config.pool_max_idle());
 
-        let client = if !config.validate_ssl {
+        let client = if !config.validate_ssl() {
             client_builder.danger_accept_invalid_certs(true)
         } else {
             client_builder
@@ -78,7 +97,7 @@ impl S3Client {
         // Add AWS credentials if configured
         // Note: For now we use a simplified approach. In Phase 4 with the `s3` feature,
         // we'll add proper AWS SigV4 signing using aws-config
-        let _credentials = &self.config.credentials;
+        let _credentials = self.config.credentials();
         // TODO: Add proper AWS SigV4 signing in Phase 4
         // For now, we rely on the default credential chain from the environment
 
@@ -218,7 +237,7 @@ mod tests {
         let client = S3Client::default_client();
         assert!(client.is_ok());
         let client = client.unwrap();
-        assert_eq!(client.config.buffer_size, 64 * 1024);
+        assert_eq!(client.config().buffer_size(), 64 * 1024);
     }
 
     #[test]
@@ -227,7 +246,7 @@ mod tests {
         let client = S3Client::new(config);
         assert!(client.is_ok());
         let client = client.unwrap();
-        assert_eq!(client.config.buffer_size, 128 * 1024);
+        assert_eq!(client.config().buffer_size(), 128 * 1024);
     }
 
     #[test]
@@ -240,7 +259,7 @@ mod tests {
     #[test]
     fn test_s3_client_getters() {
         let client = S3Client::default_client().unwrap();
-        assert_eq!(client.config().buffer_size, 64 * 1024);
+        assert_eq!(client.config().buffer_size(), 64 * 1024);
         assert!(client.http_client() as *const _ as usize != 0);
     }
 }

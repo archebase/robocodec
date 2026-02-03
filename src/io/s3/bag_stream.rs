@@ -208,7 +208,7 @@ impl StreamingBagParser {
                 let header_len = u32::from_le_bytes(
                     self.buffer[self.buffer_pos..self.buffer_pos + 4]
                         .try_into()
-                        .unwrap(),
+                        .expect("slice is exactly 4 bytes after available >= 4 check"),
                 ) as usize;
 
                 // Validate header length (sanity check)
@@ -249,7 +249,7 @@ impl StreamingBagParser {
                 let data_len = u32::from_le_bytes(
                     self.buffer[data_len_start..data_len_start + 4]
                         .try_into()
-                        .unwrap(),
+                        .expect("slice is exactly 4 bytes after len check"),
                 ) as usize;
 
                 // Validate data length
@@ -294,8 +294,11 @@ impl StreamingBagParser {
         if available < 4 {
             return Ok(false);
         }
-        let header_len =
-            u32::from_le_bytes(self.buffer[start..start + 4].try_into().unwrap()) as usize;
+        let header_len = u32::from_le_bytes(
+            self.buffer[start..start + 4]
+                .try_into()
+                .expect("slice is exactly 4 bytes after available >= 4 check"),
+        ) as usize;
 
         // Read header bytes
         if available < 4 + header_len {
@@ -313,7 +316,7 @@ impl StreamingBagParser {
         let data_len = u32::from_le_bytes(
             self.buffer[start + 4 + header_len..start + 4 + header_len + 4]
                 .try_into()
-                .unwrap(),
+                .expect("slice is exactly 4 bytes after available check"),
         ) as usize;
 
         // Check if we have the full data
@@ -358,8 +361,11 @@ impl StreamingBagParser {
                     // Metadata records - ignore for streaming
                 }
                 _ => {
-                    // Unknown op code - skip
-                    tracing::warn!(context = "StreamingBagParser", op, "Unknown BAG op code");
+                    // Unknown op code - this might indicate file corruption or version mismatch
+                    return Err(FatalError::io_error(format!(
+                        "Unknown BAG op code: 0x{:02x}",
+                        op
+                    )));
                 }
             }
         }
@@ -371,15 +377,17 @@ impl StreamingBagParser {
     }
 
     /// Parse header bytes into named fields.
-    /// Parse header bytes into named fields.
     pub fn parse_record_header(header_bytes: &[u8]) -> Result<BagRecordFields, FatalError> {
         let mut fields = BagRecordFields::default();
         let mut pos = 0;
 
         while pos + 4 <= header_bytes.len() {
             // Read field length
-            let field_len =
-                u32::from_le_bytes(header_bytes[pos..pos + 4].try_into().unwrap()) as usize;
+            let field_len = u32::from_le_bytes(
+                header_bytes[pos..pos + 4]
+                    .try_into()
+                    .expect("slice is exactly 4 bytes after pos + 4 <= len check"),
+            ) as usize;
             pos += 4;
 
             if field_len == 0 || pos + field_len > header_bytes.len() {
@@ -488,12 +496,23 @@ impl StreamingBagParser {
     }
 
     /// Get all discovered connections as ChannelInfo.
+    ///
+    /// Uses the original BAG connection ID as the channel ID to ensure
+    /// messages can be correctly associated with their channels.
     pub fn channels(&self) -> HashMap<u16, ChannelInfo> {
         self.connections
             .iter()
-            .enumerate()
-            .map(|(i, (_conn_id, conn))| {
-                let channel_id = i as u16;
+            .filter_map(|(conn_id, conn)| {
+                // Only include conn_ids that fit in u16
+                let channel_id = *conn_id as u16;
+                if *conn_id != channel_id as u32 {
+                    tracing::warn!(
+                        context = "StreamingBagParser",
+                        conn_id,
+                        "Connection ID does not fit in u16, skipping channel"
+                    );
+                    return None;
+                }
                 let channel = ChannelInfo {
                     id: channel_id,
                     topic: conn.topic.clone(),
@@ -509,7 +528,7 @@ impl StreamingBagParser {
                         Some(conn.caller_id.clone())
                     },
                 };
-                (channel_id, channel)
+                Some((channel_id, channel))
             })
             .collect()
     }
