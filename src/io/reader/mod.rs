@@ -45,25 +45,6 @@ use crate::io::traits::FormatReader;
 use crate::{CodecError, Result};
 use std::path::Path;
 
-/// Helper function to convert MCAP ChannelInfo to unified ChannelInfo.
-///
-/// MCAP reader returns its own ChannelInfo type which has the same fields
-/// as the unified metadata::ChannelInfo but is a different type. This
-/// function handles the conversion.
-fn convert_mcap_channel_info(ch: &crate::io::formats::mcap::reader::ChannelInfo) -> ChannelInfo {
-    ChannelInfo {
-        id: ch.id,
-        topic: ch.topic.clone(),
-        message_type: ch.message_type.clone(),
-        encoding: ch.encoding.clone(),
-        schema: ch.schema.clone(),
-        schema_data: ch.schema_data.clone(),
-        schema_encoding: ch.schema_encoding.clone(),
-        message_count: ch.message_count,
-        callerid: ch.callerid.clone(),
-    }
-}
-
 /// Unified decoded message iterator that works for both BAG and MCAP formats.
 ///
 /// This enum wraps format-specific iterators to provide a consistent API.
@@ -108,9 +89,7 @@ impl<'a> Iterator for DecodedMessageStream<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Mcap(ref mut stream) => stream
-                .next()
-                .map(|result| result.map(|(msg, ch)| (msg, convert_mcap_channel_info(&ch)))),
+            Self::Mcap(ref mut stream) => stream.next(),
             Self::Bag(ref mut stream) => stream.next(),
         }
     }
@@ -163,9 +142,7 @@ impl<'a> Iterator for DecodedMessageWithTimestampStream<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            Self::Mcap(ref mut stream) => stream
-                .next()
-                .map(|result| result.map(|(msg, ch)| (msg, convert_mcap_channel_info(&ch)))),
+            Self::Mcap(ref mut stream) => stream.next(),
             Self::Bag(ref mut stream) => stream.next(),
         }
     }

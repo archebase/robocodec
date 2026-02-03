@@ -12,7 +12,8 @@ use std::collections::HashMap;
 
 use crate::core::Result;
 use crate::encoding::{CodecFactory, ProtobufSchemaTransformer, SchemaMetadata};
-use crate::io::formats::mcap::reader::{ChannelInfo, McapReader, RawMessage};
+use crate::io::formats::mcap::reader::{McapReader, RawMessage};
+use crate::io::ChannelInfo;
 use crate::transform::MultiTransform;
 
 /// Extract package name from a protobuf type name.

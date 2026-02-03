@@ -22,7 +22,7 @@ use crate::encoding::{CdrDecoder, JsonDecoder, ProtobufDecoder};
 use crate::io::formats::mcap::parallel::ParallelMcapReader;
 use crate::io::traits::FormatReader;
 use crate::io::writer::WriterConfig;
-use crate::io::FormatWriter;
+use crate::io::{ChannelInfo, FormatWriter, TimestampedDecodedMessage};
 
 /// MCAP format type.
 ///
@@ -58,29 +58,6 @@ impl McapFormat {
     }
 }
 
-/// Information about a channel in an MCAP file.
-#[derive(Debug, Clone)]
-pub struct ChannelInfo {
-    /// Channel ID
-    pub id: u16,
-    /// Topic name (e.g., "/joint_states")
-    pub topic: String,
-    /// Message type (e.g., "sensor_msgs/msg/JointState")
-    pub message_type: String,
-    /// Encoding (e.g., "cdr", "protobuf", "json")
-    pub encoding: String,
-    /// Schema definition (message definition text)
-    pub schema: Option<String>,
-    /// Schema data (binary, for protobuf FileDescriptorSet)
-    pub schema_data: Option<Vec<u8>>,
-    /// Schema encoding (e.g., "ros2msg", "protobuf")
-    pub schema_encoding: Option<String>,
-    /// Message count
-    pub message_count: u64,
-    /// Caller ID - identifies the node that publishes to this topic (ROS1 specific)
-    pub callerid: Option<String>,
-}
-
 /// Raw message data from MCAP with metadata (undecoded).
 #[derive(Debug, Clone)]
 pub struct RawMessage {
@@ -95,9 +72,6 @@ pub struct RawMessage {
     /// Sequence number (if available)
     pub sequence: Option<u64>,
 }
-
-// Re-export the shared TimestampedDecodedMessage type
-pub use crate::io::metadata::TimestampedDecodedMessage;
 
 /// Robotics data reader - handles MCAP files with automatic encoding detection.
 pub struct McapReader {
@@ -121,26 +95,11 @@ impl McapReader {
         // Use the custom parallel reader
         let inner = ParallelMcapReader::open(&path)?;
 
-        // Convert channel info to local format
+        // Clone channel info (both use the same metadata::ChannelInfo type)
         let channels: HashMap<u16, ChannelInfo> = inner
             .channels()
             .iter()
-            .map(|(&id, ch)| {
-                (
-                    id,
-                    ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic.clone(),
-                        message_type: ch.message_type.clone(),
-                        encoding: ch.encoding.clone(),
-                        schema: ch.schema.clone(),
-                        schema_data: ch.schema_data.clone(),
-                        schema_encoding: ch.schema_encoding.clone(),
-                        message_count: ch.message_count,
-                        callerid: ch.callerid.clone(),
-                    },
-                )
-            })
+            .map(|(&id, ch)| (id, ch.clone()))
             .collect();
 
         if channels.is_empty() {

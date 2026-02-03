@@ -93,8 +93,8 @@ impl ChannelInfo {
         }
     }
 
-    /// Convert from the McapReader's ChannelInfo.
-    pub fn from_reader_info(info: &crate::mcap::reader::ChannelInfo) -> Self {
+    /// Convert from the unified ChannelInfo.
+    pub fn from_reader_info(info: &crate::io::ChannelInfo) -> Self {
         Self {
             id: info.id,
             topic: info.topic.clone(),
