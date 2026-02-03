@@ -10,7 +10,7 @@
 //! - **[`RoboReader`]** - Auto-detects format and provides unified message iteration
 //! - **[`RoboWriter`]** - Auto-detects format from extension
 //! - **[`RoboRewriter`]** - Unified rewriter with format auto-detection
-//! - **[`Transform`]** - Topic/type renaming and transformations
+//! - **[`TransformBuilder`]** - Topic/type renaming and transformations
 //!
 //! ## Example: Reading with Auto-Detection
 //!

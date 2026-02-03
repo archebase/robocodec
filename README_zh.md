@@ -70,26 +70,44 @@ robocodec = { version = "0.1", features = ["python", "jemalloc"] }
 
 ## 快速开始
 
-### 读取 MCAP 文件
+### 读取消息并解码
 
 ```rust
-use robocodec::io::formats::mcap::reader::McapReader;
+use robocodec::RoboReader;
 
-let reader = McapReader::open("data.mcap")?;
-for result in reader.decode_messages()? {
-    let (decoded, channel) = result?;
-    println!("Topic: {}, Fields: {:?}", channel.topic, decoded);
+// 支持 BAG 和 MCAP 格式，自动检测
+let reader = RoboReader::open("data.mcap")?;
+let mut iter = reader.decoded()?;
+
+while let Some(result) = iter.next() {
+    let msg = result?;
+    println!("Topic: {}", msg.channel.topic);
+    println!("Data: {:?}", msg.message);
+    println!("Log time: {:?}", msg.log_time);
 }
 ```
 
-### 写入 MCAP 文件
+或使用迭代器直接遍历：
 
 ```rust
-use robocodec::io::formats::mcap::writer::ParallelMcapWriter;
+use robocodec::RoboReader;
 
-let writer = ParallelMcapWriter::create("output.mcap")?;
-writer.add_channel(...)?;
-writer.write_chunk(...)?;
+let reader = RoboReader::open("file.mcap")?;
+
+for result in reader.decoded()? {
+    let msg = result?;
+    // 访问 msg.message, msg.channel, msg.log_time, msg.publish_time, msg.sequence
+}
+```
+
+### 写入消息到文件
+
+```rust
+use robocodec::RoboWriter;
+
+let mut writer = RoboWriter::create("output.mcap")?;
+let channel_id = writer.add_channel("/topic", "MessageType", "cdr", None)?;
+// ... 写入消息 ...
 writer.finish()?;
 ```
 

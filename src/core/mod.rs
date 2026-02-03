@@ -5,7 +5,7 @@
 //! Core types used throughout robocodec.
 //!
 //! This module provides the foundational types for the library:
-//! - [`Error`] - Comprehensive error handling
+//! - [`CodecError`] - Comprehensive error handling
 //! - [`CodecValue`] - Unified value representation
 //! - [`TypeRegistry`] - Schema type registry
 //! - [`Encoding`] - Message encoding format identifier

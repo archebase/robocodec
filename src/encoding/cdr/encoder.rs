@@ -5,7 +5,7 @@
 //! CDR encoder for writing CDR-encoded data.
 //!
 //! Based on the TypeScript implementation at:
-//! https://github.com/emulated-devices/rtps-cdr/blob/main/src/CdrWriter.ts
+//! <https://github.com/emulated-devices/rtps-cdr/blob/main/src/CdrWriter.ts>
 
 use super::{calculator::CdrCalculator, CDR_HEADER_SIZE};
 use crate::core::Result as CoreResult;

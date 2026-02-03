@@ -9,7 +9,7 @@
 //! The format supports:
 //! - Simple field lists (root message)
 //! - Dependency blocks with "MSG: TypeName" headers
-//! - Array types: T[] (dynamic) or T[n] (fixed)
+//! - Array types: T[] (dynamic) or T\[n\] (fixed)
 //! - Nested types: package/MessageName
 //! - Comments (# style)
 

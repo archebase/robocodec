@@ -17,7 +17,7 @@
 //!
 //! This writer is designed to be compatible with the mcap crate v0.24.0.
 //! The summary section format matches the specification at:
-//! https://github.com/foxglove/mcap/tree/main/docs/specification
+//! <https://github.com/foxglove/mcap/tree/main/docs/specification>
 
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
