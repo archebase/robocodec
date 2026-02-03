@@ -10,6 +10,95 @@
 use crate::core::DecodedMessage;
 use std::collections::HashMap;
 
+/// Result of decoding a message with complete metadata.
+///
+/// This type combines the decoded message data with all available
+/// metadata from the file format, providing a unified interface
+/// regardless of whether the source is MCAP or ROS1 bag.
+///
+/// # Timestamp Availability
+///
+/// Timestamps are populated when available from the underlying format.
+/// Both MCAP and BAG formats include timestamp information, so `log_time`
+/// and `publish_time` will typically be `Some(...)`. Use `has_timestamps()`
+/// to verify both timestamps are present.
+#[derive(Debug, Clone)]
+pub struct DecodedMessageResult {
+    /// The decoded message fields
+    pub message: DecodedMessage,
+    /// Channel information
+    pub channel: ChannelInfo,
+    /// Log timestamp (nanoseconds since Unix epoch, if available)
+    pub log_time: Option<u64>,
+    /// Publish timestamp (nanoseconds since Unix epoch, if available)
+    pub publish_time: Option<u64>,
+    /// Sequence number (if available from the format)
+    pub sequence: Option<u64>,
+}
+
+impl DecodedMessageResult {
+    /// Create a new decoded message result.
+    pub fn new(
+        message: DecodedMessage,
+        channel: ChannelInfo,
+        log_time: Option<u64>,
+        publish_time: Option<u64>,
+    ) -> Self {
+        Self {
+            message,
+            channel,
+            log_time,
+            publish_time,
+            sequence: None,
+        }
+    }
+
+    /// Create with sequence number.
+    pub fn with_sequence(mut self, sequence: u64) -> Self {
+        self.sequence = Some(sequence);
+        self
+    }
+
+    /// Get a reference to the decoded message.
+    ///
+    /// Provides access to the decoded message fields.
+    pub fn message(&self) -> &DecodedMessage {
+        &self.message
+    }
+
+    /// Get the topic name for this message.
+    ///
+    /// Returns the topic name from the channel metadata.
+    pub fn topic(&self) -> &str {
+        &self.channel.topic
+    }
+
+    /// Get the message type name for this message.
+    ///
+    /// Returns the fully-qualified message type (e.g., "std_msgs/String").
+    pub fn message_type(&self) -> &str {
+        &self.channel.message_type
+    }
+
+    /// Get the time range as (log_time, publish_time).
+    ///
+    /// Returns `None` for either timestamp if not available. Note that when
+    /// using the `decoded()` method, both timestamps will always be `None`.
+    /// Use `decode_messages_with_timestamp()` to get actual timestamp values.
+    pub fn times(&self) -> (Option<u64>, Option<u64>) {
+        (self.log_time, self.publish_time)
+    }
+
+    /// Check if both timestamps are available for this result.
+    ///
+    /// Returns `true` only if both `log_time` and `publish_time` are `Some`.
+    /// When using the `decoded()` method, this will always return `false`.
+    /// Use `decode_messages_with_timestamp()` for timestamped messages.
+    pub fn has_timestamps(&self) -> bool {
+        self.log_time.is_some() && self.publish_time.is_some()
+    }
+}
+
 /// Information about a channel/topic in a robotics data file.
 ///
 /// A channel (also called a "topic" in ROS terminology) represents
@@ -392,5 +481,77 @@ mod tests {
         assert_eq!(FileFormat::Mcap.extension(), "mcap");
         assert_eq!(FileFormat::Bag.mime_type(), "application/x-rosbag");
         assert_eq!(format!("{}", FileFormat::Mcap), "MCAP");
+        assert_eq!(format!("{}", FileFormat::Bag), "ROS1 Bag");
+        assert_eq!(format!("{}", FileFormat::Unknown), "Unknown");
+        assert_eq!(FileFormat::Unknown.extension(), "");
+        assert_eq!(FileFormat::Unknown.mime_type(), "application/octet-stream");
+    }
+
+    #[test]
+    fn test_decoded_message_result_partial_timestamps() {
+        use crate::core::DecodedMessage;
+
+        let message = DecodedMessage::new();
+        let channel = ChannelInfo::new(0, "/test", "test_msgs/Test");
+        let result = DecodedMessageResult::new(message, channel, Some(1000), None);
+
+        // Only log_time is Some
+        assert_eq!(result.log_time, Some(1000));
+        assert_eq!(result.publish_time, None);
+        assert!(!result.has_timestamps()); // Requires both
+    }
+
+    #[test]
+    fn test_raw_message_empty() {
+        let msg = RawMessage::new(1, 1000, 900, vec![]);
+        assert!(msg.is_empty());
+        assert_eq!(msg.len(), 0);
+    }
+
+    #[test]
+    fn test_channel_info_builder_methods() {
+        let info = ChannelInfo::new(1, "/test", "std_msgs/String")
+            .with_schema_data(vec![1, 2, 3], "ros2msg")
+            .with_callerid("/node123");
+
+        assert_eq!(info.schema_data, Some(vec![1, 2, 3]));
+        assert_eq!(info.schema_encoding, Some("ros2msg".to_string()));
+        assert_eq!(info.callerid, Some("/node123".to_string()));
+    }
+
+    #[test]
+    fn test_timestamped_decoded_message() {
+        use crate::core::DecodedMessage;
+
+        let message = DecodedMessage::new();
+        let timestamped = TimestampedDecodedMessage::new(message, 1000, 900);
+
+        assert_eq!(timestamped.log_time, 1000);
+        assert_eq!(timestamped.publish_time, 900);
+    }
+
+    #[test]
+    fn test_timestamped_decoded_message_into_message() {
+        use crate::core::DecodedMessage;
+
+        let message = DecodedMessage::new();
+        let timestamped = TimestampedDecodedMessage::new(message, 1000, 900);
+        let _recovered = timestamped.into_message();
+    }
+
+    #[test]
+    fn test_message_metadata_sequence() {
+        let mut meta = MessageMetadata::new(1, 1000, 900, 100, 50);
+        meta.sequence = Some(42);
+
+        assert_eq!(meta.sequence, Some(42));
+    }
+
+    #[test]
+    fn test_file_info_empty_channels() {
+        let info = FileInfo::new("test.mcap", FileFormat::Mcap);
+        assert!(!info.has_topic("/any"));
+        assert!(info.channels_for_topic("/any").is_empty());
+        assert_eq!(info.topic_count(), 0);
     }
 }

@@ -4,18 +4,19 @@
 
 //! Unified writer for robotics data formats.
 //!
-//! This module provides a high-level writer that supports different
-//! formats and writing strategies.
+//! This module provides a high-level writer that automatically detects
+//! the format from the file extension.
 
 pub mod builder;
-pub mod write_strategy;
 
-pub use builder::{WriterBuilder, WriterConfig};
-pub use write_strategy::{AutoWrite, ParallelWrite, SequentialWrite, WriteStrategy};
+pub use builder::{WriteStrategy, WriterBuilder, WriterConfig, WriterConfigBuilder};
 
-use crate::io::metadata::RawMessage;
+use crate::io::detection::detect_format;
+use crate::io::formats::bag::BagFormat;
+use crate::io::formats::mcap::McapFormat;
+use crate::io::metadata::{FileFormat, RawMessage};
 use crate::io::traits::FormatWriter;
-use crate::Result;
+use crate::{CodecError, Result};
 use std::path::Path;
 
 /// Unified writer that delegates to format-specific implementations.
@@ -34,29 +35,95 @@ impl RoboWriter {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use robocodec::io::RoboWriter;
+    /// use robocodec::io::{FormatWriter, RoboWriter};
     ///
-    /// let writer = RoboWriter::create("output.mcap")?;
+    /// let mut writer = RoboWriter::create("output.mcap")?;
+    /// let channel_id = writer.add_channel("/topic", "type", "cdr", None)?;
+    /// writer.finish()?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
-        WriterBuilder::new().path(path).build()
+        Self::create_with_config(path, WriterConfig::default())
     }
 
-    /// Create a writer with a specific strategy.
-    pub fn create_with_strategy<P: AsRef<Path>>(path: P, _strategy: WriteStrategy) -> Result<Self> {
-        // For now, strategy doesn't affect writer creation
-        Self::create(path)
+    /// Create a writer with the specified configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the output file
+    /// * `config` - Writer configuration
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use robocodec::io::{RoboWriter, WriterConfig};
+    ///
+    /// let mut writer = RoboWriter::create_with_config(
+    ///     "output.mcap",
+    ///     WriterConfig::builder().chunk_size(1024 * 1024).build()
+    /// )?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn create_with_config<P: AsRef<Path>>(path: P, config: WriterConfig) -> Result<Self> {
+        let path = path.as_ref();
+
+        // Get parent directory and ensure it exists
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                match parent.try_exists() {
+                    Ok(false) => {
+                        return Err(CodecError::parse(
+                            "RoboWriter",
+                            format!("Parent directory does not exist: {}", parent.display()),
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(CodecError::parse(
+                            "RoboWriter",
+                            format!("Cannot access parent directory {}: {}", parent.display(), e),
+                        ));
+                    }
+                    Ok(true) => {} // Parent exists, continue
+                }
+            }
+        }
+
+        let format = detect_format(path)?;
+
+        let inner: Box<dyn FormatWriter> = match format {
+            FileFormat::Mcap => McapFormat::create_writer(path, &config)?,
+            FileFormat::Bag => BagFormat::create_writer(path, &config)?,
+            FileFormat::Unknown => {
+                // Try to determine from extension
+                let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+                match extension {
+                    "mcap" => McapFormat::create_writer(path, &config)?,
+                    "bag" => BagFormat::create_writer(path, &config)?,
+                    _ => {
+                        return Err(CodecError::parse(
+                            "RoboWriter",
+                            format!(
+                                "Unknown file format. Use .mcap or .bag extension: {}",
+                                path.display()
+                            ),
+                        ))
+                    }
+                }
+            }
+        };
+
+        Ok(Self { inner })
     }
 
-    /// Downcast to the inner writer for format-specific operations.
-    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
-        self.inner.as_any().downcast_ref::<T>()
-    }
-
-    /// Downcast mutably to the inner writer.
-    pub fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
-        self.inner.as_any_mut().downcast_mut::<T>()
+    /// Get the file information as a unified struct.
+    pub fn format(&self) -> FileFormat {
+        // Determine from path extension
+        match self.path().rsplit('.').next() {
+            Some("mcap") => FileFormat::Mcap,
+            Some("bag") => FileFormat::Bag,
+            _ => FileFormat::Unknown,
+        }
     }
 }
 
@@ -183,47 +250,6 @@ mod tests {
         fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
             self
         }
-    }
-
-    #[test]
-    fn test_robowriter_downcast_ref() {
-        let mock = MockWriter::new("test.mcap");
-        let writer = RoboWriter {
-            inner: Box::new(mock),
-        };
-
-        // Should be able to downcast to MockWriter
-        let mock_ref = writer.downcast_ref::<MockWriter>();
-        assert!(mock_ref.is_some());
-        assert_eq!(mock_ref.unwrap().path(), "test.mcap");
-    }
-
-    #[test]
-    fn test_robowriter_downcast_mut() {
-        let mock = MockWriter::new("test.mcap");
-        let mut writer = RoboWriter {
-            inner: Box::new(mock),
-        };
-
-        // Should be able to downcast mutably to MockWriter
-        let mock_mut = writer.downcast_mut::<MockWriter>();
-        assert!(mock_mut.is_some());
-        assert_eq!(mock_mut.unwrap().path(), "test.mcap");
-    }
-
-    #[test]
-    fn test_robowriter_downcast_wrong_type() {
-        let mock = MockWriter::new("test.mcap");
-        let mut writer = RoboWriter {
-            inner: Box::new(mock),
-        };
-
-        // Try to downcast to wrong type should fail
-        let wrong_ref = writer.downcast_ref::<String>();
-        assert!(wrong_ref.is_none());
-
-        let wrong_mut = writer.downcast_mut::<String>();
-        assert!(wrong_mut.is_none());
     }
 
     #[test]

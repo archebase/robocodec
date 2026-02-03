@@ -2,169 +2,141 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Unified reader with automatic strategy selection.
+//! Unified reader with automatic format detection.
 //!
-//! This module provides a high-level reader that automatically selects
-//! the optimal reading strategy (sequential vs parallel) based on file
-//! capabilities and configuration.
-//!
-//! # Strategy Selection
-//!
-//! The reader supports three strategies:
-//! - **Auto**: Automatically choose parallel for MCAP with summary, sequential otherwise
-//! - **Sequential**: Always read sequentially (fallback)
-//! - **Parallel**: Force parallel reading (requires MCAP with summary)
+//! This module provides a high-level reader that automatically detects
+//! the file format (MCAP or ROS1 bag) and provides a unified API for
+//! reading messages.
 //!
 //! # Example
 //!
 //! ```rust,no_run
-//! use robocodec::io::{ReaderBuilder, ReadStrategy};
+//! use robocodec::io::RoboReader;
+//! use robocodec::io::FormatReader;
 //!
-//! // Auto-detect strategy
-//! let reader = ReaderBuilder::new()
-//!     .path("data.mcap")
-//!     .build()?;
+//! // Open with automatic format detection
+//! let reader = RoboReader::open("data.mcap")?;
 //!
-//! // Force specific strategy
-//! let reader = ReaderBuilder::new()
-//!     .path("data.mcap")
-//!     .strategy(ReadStrategy::Parallel)
-//!     .build()?;
+//! // Iterate over decoded messages with metadata
+//! for result in reader.decoded()? {
+//!     let decoded = result?;
+//!     println!("Topic: {}", decoded.topic());
+//!     println!("Data: {:?}", decoded.message);
+//! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-pub mod builder;
-pub mod strategy;
+pub mod config;
 
-pub use builder::{ReaderBuilder, ReaderConfig};
-pub use strategy::{AutoStrategy, ParallelStrategy, ReadStrategy, SequentialStrategy};
+pub use config::{ReaderConfig, ReaderConfigBuilder};
 
-use crate::core::DecodedMessage;
-use crate::io::metadata::ChannelInfo;
-use crate::io::traits::FormatReader;
+use crate::io::detection::detect_format;
+use crate::io::formats::bag::BagFormat;
+use crate::io::formats::mcap::reader::DecodedMessageWithTimestampStream as McapTimestampedStream;
+use crate::io::formats::mcap::McapFormat;
+use crate::io::metadata::{ChannelInfo, DecodedMessageResult, FileFormat};
+use crate::io::traits::{FormatReader, ParallelReader};
 use crate::{CodecError, Result};
 use std::path::Path;
 
-/// Unified decoded message iterator that works for both BAG and MCAP formats.
-///
-/// This enum wraps format-specific iterators to provide a consistent API.
-pub enum DecodedMessageIter<'a> {
-    /// MCAP format decoded message iterator
-    Mcap(
-        crate::io::formats::mcap::reader::DecodedMessageIter<'a>,
-        std::collections::HashMap<u16, ChannelInfo>,
-    ),
-    /// BAG format decoded message iterator
-    Bag(crate::io::formats::bag::BagDecodedMessageIter<'a>),
-}
-
-impl<'a> DecodedMessageIter<'a> {
-    /// Get the channels for this iterator.
-    pub fn channels(&self) -> &std::collections::HashMap<u16, ChannelInfo> {
-        match self {
-            Self::Mcap(_, channels) => channels,
-            Self::Bag(iter) => iter.channels(),
-        }
-    }
-
-    /// Create a proper streaming iterator over decoded messages.
-    pub fn stream(&self) -> Result<DecodedMessageStream<'a>> {
-        match self {
-            Self::Mcap(iter, _) => Ok(DecodedMessageStream::Mcap(iter.stream()?)),
-            Self::Bag(iter) => Ok(DecodedMessageStream::Bag(iter.stream()?)),
-        }
-    }
-}
-
-/// Streaming iterator over decoded messages (unified for BAG and MCAP).
-pub enum DecodedMessageStream<'a> {
-    /// MCAP format decoded message stream
-    Mcap(crate::io::formats::mcap::reader::DecodedMessageStream<'a>),
-    /// BAG format decoded message stream
-    Bag(crate::io::formats::bag::BagDecodedMessageStream<'a>),
-}
-
-impl<'a> Iterator for DecodedMessageStream<'a> {
-    type Item = std::result::Result<(DecodedMessage, ChannelInfo), CodecError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Mcap(ref mut stream) => stream.next(),
-            Self::Bag(ref mut stream) => stream.next(),
-        }
-    }
-}
-
-/// Unified decoded message with timestamp iterator for both BAG and MCAP formats.
-///
-/// This enum wraps format-specific timestamped iterators to provide a consistent API.
-pub enum DecodedMessageWithTimestampIter<'a> {
-    /// MCAP format decoded message with timestamp iterator
-    Mcap(
-        crate::io::formats::mcap::reader::DecodedMessageWithTimestampIter<'a>,
-        std::collections::HashMap<u16, ChannelInfo>,
-    ),
-    /// BAG format decoded message with timestamp iterator
-    Bag(crate::io::formats::bag::BagDecodedMessageWithTimestampIter<'a>),
-}
-
-impl<'a> DecodedMessageWithTimestampIter<'a> {
-    /// Get the channels for this iterator.
-    pub fn channels(&self) -> &std::collections::HashMap<u16, ChannelInfo> {
-        match self {
-            Self::Mcap(_, channels) => channels,
-            Self::Bag(iter) => iter.channels(),
-        }
-    }
-
-    /// Create a proper streaming iterator over decoded messages with timestamps.
-    pub fn stream(&self) -> Result<DecodedMessageWithTimestampStream<'a>> {
-        match self {
-            Self::Mcap(iter, _) => Ok(DecodedMessageWithTimestampStream::Mcap(iter.stream()?)),
-            Self::Bag(iter) => Ok(DecodedMessageWithTimestampStream::Bag(iter.stream()?)),
-        }
-    }
-}
-
-/// Streaming iterator over decoded messages with timestamps (unified for BAG and MCAP).
-pub enum DecodedMessageWithTimestampStream<'a> {
-    /// MCAP format decoded message with timestamp stream
-    Mcap(crate::io::formats::mcap::reader::DecodedMessageWithTimestampStream<'a>),
-    /// BAG format decoded message with timestamp stream
+enum DecodedMessageIterInner<'a> {
+    Mcap(McapTimestampedStream<'a>),
     Bag(crate::io::formats::bag::BagDecodedMessageWithTimestampStream<'a>),
 }
 
-impl<'a> Iterator for DecodedMessageWithTimestampStream<'a> {
-    type Item = std::result::Result<
-        (crate::io::metadata::TimestampedDecodedMessage, ChannelInfo),
-        CodecError,
-    >;
+/// Unified decoded message iterator.
+///
+/// This iterator works across both MCAP and ROS1 bag formats,
+/// providing a consistent interface for iterating over decoded messages.
+/// Timestamps are populated when available from the underlying format.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # use robocodec::io::RoboReader;
+/// # fn test() -> Result<(), Box<dyn std::error::Error>> {
+/// let reader = RoboReader::open("data.mcap")?;
+/// for result in reader.decoded()? {
+///     let decoded = result?;
+///     println!("Topic: {}", decoded.topic());
+///     if decoded.has_timestamps() {
+///         println!("Log time: {:?}", decoded.log_time);
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub struct DecodedMessageIter<'a> {
+    inner: DecodedMessageIterInner<'a>,
+}
+
+// Import alias for cleaner code
+use DecodedMessageIterInner as Inner;
+
+impl<'a> Iterator for DecodedMessageIter<'a> {
+    type Item = Result<DecodedMessageResult>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Mcap(ref mut stream) => stream.next(),
-            Self::Bag(ref mut stream) => stream.next(),
+        match &mut self.inner {
+            Inner::Mcap(stream) => stream.next().map(|result| {
+                result.map(|(msg, ch)| {
+                    let ch_info = ChannelInfo {
+                        id: ch.id,
+                        topic: ch.topic.clone(),
+                        message_type: ch.message_type.clone(),
+                        encoding: ch.encoding.clone(),
+                        schema: ch.schema.clone(),
+                        schema_data: ch.schema_data.clone(),
+                        schema_encoding: ch.schema_encoding.clone(),
+                        message_count: ch.message_count,
+                        callerid: ch.callerid.clone(),
+                    };
+                    DecodedMessageResult {
+                        message: msg.message,
+                        channel: ch_info,
+                        log_time: Some(msg.log_time),
+                        publish_time: Some(msg.publish_time),
+                        sequence: None,
+                    }
+                })
+            }),
+            Inner::Bag(stream) => stream.next().map(|result| {
+                result.map(|(msg, ch)| {
+                    let ch_info = ChannelInfo {
+                        id: ch.id,
+                        topic: ch.topic.clone(),
+                        message_type: ch.message_type.clone(),
+                        encoding: ch.encoding.clone(),
+                        schema: ch.schema.clone(),
+                        schema_data: ch.schema_data.clone(),
+                        schema_encoding: ch.schema_encoding.clone(),
+                        message_count: ch.message_count,
+                        callerid: ch.callerid.clone(),
+                    };
+                    DecodedMessageResult {
+                        message: msg.message,
+                        channel: ch_info,
+                        log_time: Some(msg.log_time),
+                        publish_time: Some(msg.publish_time),
+                        sequence: None,
+                    }
+                })
+            }),
         }
     }
 }
 
-/// Unified reader that delegates to the optimal strategy.
+/// Unified reader for robotics data files.
 ///
-/// This type provides a consistent API regardless of the underlying
-/// strategy (sequential or parallel). Supports auto-detection of
-/// BAG and MCAP formats.
+/// Automatically detects format (MCAP or ROS1 bag) and provides
+/// a consistent API for reading messages and metadata.
 pub struct RoboReader {
     /// The inner format-specific reader
     inner: Box<dyn FormatReader>,
-    /// The strategy being used
-    strategy: ReadStrategy,
 }
 
 impl RoboReader {
-    /// Open a file with automatic strategy detection.
-    ///
-    /// This is the simplest way to open a file - the reader will
-    /// automatically detect the format and choose the optimal strategy.
+    /// Open a file with automatic format detection and default configuration.
     ///
     /// # Arguments
     ///
@@ -179,202 +151,185 @@ impl RoboReader {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        ReaderBuilder::new().path(path).build()
+        Self::open_with_config(path, ReaderConfig::default())
     }
 
-    /// Open a file with a specific strategy.
-    ///
-    /// Use this when you want to force a particular reading strategy
-    /// instead of relying on automatic detection.
+    /// Open a file with the specified configuration.
     ///
     /// # Arguments
     ///
     /// * `path` - Path to the file to open
-    /// * `strategy` - The strategy to use for reading
+    /// * `config` - Reader configuration (currently reserved for future use)
+    ///
+    /// # Note
+    ///
+    /// The `config` parameter is currently accepted but not used.
+    /// The reader automatically selects the optimal reading strategy based on file characteristics.
+    /// This parameter is reserved for future use when explicit strategy control will be implemented.
     ///
     /// # Example
     ///
     /// ```rust,no_run
-    /// use robocodec::io::{RoboReader, ReadStrategy};
+    /// use robocodec::io::{RoboReader, ReaderConfig};
     ///
-    /// let reader = RoboReader::open_with_strategy(
+    /// let reader = RoboReader::open_with_config(
     ///     "data.mcap",
-    ///     ReadStrategy::Sequential
+    ///     ReaderConfig::builder().prefer_parallel(true).build()
     /// )?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn open_with_strategy<P: AsRef<Path>>(path: P, strategy: ReadStrategy) -> Result<Self> {
-        ReaderBuilder::new().path(path).strategy(strategy).build()
-    }
+    pub fn open_with_config<P: AsRef<Path>>(path: P, config: ReaderConfig) -> Result<Self> {
+        // Note: config is currently reserved for future use
+        // The format readers auto-select optimal strategy based on file characteristics
+        let _ = config; // Suppress unused warning while preserving API
+        let path = path.as_ref();
 
-    /// Get the reading strategy being used.
-    pub fn strategy(&self) -> &ReadStrategy {
-        &self.strategy
-    }
-
-    /// Downcast to the inner reader for format-specific operations.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use robocodec::io::RoboReader;
-    /// # use robocodec::io::formats::mcap::McapFormat;
-    /// # fn test() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let reader = RoboReader::open("data.mcap")?;
-    /// if let Some(mcap) = reader.downcast_ref::<McapFormat>() {
-    ///     // Access MCAP-specific methods
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
-        self.inner.as_any().downcast_ref::<T>()
-    }
-
-    /// Downcast mutably to the inner reader.
-    pub fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
-        self.inner.as_any_mut().downcast_mut::<T>()
-    }
-
-    /// Decode messages from the reader.
-    ///
-    /// This method works with both MCAP and BAG formats, automatically
-    /// detecting the format and returning the appropriate iterator.
-    ///
-    /// # Returns
-    ///
-    /// A unified iterator yielding `(DecodedMessage, ChannelInfo)` tuples.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use robocodec::io::RoboReader;
-    /// # fn test() -> Result<(), Box<dyn std::error::Error>> {
-    /// let reader = RoboReader::open("data.mcap")?;
-    /// let decoded_iter = reader.decode_messages()?;
-    /// let mut stream = decoded_iter.stream()?;
-    ///
-    /// while let Some(result) = stream.next() {
-    ///     let (message, channel_info) = result?;
-    ///     println!("Topic: {}", channel_info.topic);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn decode_messages(&self) -> Result<DecodedMessageIter<'_>> {
-        use crate::io::formats::bag::ParallelBagReader;
-        use crate::io::formats::mcap::reader::McapReader;
-
-        // Try MCAP first
-        if let Some(mcap) = self.downcast_ref::<McapReader>() {
-            let mcap_iter = mcap.decode_messages()?;
-            // Convert MCAP's ChannelInfo to unified ChannelInfo
-            let mcap_channels = mcap_iter.channels();
-            let mut channels = std::collections::HashMap::new();
-            for (&id, ch) in mcap_channels {
-                channels.insert(
-                    id,
-                    ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic.clone(),
-                        message_type: ch.message_type.clone(),
-                        encoding: ch.encoding.clone(),
-                        schema: ch.schema.clone(),
-                        schema_data: ch.schema_data.clone(),
-                        schema_encoding: ch.schema_encoding.clone(),
-                        message_count: ch.message_count,
-                        callerid: ch.callerid.clone(),
-                    },
-                );
-            }
-            return Ok(DecodedMessageIter::Mcap(mcap_iter, channels));
-        }
-
-        // Try BAG
-        if let Some(bag) = self.downcast_ref::<ParallelBagReader>() {
-            return Ok(DecodedMessageIter::Bag(bag.decode_messages()?));
-        }
-
-        Err(crate::CodecError::parse(
-            "RoboReader",
-            "decode_messages not supported for this format",
-        ))
-    }
-
-    /// Decode messages with timestamps from the reader.
-    ///
-    /// Similar to `decode_messages` but includes log_time and publish_time
-    /// for each message. Works for both MCAP and BAG formats.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use robocodec::io::RoboReader;
-    /// # fn test() -> Result<(), Box<dyn std::error::Error>> {
-    /// let reader = RoboReader::open("data.mcap")?;
-    /// let timestamped_iter = reader.decode_messages_with_timestamp()?;
-    /// let mut stream = timestamped_iter.stream()?;
-    ///
-    /// while let Some(result) = stream.next() {
-    ///     let (timestamped_msg, channel_info) = result?;
-    ///     println!("Topic: {}, Log Time: {}", channel_info.topic, timestamped_msg.log_time);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn decode_messages_with_timestamp(&self) -> Result<DecodedMessageWithTimestampIter<'_>> {
-        use crate::io::formats::bag::ParallelBagReader;
-        use crate::io::formats::mcap::reader::McapReader;
-
-        // Try MCAP first
-        if let Some(mcap) = self.downcast_ref::<McapReader>() {
-            let mcap_iter = mcap.decode_messages_with_timestamp()?;
-            // Convert MCAP's ChannelInfo to unified ChannelInfo
-            let mcap_channels = mcap_iter.channels();
-            let mut channels = std::collections::HashMap::new();
-            for (&id, ch) in mcap_channels {
-                channels.insert(
-                    id,
-                    ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic.clone(),
-                        message_type: ch.message_type.clone(),
-                        encoding: ch.encoding.clone(),
-                        schema: ch.schema.clone(),
-                        schema_data: ch.schema_data.clone(),
-                        schema_encoding: ch.schema_encoding.clone(),
-                        message_count: ch.message_count,
-                        callerid: ch.callerid.clone(),
-                    },
-                );
-            }
-            return Ok(DecodedMessageWithTimestampIter::Mcap(mcap_iter, channels));
-        }
-
-        // Try BAG
-        if let Some(bag) = self.downcast_ref::<ParallelBagReader>() {
-            return Ok(DecodedMessageWithTimestampIter::Bag(
-                bag.decode_messages_with_timestamp()?,
+        if !path.exists() {
+            return Err(CodecError::parse(
+                "RoboReader",
+                format!("File not found: {}", path.display()),
             ));
         }
 
-        Err(crate::CodecError::parse(
+        let format = detect_format(path)?;
+
+        let inner: Box<dyn FormatReader> = match format {
+            FileFormat::Mcap => Box::new(McapFormat::open(path)?),
+            FileFormat::Bag => Box::new(BagFormat::open(path)?),
+            FileFormat::Unknown => {
+                return Err(CodecError::parse(
+                    "RoboReader",
+                    format!("Unknown file format: {}", path.display()),
+                ))
+            }
+        };
+
+        Ok(Self { inner })
+    }
+
+    /// Iterate over decoded messages with metadata and timestamps.
+    ///
+    /// Returns an iterator that yields `DecodedMessageResult` containing
+    /// the decoded message, channel info, and timestamps (when available
+    /// from the format).
+    ///
+    /// # Timestamps
+    ///
+    /// Timestamps are included when available from the underlying format.
+    /// Both MCAP and BAG formats provide timestamps, so `log_time` and
+    /// `publish_time` will typically be populated. Use `has_timestamps()`
+    /// on the result to check if both timestamps are present.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use robocodec::io::RoboReader;
+    /// # fn test() -> Result<(), Box<dyn std::error::Error>> {
+    /// let reader = RoboReader::open("data.mcap")?;
+    /// for result in reader.decoded()? {
+    ///     let decoded = result?;
+    ///     println!("Topic: {}", decoded.topic());
+    ///     if decoded.has_timestamps() {
+    ///         println!("Log time: {:?}", decoded.log_time);
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn decoded(&self) -> Result<DecodedMessageIter<'_>> {
+        use crate::io::formats::bag::ParallelBagReader;
+        use crate::io::formats::mcap::reader::McapReader;
+
+        // Try MCAP first - use timestamped stream to get timestamps
+        if let Some(mcap) = self.inner.as_any().downcast_ref::<McapReader>() {
+            let mcap_iter = mcap.decode_messages_with_timestamp()?;
+            let mcap_stream = mcap_iter.stream()?;
+            return Ok(DecodedMessageIter {
+                inner: Inner::Mcap(mcap_stream),
+            });
+        }
+
+        // Try BAG - use timestamped stream to get timestamps
+        if let Some(bag) = self.inner.as_any().downcast_ref::<ParallelBagReader>() {
+            let bag_iter = bag.decode_messages_with_timestamp()?;
+            let bag_stream = bag_iter.stream()?;
+            return Ok(DecodedMessageIter {
+                inner: Inner::Bag(bag_stream),
+            });
+        }
+
+        // Include format information in error for better debugging
+        let format_name = match self.inner.format() {
+            crate::io::metadata::FileFormat::Mcap => "MCAP",
+            crate::io::metadata::FileFormat::Bag => "ROS1 Bag",
+            crate::io::metadata::FileFormat::Unknown => "Unknown",
+        };
+        Err(CodecError::parse(
             "RoboReader",
-            "decode_messages_with_timestamp not supported for this format",
+            format!(
+                "decoded() not supported for this format (detected: {})",
+                format_name
+            ),
         ))
+    }
+
+    /// Get the file information as a unified struct.
+    pub fn file_info(&self) -> crate::io::metadata::FileInfo {
+        self.inner.file_info()
+    }
+
+    /// Get the detected file format.
+    pub fn format(&self) -> FileFormat {
+        self.inner.format()
+    }
+
+    /// Check if this reader supports parallel reading.
+    pub fn supports_parallel(&self) -> bool {
+        use crate::io::formats::bag::ParallelBagReader;
+        use crate::io::formats::mcap::parallel::ParallelMcapReader;
+
+        self.inner
+            .as_any()
+            .downcast_ref::<ParallelMcapReader>()
+            .map(ParallelReader::supports_parallel)
+            .or_else(|| {
+                self.inner
+                    .as_any()
+                    .downcast_ref::<ParallelBagReader>()
+                    .map(ParallelReader::supports_parallel)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Get the number of chunks (for progress tracking).
+    pub fn chunk_count(&self) -> usize {
+        use crate::io::formats::bag::ParallelBagReader;
+        use crate::io::formats::mcap::parallel::ParallelMcapReader;
+
+        self.inner
+            .as_any()
+            .downcast_ref::<ParallelMcapReader>()
+            .map(ParallelReader::chunk_count)
+            .or_else(|| {
+                self.inner
+                    .as_any()
+                    .downcast_ref::<ParallelBagReader>()
+                    .map(ParallelReader::chunk_count)
+            })
+            .unwrap_or(0)
     }
 }
 
 impl FormatReader for RoboReader {
-    fn channels(&self) -> &std::collections::HashMap<u16, crate::io::metadata::ChannelInfo> {
+    fn channels(&self) -> &std::collections::HashMap<u16, ChannelInfo> {
         self.inner.channels()
     }
 
-    fn channel_by_topic(&self, topic: &str) -> Option<&crate::io::metadata::ChannelInfo> {
+    fn channel_by_topic(&self, topic: &str) -> Option<&ChannelInfo> {
         self.inner.channel_by_topic(topic)
     }
 
-    fn channels_by_topic(&self, topic: &str) -> Vec<&crate::io::metadata::ChannelInfo> {
+    fn channels_by_topic(&self, topic: &str) -> Vec<&ChannelInfo> {
         self.inner.channels_by_topic(topic)
     }
 
@@ -394,7 +349,7 @@ impl FormatReader for RoboReader {
         self.inner.path()
     }
 
-    fn format(&self) -> crate::io::metadata::FileFormat {
+    fn format(&self) -> FileFormat {
         self.inner.format()
     }
 
@@ -478,68 +433,6 @@ mod tests {
     }
 
     #[test]
-    fn test_unified_reader_creation() {
-        // This is a placeholder test - real tests would use actual files
-        // The structure demonstrates the API usage
-        let _builder = ReaderBuilder::new();
-    }
-
-    #[test]
-    fn test_robo_reader_strategy() {
-        let mock = MockReader::new("test.mcap");
-        let reader = RoboReader {
-            inner: Box::new(mock),
-            strategy: ReadStrategy::Sequential,
-        };
-
-        assert_eq!(reader.strategy(), &ReadStrategy::Sequential);
-    }
-
-    #[test]
-    fn test_robo_reader_downcast_ref() {
-        let mock = MockReader::new("test.mcap");
-        let reader = RoboReader {
-            inner: Box::new(mock),
-            strategy: ReadStrategy::Auto,
-        };
-
-        // Should be able to downcast to MockReader
-        let mock_ref = reader.downcast_ref::<MockReader>();
-        assert!(mock_ref.is_some());
-        assert_eq!(mock_ref.unwrap().path(), "test.mcap");
-    }
-
-    #[test]
-    fn test_robo_reader_downcast_mut() {
-        let mock = MockReader::new("test.mcap");
-        let mut reader = RoboReader {
-            inner: Box::new(mock),
-            strategy: ReadStrategy::Auto,
-        };
-
-        // Should be able to downcast mutably to MockReader
-        let mock_mut = reader.downcast_mut::<MockReader>();
-        assert!(mock_mut.is_some());
-        assert_eq!(mock_mut.unwrap().path(), "test.mcap");
-    }
-
-    #[test]
-    fn test_robo_reader_downcast_wrong_type() {
-        let mock = MockReader::new("test.mcap");
-        let mut reader = RoboReader {
-            inner: Box::new(mock),
-            strategy: ReadStrategy::Auto,
-        };
-
-        // Try to downcast to wrong type should fail
-        let wrong_ref = reader.downcast_ref::<String>();
-        assert!(wrong_ref.is_none());
-
-        let wrong_mut = reader.downcast_mut::<String>();
-        assert!(wrong_mut.is_none());
-    }
-
-    #[test]
     fn test_robo_reader_delegates_to_inner() {
         let mut mock = MockReader::new("test.bag");
         mock.channels
@@ -551,7 +444,6 @@ mod tests {
 
         let reader = RoboReader {
             inner: Box::new(mock),
-            strategy: ReadStrategy::Auto,
         };
 
         // Test delegation
@@ -574,7 +466,6 @@ mod tests {
 
         let reader = RoboReader {
             inner: Box::new(mock),
-            strategy: ReadStrategy::Auto,
         };
 
         let chatter = reader.channel_by_topic("/chatter");
@@ -586,45 +477,182 @@ mod tests {
     }
 
     #[test]
-    fn test_robo_reader_channels_by_topic() {
+    fn test_decoded_message_result() {
+        use crate::core::DecodedMessage;
+
+        let message = DecodedMessage::new();
+        let channel = ChannelInfo::new(0, "/test", "test_msgs/Test");
+        let result = DecodedMessageResult::new(message.clone(), channel, Some(1000), Some(900));
+
+        assert_eq!(result.topic(), "/test");
+        assert_eq!(result.message_type(), "test_msgs/Test");
+        assert_eq!(result.log_time, Some(1000));
+        assert_eq!(result.publish_time, Some(900));
+        assert_eq!(result.times(), (Some(1000), Some(900)));
+        assert!(result.has_timestamps());
+    }
+
+    #[test]
+    fn test_decoded_message_result_without_timestamps() {
+        use crate::core::DecodedMessage;
+
+        let message = DecodedMessage::new();
+        let channel = ChannelInfo::new(0, "/test", "test_msgs/Test");
+        let result = DecodedMessageResult::new(message.clone(), channel, None, None);
+
+        assert_eq!(result.topic(), "/test");
+        assert_eq!(result.log_time, None);
+        assert_eq!(result.publish_time, None);
+        assert!(!result.has_timestamps());
+    }
+
+    #[test]
+    fn test_decoded_message_result_with_sequence() {
+        use crate::core::DecodedMessage;
+
+        let message = DecodedMessage::new();
+        let channel = ChannelInfo::new(0, "/test", "test_msgs/Test");
+        let result =
+            DecodedMessageResult::new(message, channel, Some(1000), Some(900)).with_sequence(42);
+
+        assert_eq!(result.sequence, Some(42));
+    }
+
+    #[test]
+    fn test_open_file_not_found() {
+        let result = RoboReader::open("/nonexistent/path/to/file.mcap");
+        assert!(result.is_err());
+        match result {
+            Err(err) => {
+                let err_msg = format!("{}", err);
+                assert!(err_msg.contains("File not found"));
+                assert!(err_msg.contains("/nonexistent/path/to/file.mcap"));
+            }
+            Ok(_) => panic!("Expected error for non-existent file"),
+        }
+    }
+
+    #[test]
+    fn test_open_unknown_format() {
+        // Create a temp file with unknown extension
+        let temp_path = std::env::temp_dir().join("test_unknown.xyz123");
+        std::fs::write(&temp_path, b"invalid content").unwrap();
+
+        let result = RoboReader::open(&temp_path);
+        assert!(result.is_err());
+        match result {
+            Err(err) => {
+                let err_msg = format!("{}", err);
+                assert!(err_msg.contains("Unknown file format"));
+            }
+            Ok(_) => panic!("Expected error for unknown format"),
+        }
+
+        // Cleanup
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_open_with_config_delegates() {
+        let temp_path = std::env::temp_dir().join("test_config.mcap");
+        std::fs::write(&temp_path, b"").unwrap();
+
+        // Just verify it accepts the config parameter
+        let config = ReaderConfig::default();
+        let result = RoboReader::open_with_config(&temp_path, config);
+        // Will fail to parse as valid MCAP but should accept the config param
+        assert!(result.is_err());
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_decoded_not_supported_for_unknown_format() {
+        // MockReader has Unknown format, so decoded() should fail
+        let mock = MockReader::new("test.unknown");
+        let reader = RoboReader {
+            inner: Box::new(mock),
+        };
+
+        let result = reader.decoded();
+        assert!(result.is_err());
+        match result {
+            Err(err) => {
+                let err_msg = format!("{}", err);
+                assert!(err_msg.contains("decoded() not supported for this format"));
+                assert!(err_msg.contains("Unknown"));
+            }
+            Ok(_) => panic!("Expected error for unsupported format"),
+        }
+    }
+
+    #[test]
+    fn test_channels_by_topic() {
         let mut mock = MockReader::new("test.mcap");
         mock.channels
             .insert(0, ChannelInfo::new(0, "/chatter", "std_msgs/String"));
         mock.channels
-            .insert(1, ChannelInfo::new(1, "/chatter", "std_msgs/String"));
+            .insert(1, ChannelInfo::new(1, "/chatter", "std_msgs/String")); // Same topic, different channel
 
         let reader = RoboReader {
             inner: Box::new(mock),
-            strategy: ReadStrategy::Auto,
         };
 
         let channels = reader.channels_by_topic("/chatter");
         assert_eq!(channels.len(), 2);
+
+        let empty = reader.channels_by_topic("/nonexistent");
+        assert!(empty.is_empty());
     }
 
     #[test]
-    fn test_decode_messages_not_supported() {
+    fn test_supports_parallel_false_for_mock() {
         let mock = MockReader::new("test.bag");
         let reader = RoboReader {
             inner: Box::new(mock),
-            strategy: ReadStrategy::Auto,
         };
 
-        // Should return error since MockReader doesn't implement McapReader
-        let result = reader.decode_messages();
-        assert!(result.is_err());
+        // MockReader doesn't implement ParallelReader, so should return false
+        assert!(!reader.supports_parallel());
     }
 
     #[test]
-    fn test_decode_messages_with_timestamp_not_supported() {
+    fn test_chunk_count_zero_for_mock() {
         let mock = MockReader::new("test.bag");
         let reader = RoboReader {
             inner: Box::new(mock),
-            strategy: ReadStrategy::Auto,
         };
 
-        // Should return error since MockReader doesn't implement McapReader
-        let result = reader.decode_messages_with_timestamp();
-        assert!(result.is_err());
+        // MockReader doesn't implement ParallelReader, so should return 0
+        assert_eq!(reader.chunk_count(), 0);
+    }
+
+    #[test]
+    fn test_file_info_delegates_to_inner() {
+        let mut mock = MockReader::new("test.mcap");
+        mock.message_count = 42;
+        mock.file_size = 12345;
+        mock.start_time = Some(100);
+        mock.end_time = Some(200);
+
+        let reader = RoboReader {
+            inner: Box::new(mock),
+        };
+
+        let info = reader.file_info();
+        assert_eq!(info.message_count, 42);
+        assert_eq!(info.size, 12345);
+        assert_eq!(info.start_time, 100);
+        assert_eq!(info.end_time, 200);
+    }
+
+    #[test]
+    fn test_format_delegates_to_inner() {
+        let mock = MockReader::new("test.bag");
+        let reader = RoboReader {
+            inner: Box::new(mock),
+        };
+
+        assert_eq!(reader.format(), FileFormat::Unknown);
     }
 }
