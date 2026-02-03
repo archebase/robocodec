@@ -199,12 +199,12 @@ fn test_decode_error_includes_context() {
     let timestamped_iter = reader
         .decode_messages_with_timestamp()
         .expect("Failed to get iterator");
-    let mut stream = timestamped_iter.stream().expect("Failed to create stream");
+    let stream = timestamped_iter.stream().expect("Failed to create stream");
 
     // Read messages and check error format when errors occur
     let mut found_error = false;
 
-    while let Some(result) = stream.next() {
+    for result in stream {
         match result {
             Ok(_) => {}
             Err(e) => {
