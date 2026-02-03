@@ -410,9 +410,7 @@ impl StreamingMcapParser {
                 let schema_data = schema.map(|s| s.data.clone());
                 let schema_encoding = schema.map(|s| s.encoding.clone());
 
-                let message_type = schema
-                    .map(|s| s.name.clone())
-                    .unwrap_or_else(|| "".to_string());
+                let message_type = schema.map(|s| s.name.clone()).unwrap_or_default();
 
                 (
                     *id,
@@ -456,6 +454,7 @@ impl Default for StreamingMcapParser {
 
 /// Parser state for streaming MCAP parsing.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::enum_variant_names)]
 enum ParserState {
     /// Waiting for magic bytes
     NeedMagic,

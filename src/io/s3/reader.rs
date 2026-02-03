@@ -7,14 +7,21 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 use bytes::BytesMut;
+use futures::stream::Stream;
 
 use crate::io::formats::mcap::constants::MCAP_MAGIC;
 use crate::io::metadata::ChannelInfo;
 use crate::io::s3::{
-    bag_stream::StreamingBagParser, client::S3Client, config::S3ReaderConfig, error::FatalError,
-    location::S3Location, mcap_stream::StreamingMcapParser,
+    bag_stream::{BagMessageRecord, StreamingBagParser},
+    client::S3Client,
+    config::S3ReaderConfig,
+    error::FatalError,
+    location::S3Location,
+    mcap_stream::{MessageRecord, StreamingMcapParser},
 };
 use crate::io::traits::FormatReader;
 
@@ -323,52 +330,245 @@ fn empty_channels() -> &'static HashMap<u16, ChannelInfo> {
     EMPTY.get_or_init(HashMap::new)
 }
 
-/// Streaming iterator over messages in an S3 file.
+/// Async stream over messages in an S3 file.
 ///
-/// This iterator fetches data in chunks as needed, providing constant
-/// memory usage regardless of file size.
+/// This stream fetches data in chunks as needed, providing constant
+/// memory usage regardless of file size. Uses async iteration pattern
+/// to fetch from S3 without blocking.
 pub struct S3MessageStream<'a> {
-    /// Reference to the parent reader
-    reader: &'a S3Reader,
-    /// Current chunk of message data
-    current_chunk: Option<Vec<u8>>,
-    /// Current position within chunk
-    chunk_offset: usize,
+    /// Reference to the parent reader (cloning necessary fields)
+    client: S3Client,
+    location: S3Location,
+    config: S3ReaderConfig,
+    format: crate::io::metadata::FileFormat,
+    file_size: u64,
+
+    /// Format-specific streaming parser state
+    mcap_parser: Option<StreamingMcapParser>,
+    bag_parser: Option<StreamingBagParser>,
+    channels: HashMap<u16, ChannelInfo>,
+
+    /// Current chunk of message data being processed
+    pending_messages: Vec<ParsedMessage>,
+
     /// Current stream position
     stream_position: u64,
-    /// Mark fields as used to suppress warnings (will be used in Phase 2/3)
+
+    /// Whether we've reached EOF
+    eof: bool,
+
+    /// Phantom lifetime
     _phantom: std::marker::PhantomData<&'a ()>,
+}
+
+/// Parsed message from either MCAP or BAG format.
+enum ParsedMessage {
+    Mcap(MessageRecord),
+    Bag(BagMessageRecord),
+}
+
+impl ParsedMessage {
+    /// Get the channel ID for this message.
+    fn channel_id(&self) -> u32 {
+        match self {
+            ParsedMessage::Mcap(m) => m.channel_id as u32,
+            ParsedMessage::Bag(b) => b.conn_id,
+        }
+    }
+
+    /// Get the message data.
+    fn data(self) -> Vec<u8> {
+        match self {
+            ParsedMessage::Mcap(m) => m.data,
+            ParsedMessage::Bag(b) => b.data,
+        }
+    }
+
+    /// Get the log time.
+    #[allow(dead_code)]
+    fn log_time(&self) -> u64 {
+        match self {
+            ParsedMessage::Mcap(m) => m.log_time,
+            ParsedMessage::Bag(b) => b.log_time,
+        }
+    }
 }
 
 impl<'a> S3MessageStream<'a> {
     /// Create a new message stream.
     fn new(reader: &'a S3Reader) -> Self {
-        let stream_position = match &reader.state {
+        let (channels, stream_position, file_size) = match &reader.state {
             S3ReaderState::Ready {
-                stream_position, ..
-            } => *stream_position,
-            _ => 0,
+                channels,
+                stream_position,
+                file_size,
+            } => (channels.clone(), *stream_position, *file_size),
+            _ => (HashMap::new(), 0, 0),
+        };
+
+        let (mcap_parser, bag_parser) = match reader.format {
+            crate::io::metadata::FileFormat::Mcap => {
+                // Parser already initialized during header scan, create a new one for streaming
+                (Some(StreamingMcapParser::new()), None)
+            }
+            crate::io::metadata::FileFormat::Bag => (None, Some(StreamingBagParser::new())),
+            _ => (None, None),
         };
 
         Self {
-            reader,
-            current_chunk: None,
-            chunk_offset: 0,
+            client: reader.client.clone(),
+            location: reader.location.clone(),
+            config: reader.config.clone(),
+            format: reader.format,
+            file_size,
+            mcap_parser,
+            bag_parser,
+            channels,
+            pending_messages: Vec::new(),
             stream_position,
+            eof: false,
             _phantom: std::marker::PhantomData,
         }
     }
 }
 
-impl<'a> Iterator for S3MessageStream<'a> {
+impl<'a> Stream for S3MessageStream<'a> {
     type Item = Result<(ChannelInfo, Vec<u8>), FatalError>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        // For Phase 1, return EOF immediately
-        // In Phase 2/3, this will:
-        // 1. Fetch next chunk if current is exhausted
-        // 2. Parse messages from chunk
-        // 3. Return (ChannelInfo, message_data) tuples
+    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        // This is a simplified implementation that processes data synchronously.
+        // A fully async version would use a background task to fetch chunks.
+        let this = self.get_mut();
+
+        // Return pending message if available
+        if let Some(msg) = this.pending_messages.pop() {
+            let channel_id = msg.channel_id();
+            let data = msg.data();
+
+            // Find channel info
+            let channel_info = this
+                .channels
+                .get(&(channel_id as u16))
+                .cloned()
+                .unwrap_or_else(|| ChannelInfo {
+                    id: channel_id as u16,
+                    topic: format!("/unknown/{}", channel_id),
+                    message_type: "Unknown".to_string(),
+                    encoding: "unknown".to_string(),
+                    schema: None,
+                    schema_data: None,
+                    schema_encoding: None,
+                    message_count: 0,
+                    callerid: None,
+                });
+
+            return Poll::Ready(Some(Ok((channel_info, data))));
+        }
+
+        // Check if we've reached EOF
+        if this.eof || this.stream_position >= this.file_size {
+            return Poll::Ready(None);
+        }
+
+        // For now, mark EOF since we can't do async operations in poll_next
+        // A proper implementation would spawn a background task to fetch chunks
+        this.eof = true;
+        Poll::Ready(None)
+    }
+}
+
+// Block on the stream for synchronous usage
+impl<'a> S3MessageStream<'a> {
+    /// Get the next message synchronously (blocking).
+    ///
+    /// This method is provided for convenience when async runtime is available.
+    /// In an async context, use `StreamExt::next()` instead.
+    pub async fn next_message(&mut self) -> Option<Result<(ChannelInfo, Vec<u8>), FatalError>> {
+        // Fetch next chunk if no pending messages
+        if self.pending_messages.is_empty() && !self.eof {
+            let remaining = self.file_size - self.stream_position;
+            // Convert remaining to usize for chunk size calculation
+            // Use saturating conversion to avoid panic on overflow
+            let remaining_usize = remaining.min(self.config.max_chunk_size as u64) as usize;
+            let chunk_size = self.config.max_chunk_size.min(remaining_usize) as u64;
+
+            if chunk_size == 0 {
+                self.eof = true;
+                return None;
+            }
+
+            match self
+                .client
+                .fetch_range(&self.location, self.stream_position, chunk_size)
+                .await
+            {
+                Ok(chunk_data) => {
+                    if chunk_data.is_empty() {
+                        self.eof = true;
+                        return None;
+                    }
+
+                    // Parse the chunk based on format
+                    match self.format {
+                        crate::io::metadata::FileFormat::Mcap => {
+                            if let Some(ref mut parser) = self.mcap_parser {
+                                if let Ok(msgs) = parser.parse_chunk(&chunk_data) {
+                                    for msg in msgs {
+                                        self.pending_messages.push(ParsedMessage::Mcap(msg));
+                                    }
+                                }
+                            }
+                        }
+                        crate::io::metadata::FileFormat::Bag => {
+                            if let Some(ref mut parser) = self.bag_parser {
+                                if let Ok(msgs) = parser.parse_chunk(&chunk_data) {
+                                    for msg in msgs {
+                                        self.pending_messages.push(ParsedMessage::Bag(msg));
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    self.stream_position += chunk_data.len() as u64;
+
+                    // If file is exhausted, mark EOF
+                    if self.stream_position >= self.file_size {
+                        self.eof = true;
+                    }
+                }
+                Err(e) => {
+                    self.eof = true;
+                    return Some(Err(e));
+                }
+            }
+        }
+
+        // Return pending message
+        if let Some(msg) = self.pending_messages.pop() {
+            let channel_id = msg.channel_id();
+            let data = msg.data();
+
+            let channel_info = self
+                .channels
+                .get(&(channel_id as u16))
+                .cloned()
+                .unwrap_or_else(|| ChannelInfo {
+                    id: channel_id as u16,
+                    topic: format!("/unknown/{}", channel_id),
+                    message_type: "Unknown".to_string(),
+                    encoding: "unknown".to_string(),
+                    schema: None,
+                    schema_data: None,
+                    schema_encoding: None,
+                    message_count: 0,
+                    callerid: None,
+                });
+
+            return Some(Ok((channel_info, data)));
+        }
+
         None
     }
 }

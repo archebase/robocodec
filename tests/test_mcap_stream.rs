@@ -4,8 +4,10 @@
 
 //! Integration tests for MCAP streaming parser.
 
+#[cfg(feature = "s3")]
 use robocodec::io::s3::{FatalError, StreamingMcapParser, MCAP_MAGIC};
 
+#[cfg(feature = "s3")]
 #[test]
 fn test_mcap_stream_parser_new() {
     let parser = StreamingMcapParser::new();
@@ -14,12 +16,14 @@ fn test_mcap_stream_parser_new() {
     assert_eq!(parser.message_count(), 0);
 }
 
+#[cfg(feature = "s3")]
 #[test]
 fn test_mcap_stream_parser_default() {
     let parser = StreamingMcapParser::default();
     assert_eq!(parser.message_count(), 0);
 }
 
+#[cfg(feature = "s3")]
 #[test]
 fn test_mcap_stream_parse_magic() {
     let mut parser = StreamingMcapParser::new();
@@ -35,6 +39,7 @@ fn test_mcap_stream_parse_magic() {
     assert!(parser.is_initialized());
 }
 
+#[cfg(feature = "s3")]
 #[test]
 fn test_mcap_stream_parse_invalid_magic() {
     let mut parser = StreamingMcapParser::new();
@@ -49,6 +54,7 @@ fn test_mcap_stream_parse_invalid_magic() {
     }
 }
 
+#[cfg(feature = "s3")]
 #[test]
 fn test_mcap_stream_constants() {
     assert_eq!(MCAP_MAGIC.len(), 8);
@@ -62,12 +68,14 @@ fn test_mcap_stream_constants() {
     assert_eq!(MCAP_MAGIC[7], 0x0A);
 }
 
+#[cfg(feature = "s3")]
 #[test]
 fn test_mcap_stream_channels_empty() {
     let parser = StreamingMcapParser::new();
     assert!(parser.channels().is_empty());
 }
 
+#[cfg(feature = "s3")]
 #[test]
 fn test_mcap_stream_parse_chunk_incomplete() {
     let mut parser = StreamingMcapParser::new();

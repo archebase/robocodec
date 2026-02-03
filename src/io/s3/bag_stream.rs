@@ -112,8 +112,6 @@ pub struct StreamingBagParser {
     message_count: u64,
     /// Position within the buffer
     buffer_pos: usize,
-    /// Current record being parsed
-    current_header: Option<BagRecordHeader>,
     /// Version string parsed from magic
     version: Option<String>,
 }
@@ -128,7 +126,6 @@ impl StreamingBagParser {
             remaining: 0,
             message_count: 0,
             buffer_pos: 0,
-            current_header: None,
             version: None,
         }
     }
@@ -555,6 +552,7 @@ impl Default for StreamingBagParser {
 
 /// Parser state for streaming BAG parsing.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::enum_variant_names)]
 enum ParserState {
     /// Waiting for magic bytes
     NeedMagic,

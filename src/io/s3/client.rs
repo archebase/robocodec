@@ -14,6 +14,7 @@ use bytes::Bytes;
 ///
 /// Wraps a reqwest::Client with S3-specific configuration for
 /// streaming operations with HTTP Range requests.
+#[derive(Clone)]
 pub struct S3Client {
     /// The underlying HTTP client
     client: reqwest::Client,
