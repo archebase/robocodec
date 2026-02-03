@@ -169,6 +169,62 @@ impl RoboReader {
         ReaderBuilder::new().path(path).strategy(strategy).build()
     }
 
+    /// Open a file from a URL string.
+    ///
+    /// This method supports both local file paths and S3 URLs (s3://...).
+    /// The URL format is automatically detected and the appropriate reader is created.
+    ///
+    /// For S3 URLs, this method will block on async initialization using
+    /// the current tokio runtime. If no tokio runtime is active, a new runtime
+    /// will be created for this operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - URL string to open (local path or s3://bucket/key format)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use robocodec::io::RoboReader;
+    /// #
+    /// # #[tokio::main]
+    /// # async fn try_main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Local file (works without tokio)
+    /// let reader = RoboReader::open("data.mcap")?;
+    ///
+    /// // S3 object (requires tokio runtime)
+    /// let reader = RoboReader::open_url("s3://my-bucket/path/to/data.mcap")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "s3")]
+    pub fn open_url(url: &str) -> Result<Self> {
+        use tokio::runtime::Runtime;
+
+        // Check if this is an S3 URL
+        if let Ok(location) = crate::io::s3::S3Location::from_s3_url(url) {
+            // Use S3Reader for s3:// URLs
+            // Block on the async initialization
+            let rt = Runtime::new().map_err(|e| {
+                crate::CodecError::parse(
+                    "RoboReader::open_url",
+                    format!("Failed to create tokio runtime: {}", e),
+                )
+            })?;
+
+            let reader = rt.block_on(async { crate::io::s3::S3Reader::open(location).await })?;
+
+            return Ok(Self {
+                inner: Box::new(reader),
+                strategy: ReadStrategy::Sequential, // S3 reading is inherently streaming
+            });
+        }
+
+        // Fall back to local file path
+        let path = std::path::PathBuf::from(url);
+        Self::open(&path)
+    }
+
     /// Get the reading strategy being used.
     pub fn strategy(&self) -> &ReadStrategy {
         &self.strategy

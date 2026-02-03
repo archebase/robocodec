@@ -323,6 +323,15 @@ impl fmt::Display for FatalError {
     }
 }
 
+impl From<FatalError> for crate::CodecError {
+    fn from(err: FatalError) -> Self {
+        crate::CodecError::EncodeError {
+            codec: "S3".to_string(),
+            message: err.to_string(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
