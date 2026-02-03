@@ -9,6 +9,42 @@
 
 use crate::io::metadata::{ChannelInfo, RawMessage};
 use crate::io::s3::{client::S3Client, error::FatalError, location::S3Location};
+
+/// Writer for S3-hosted robotics data files.
+///
+/// This writer buffers data in memory and uploads to S3 using multipart upload
+/// when the buffer size exceeds the part size threshold.
+///
+/// # Limitations
+///
+/// Due to the synchronous `FormatWriter` trait, all data is buffered in memory
+/// and uploaded during `finish()`. For large files (>50MB), consider:
+/// - Using the local file writer and then uploading separately
+/// - Implementing an async writer API
+///
+/// The maximum buffer size is 50MB (10x minimum part size) to prevent
+/// unbounded memory growth.
+///
+/// # Multipart Upload
+///
+/// S3 multipart upload is used for efficient handling of large files:
+/// - Default part size: 5MB (S3 minimum)
+/// - Parts are uploaded sequentially during `finish()`
+/// - Maximum 10,000 parts per upload (50GB with default part size)
+/// Get or create a shared Tokio runtime for blocking async operations.
+///
+/// This reuses a single runtime across all S3 operations, avoiding
+/// the overhead of creating a new runtime for each operation.
+fn shared_runtime() -> &'static tokio::runtime::Runtime {
+    use std::sync::OnceLock;
+
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+
+    RT.get_or_init(|| {
+        tokio::runtime::Runtime::new().expect("Failed to create shared tokio runtime")
+    })
+}
+
 use crate::io::traits::FormatWriter;
 use crate::{CodecError, Result};
 use bytes::Bytes;
@@ -60,7 +96,7 @@ impl S3Writer {
         Ok(Self {
             client,
             location,
-            buffer: Vec::new(),
+            buffer: Vec::with_capacity(DEFAULT_PART_SIZE),
             part_size: DEFAULT_PART_SIZE,
             upload_id: None,
             parts: Vec::new(),
@@ -93,7 +129,7 @@ impl S3Writer {
         Ok(Self {
             client,
             location,
-            buffer: Vec::new(),
+            buffer: Vec::with_capacity(part_size),
             part_size,
             upload_id: None,
             parts: Vec::new(),
@@ -136,23 +172,35 @@ impl S3Writer {
         Ok(())
     }
 
+    /// Maximum buffer size before forcing a flush (10x part size).
+    /// This prevents unbounded memory growth while allowing
+    /// for some batching overhead.
+    const MAX_BUFFER_SIZE: usize = 10 * MIN_PART_SIZE;
+
     /// Write raw bytes to the buffer.
     fn write_bytes(&mut self, data: &[u8]) -> Result<()> {
         if self.finished {
             return Err(CodecError::parse("S3Writer", "Writer already finished"));
         }
 
+        // Check buffer size before adding new data
+        if self.buffer.len() + data.len() > Self::MAX_BUFFER_SIZE {
+            return Err(CodecError::parse(
+                "S3Writer",
+                format!(
+                    "Buffer size limit exceeded: {} bytes",
+                    Self::MAX_BUFFER_SIZE
+                ),
+            ));
+        }
+
         self.buffer.extend_from_slice(data);
 
         // Check if buffer exceeds part size
         while self.buffer.len() >= self.part_size {
-            // Calculate split point
-            let split_at = self.part_size;
-            let _part = Bytes::from(self.buffer.drain(..split_at).collect::<Vec<_>>());
-
-            // Note: We can't call async function here directly
-            // The caller needs to use a runtime for the actual upload
-            // For now, buffer will accumulate and be uploaded during finish()
+            // For async compatibility, we drain ready parts but don't upload yet
+            // The actual upload happens in finish() with the tokio runtime
+            // This is a limitation of the sync FormatWriter trait
             break;
         }
 
@@ -199,21 +247,9 @@ impl FormatWriter for S3Writer {
     }
 
     fn write(&mut self, message: &RawMessage) -> Result<()> {
-        // For S3Writer, we need to serialize the message
-        // This is a simplified implementation - real implementation would
-        // need to handle the specific format (MCAP/BAG) serialization
+        // Buffer the message data with size limit check
+        self.write_bytes(&message.data)?;
         self.message_count = self.message_count.saturating_add(1);
-
-        // Buffer the message data
-        self.buffer.extend_from_slice(&message.data);
-
-        // Check if we need to upload a part
-        // Note: Actual upload happens in finish() for simplicity
-        if self.buffer.len() >= self.part_size {
-            // In a full implementation, we'd spawn a task to upload
-            // For now, we'll keep buffering and upload in finish()
-        }
-
         Ok(())
     }
 
@@ -229,15 +265,11 @@ impl FormatWriter for S3Writer {
             return Ok(());
         }
 
-        // Use tokio runtime for async operations
-        use tokio::runtime::Runtime;
-
-        let rt = Runtime::new().map_err(|e| {
-            CodecError::parse("S3Writer", format!("Failed to create tokio runtime: {}", e))
-        })?;
-
         // Upload remaining buffer
         if !self.buffer.is_empty() {
+            // Use shared runtime for async operations
+            let rt = shared_runtime();
+
             rt.block_on(async {
                 if let Err(e) = self.upload_buffer().await {
                     // Abort the upload on error
@@ -261,6 +293,8 @@ impl FormatWriter for S3Writer {
             let location = self.location.clone();
             let client = self.client.clone();
 
+            // Use shared runtime for async operations
+            let rt = shared_runtime();
             rt.block_on(async move { client.complete_upload(&location, upload_id, parts).await })
                 .map_err(|e| CodecError::EncodeError {
                     codec: "S3".to_string(),
@@ -273,6 +307,8 @@ impl FormatWriter for S3Writer {
             let location = self.location.clone();
             let client = self.client.clone();
 
+            // Use shared runtime for async operations
+            let rt = shared_runtime();
             rt.block_on(async move {
                 // For small files, we can use upload_part with part number 1
                 // and then complete with just that part

@@ -4,10 +4,11 @@
 
 //! Configuration for S3 streaming operations.
 
+use std::fmt;
 use std::time::Duration;
 
 /// AWS credentials for S3 access.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AwsCredentials {
     /// AWS access key ID
     pub(crate) access_key_id: String,
@@ -15,6 +16,20 @@ pub struct AwsCredentials {
     pub(crate) secret_access_key: String,
     /// AWS session token (for temporary credentials)
     pub(crate) session_token: Option<String>,
+}
+
+// Custom Debug that redacts sensitive information
+impl fmt::Debug for AwsCredentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AwsCredentials")
+            .field("access_key_id", &"<redacted>")
+            .field("secret_access_key", &"<redacted>")
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 impl AwsCredentials {

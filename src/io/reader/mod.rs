@@ -43,6 +43,19 @@ use crate::core::DecodedMessage;
 use crate::io::metadata::ChannelInfo;
 use crate::io::traits::FormatReader;
 use crate::{CodecError, Result};
+use tokio::runtime::Runtime;
+
+/// Get or create a shared Tokio runtime for blocking async operations.
+///
+/// This reuses a single runtime across all S3 operations, avoiding
+/// the overhead of creating a new runtime for each open/write.
+fn shared_runtime() -> &'static Runtime {
+    use std::sync::OnceLock;
+
+    static RT: OnceLock<Runtime> = OnceLock::new();
+
+    RT.get_or_init(|| Runtime::new().expect("Failed to create tokio runtime"))
+}
 
 /// Unified decoded message iterator that works for both BAG and MCAP formats.
 ///
@@ -183,17 +196,10 @@ impl RoboReader {
         // Check if this is an S3 URL
         #[cfg(feature = "s3")]
         {
-            use tokio::runtime::Runtime;
-
             if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
                 // Use S3Reader for s3:// URLs
-                // Block on the async initialization
-                let rt = Runtime::new().map_err(|e| {
-                    crate::CodecError::parse(
-                        "RoboReader::open",
-                        format!("Failed to create tokio runtime: {}", e),
-                    )
-                })?;
+                // Block on the async initialization using shared runtime
+                let rt = shared_runtime();
 
                 let reader =
                     rt.block_on(async { crate::io::s3::S3Reader::open(location).await })?;

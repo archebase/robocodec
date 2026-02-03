@@ -5,6 +5,8 @@
 //! S3 location descriptor.
 
 use std::fmt;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use url::Url;
 
 /// S3 location descriptor.
 ///
@@ -19,6 +21,113 @@ pub struct S3Location {
     region: Option<String>,
     /// Optional S3 endpoint URL (for MinIO/R2 compatibility)
     endpoint: Option<String>,
+}
+
+/// Validate an S3 bucket name according to AWS naming rules.
+///
+/// Bucket names must:
+/// - Be 3-63 characters long
+/// - Contain only lowercase letters, numbers, dots, and hyphens
+/// - Start and end with a letter or number
+/// - Not contain two adjacent dots
+/// - Not be formatted as an IP address (e.g., 192.168.1.1)
+fn validate_bucket_name(bucket: &str) -> Result<(), S3UrlParseError> {
+    let len = bucket.len();
+
+    // Length check
+    if len < 3 || len > 63 {
+        return Err(S3UrlParseError::InvalidBucketName);
+    }
+
+    // Character set check
+    if !bucket
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+    {
+        return Err(S3UrlParseError::InvalidBucketName);
+    }
+
+    // Must start and end with letter/number
+    if bucket
+        .bytes()
+        .next()
+        .map(|b| !b.is_ascii_alphanumeric())
+        .unwrap_or(false)
+        || bucket
+            .bytes()
+            .last()
+            .map(|b| !b.is_ascii_alphanumeric())
+            .unwrap_or(false)
+    {
+        return Err(S3UrlParseError::InvalidBucketName);
+    }
+
+    // No two adjacent dots
+    if bucket.contains("..") {
+        return Err(S3UrlParseError::InvalidBucketName);
+    }
+
+    // Not an IP address format
+    if bucket.parse::<Ipv4Addr>().is_ok() || bucket.parse::<Ipv6Addr>().is_ok() {
+        return Err(S3UrlParseError::InvalidBucketName);
+    }
+
+    Ok(())
+}
+
+/// Validate an endpoint URL to prevent SSRF attacks.
+///
+/// Ensures:
+/// - URL is valid and uses HTTPS
+/// - Host is not a private/internal IP address
+/// - Host is not localhost
+fn validate_endpoint(endpoint: &str) -> Result<(), S3UrlParseError> {
+    let url = Url::parse(endpoint).map_err(|_| S3UrlParseError::InvalidEndpoint)?;
+
+    // Must be HTTPS
+    if url.scheme() != "https" {
+        return Err(S3UrlParseError::EndpointNotHttps);
+    }
+
+    // Check host against blocked patterns
+    if let Some(host) = url.host_str() {
+        // Block localhost variants
+        if host == "localhost" || host.ends_with(".localhost") {
+            return Err(S3UrlParseError::BlockedEndpoint);
+        }
+
+        // Block common internal/private IP patterns
+        if let Ok(addr) = host.parse::<IpAddr>() {
+            match addr {
+                // Block private IPv4 ranges
+                IpAddr::V4(v4)
+                    if {
+                        v4.is_loopback()
+                            || v4.is_private()
+                            || v4.is_link_local()
+                            || v4.is_unspecified()
+                    } =>
+                {
+                    return Err(S3UrlParseError::BlockedEndpoint);
+                }
+                // Block loopback IPv6
+                IpAddr::V6(v6) if v6.is_loopback() || v6.is_unspecified() => {
+                    return Err(S3UrlParseError::BlockedEndpoint);
+                }
+                _ => {}
+            }
+        }
+
+        // Block metadata service endpoints (AWS and cloud provider metadata services)
+        if host.contains("169.254.169.254")
+            || host.contains("100.100.100.200")
+            || host.contains("metadata.google.internal")
+        {
+            return Err(S3UrlParseError::BlockedEndpoint);
+        }
+    }
+
+    Ok(())
 }
 
 impl S3Location {
@@ -37,8 +146,11 @@ impl S3Location {
     /// let location = S3Location::new("my-bucket", "path/to/file.mcap");
     /// ```
     pub fn new(bucket: impl Into<String>, key: impl Into<String>) -> Self {
+        let bucket = bucket.into();
+        // Validate bucket name
+        validate_bucket_name(&bucket).unwrap();
         Self {
-            bucket: bucket.into(),
+            bucket,
             key: key.into(),
             region: None,
             endpoint: None,
@@ -64,6 +176,18 @@ impl S3Location {
     ///
     /// This is useful for S3-compatible services like MinIO or Cloudflare R2.
     ///
+    /// # Security
+    ///
+    /// The endpoint must use HTTPS and cannot point to:
+    /// - Private IP addresses (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+    /// - Loopback addresses (localhost, 127.x.x.x)
+    /// - Cloud metadata services (169.254.169.254)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the endpoint URL is invalid, uses HTTP instead of HTTPS,
+    /// or points to a blocked/private IP address.
+    ///
     /// # Example
     ///
     /// ```
@@ -73,7 +197,9 @@ impl S3Location {
     ///     .with_endpoint("https://minio.example.com");
     /// ```
     pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
-        self.endpoint = Some(endpoint.into());
+        let endpoint = endpoint.into();
+        validate_endpoint(&endpoint).expect("Invalid endpoint URL");
+        self.endpoint = Some(endpoint);
         self
     }
 
@@ -162,6 +288,9 @@ impl S3Location {
             return Err(S3UrlParseError::InvalidFormat);
         }
 
+        // Validate bucket name for security
+        validate_bucket_name(bucket)?;
+
         Ok(Self {
             bucket: bucket.to_string(),
             key: key.to_string(),
@@ -220,13 +349,21 @@ impl fmt::Display for S3Location {
     }
 }
 
-/// Error that can occur when parsing an S3 URL.
+/// Error that can occur when parsing or validating an S3 URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum S3UrlParseError {
     /// URL does not start with "s3://"
     InvalidScheme,
     /// URL format is invalid
     InvalidFormat,
+    /// Bucket name is invalid
+    InvalidBucketName,
+    /// Endpoint URL is invalid
+    InvalidEndpoint,
+    /// Endpoint must use HTTPS
+    EndpointNotHttps,
+    /// Endpoint points to a blocked/private IP
+    BlockedEndpoint,
 }
 
 impl fmt::Display for S3UrlParseError {
@@ -234,6 +371,17 @@ impl fmt::Display for S3UrlParseError {
         match self {
             S3UrlParseError::InvalidScheme => write!(f, "URL must start with 's3://'"),
             S3UrlParseError::InvalidFormat => write!(f, "Invalid S3 URL format"),
+            S3UrlParseError::InvalidBucketName => {
+                write!(
+                    f,
+                    "Bucket name must be 3-63 chars, lowercase alphanumeric, dot, or hyphen"
+                )
+            }
+            S3UrlParseError::InvalidEndpoint => write!(f, "Invalid endpoint URL"),
+            S3UrlParseError::EndpointNotHttps => write!(f, "Endpoint must use HTTPS scheme"),
+            S3UrlParseError::BlockedEndpoint => {
+                write!(f, "Endpoint points to a blocked or private IP address")
+            }
         }
     }
 }
