@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn test_encoding_clone() {
         let enc = Encoding::Protobuf;
-        let cloned = enc.clone();
+        let cloned = enc;
         assert_eq!(enc, cloned);
     }
 
@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn test_parse_encoding_error_clone() {
         let err = ParseEncodingError { _private: () };
-        let cloned = err.clone();
+        let cloned = err;
         let _ = cloned;
     }
 

@@ -1043,7 +1043,7 @@ mod tests {
         let rewriter = McapRewriter::new();
         let any_ref = rewriter.as_any();
 
-        if let Some(_) = any_ref.downcast_ref::<McapRewriter>() {
+        if any_ref.downcast_ref::<McapRewriter>().is_some() {
             // Successfully downcast
         } else {
             panic!("Failed to downcast McapRewriter from Any");

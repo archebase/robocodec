@@ -1034,7 +1034,7 @@ mod tests {
         };
 
         // With skip_decode_failures = false, errors should be propagated
-        let result = engine.rewrite_message(&msg, &channel_info, false, |_data| Ok(()));
+        let result = engine.rewrite_message(&msg, channel_info, false, |_data| Ok(()));
 
         // Result should be an error (decode failed and not skipped)
         assert!(result.is_err() || engine.stats.decode_failures > 0);
@@ -1069,7 +1069,7 @@ mod tests {
         };
 
         // With skip_decode_failures = true, should pass through original data
-        let result = engine.rewrite_message(&msg, &channel_info, true, |data| {
+        let result = engine.rewrite_message(&msg, channel_info, true, |data| {
             assert_eq!(data, &[0xFF]);
             Ok(())
         });

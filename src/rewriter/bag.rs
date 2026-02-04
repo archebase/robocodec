@@ -410,8 +410,8 @@ mod tests {
             transforms: None,
         };
         let rewriter = BagRewriter::with_options(options.clone());
-        assert_eq!(rewriter.options().validate_schemas, false);
-        assert_eq!(rewriter.options().skip_decode_failures, true);
+        assert!(!rewriter.options().validate_schemas);
+        assert!(rewriter.options().skip_decode_failures);
     }
 
     #[test]
@@ -419,8 +419,8 @@ mod tests {
         let rewriter = BagRewriter::default();
         // BagRewriter::new() uses RewriteOptions::default() which has:
         // validate_schemas: true, skip_decode_failures: true, passthrough_non_cdr: true
-        assert_eq!(rewriter.options().validate_schemas, true);
-        assert_eq!(rewriter.options().skip_decode_failures, true);
+        assert!(rewriter.options().validate_schemas);
+        assert!(rewriter.options().skip_decode_failures);
     }
 
     #[test]

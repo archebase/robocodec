@@ -827,10 +827,10 @@ mod tests {
         schema.rename_package("old_pkg", "new_pkg");
 
         let updated_type = schema.get_type("new_pkg/Msg").unwrap();
-        if let FieldType::Array { base_type, .. } = &updated_type.fields[0].type_name {
-            if let FieldType::Nested(name) = base_type.as_ref() {
-                assert!(name.starts_with("new_pkg/"));
-            }
+        if let FieldType::Array { base_type, .. } = &updated_type.fields[0].type_name
+            && let FieldType::Nested(name) = base_type.as_ref()
+        {
+            assert!(name.starts_with("new_pkg/"));
         }
     }
 

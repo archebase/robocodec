@@ -1013,9 +1013,9 @@ mod tests {
         let iter = reader.iter_raw().unwrap();
         let stream = iter.stream().unwrap();
 
-        if let Some(Ok((msg, _))) = stream.take(1).next() {
+        if let Some(Ok((_msg, _))) = stream.take(1).next() {
             // Check message has valid fields
-            assert!(msg.data.capacity() >= 0);
+            // Message data capacity is valid
             // sequence may or may not be present
         }
     }

@@ -800,7 +800,7 @@ mod tests {
         let uncompressed_size = chunk_data.len() as u64;
 
         // Chunk header fields
-        let header_size = 8 + 8 + 8 + 4 + 4 + 0 + 8; // times + size + crc + compression_len + compressed_size
+        let header_size = 8 + 8 + 8 + 4 + 4 + 8; // times + size + crc + compression_len + compressed_size
 
         record.extend_from_slice(&(header_size + chunk_data.len() as u64).to_le_bytes()); // Record length
         record.extend_from_slice(&message_start_time.to_le_bytes());
