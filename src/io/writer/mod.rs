@@ -149,7 +149,7 @@ impl RoboWriter {
                         return Err(CodecError::parse(
                             "RoboWriter",
                             format!("Unknown file format. Use .mcap or .bag extension: {}", path),
-                        ))
+                        ));
                     }
                 }
             }

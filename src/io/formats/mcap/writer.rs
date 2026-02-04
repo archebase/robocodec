@@ -876,7 +876,7 @@ impl<W: Write> ParallelMcapWriter<W> {
         let counts: Vec<(u16, u64)> = {
             let mut sorted: Vec<_> = self.channel_message_counts.iter().collect();
             sorted.sort_by_key(|&(k, _)| k);
-            sorted.iter().map(|(&k, &v)| (k, v)).collect()
+            sorted.iter().map(|&(&k, &v)| (k, v)).collect()
         };
 
         for (channel_id, count) in counts {

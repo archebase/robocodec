@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use crate::core::{CodecError, CodecValue, DecodedMessage, PrimitiveType, Result as CoreResult};
 use crate::schema::{FieldType, MessageSchema, PrimitiveType as IdlPrimitiveType};
 
-use super::cursor::{CdrCursor, CDR_HEADER_SIZE};
+use super::cursor::{CDR_HEADER_SIZE, CdrCursor};
 use super::plan::{DecodeOp, DecodePlan, ElementType};
 
 /// Maximum allowed array length to prevent OOM attacks.
@@ -970,13 +970,13 @@ mod tests {
         let decoder = CdrDecoder::new();
 
         let mut data = vec![0x00, 0x01, 0x00, 0x00]; // CDR header
-                                                     // frame_id (string)
+        // frame_id (string)
         data.extend_from_slice(&10i32.to_le_bytes()); // length = 10 ("base_link" + null)
         data.extend_from_slice(b"base_link");
         data.push(0); // null terminator
-                      // Padding to align uint32 to 4-byte boundary
-                      // After string: 4 (header) + 4 (length) + 10 (data + null) = 18 bytes
-                      // Need 2 bytes padding to reach 20 (4-byte aligned)
+        // Padding to align uint32 to 4-byte boundary
+        // After string: 4 (header) + 4 (length) + 10 (data + null) = 18 bytes
+        // Need 2 bytes padding to reach 20 (4-byte aligned)
         data.push(0);
         data.push(0);
         // seq (uint32 at 20-byte boundary)
@@ -1013,7 +1013,7 @@ mod tests {
         let decoder = CdrDecoder::new();
         let mut data = vec![0x00, 0x01, 0x00, 0x00]; // CDR header
         data.extend_from_slice(&0xFFu32.to_le_bytes()); // length = max u32
-                                                        // Don't add actual data - the bounds check should fail first
+        // Don't add actual data - the bounds check should fail first
 
         let result = decoder.decode(&schema, &data, None);
         assert!(result.is_err());

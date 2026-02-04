@@ -19,8 +19,8 @@ mod signer;
 mod writer;
 
 pub use bag_stream::{
-    BagMessageRecord, BagRecord, BagRecordFields, BagRecordHeader, StreamingBagParser,
-    BAG_MAGIC_PREFIX,
+    BAG_MAGIC_PREFIX, BagMessageRecord, BagRecord, BagRecordFields, BagRecordHeader,
+    StreamingBagParser,
 };
 pub use client::S3Client;
 pub use config::{AwsCredentials, RetryConfig, S3ReaderConfig};

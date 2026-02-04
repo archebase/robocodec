@@ -530,8 +530,8 @@ mod tests {
     #[test]
     fn test_read_u64() {
         let mut data = vec![0x00, 0x01, 0x00, 0x00]; // CDR header
-                                                     // With origin = 4, the first field at position 4 is already aligned to 8
-                                                     // because (4 - 4) % 8 = 0, no padding needed
+        // With origin = 4, the first field at position 4 is already aligned to 8
+        // because (4 - 4) % 8 = 0, no padding needed
         data.extend_from_slice(&0x123456789ABCDEF0u64.to_le_bytes());
         let mut cursor = CdrCursor::new(&data).unwrap();
         assert_eq!(cursor.read_u64().unwrap(), 0x123456789ABCDEF0);
@@ -548,8 +548,8 @@ mod tests {
     #[test]
     fn test_read_f64() {
         let mut data = vec![0x00, 0x01, 0x00, 0x00]; // CDR header
-                                                     // With origin = 4, the first field at position 4 is already aligned to 8
-                                                     // because (4 - 4) % 8 = 0, no padding needed
+        // With origin = 4, the first field at position 4 is already aligned to 8
+        // because (4 - 4) % 8 = 0, no padding needed
         data.extend_from_slice(&1.0f64.to_le_bytes());
         let mut cursor = CdrCursor::new(&data).unwrap();
         assert!((cursor.read_f64().unwrap() - 1.0).abs() < f64::EPSILON);
@@ -560,7 +560,7 @@ mod tests {
         // Test alignment calculation: (offset - origin) % size
         let mut data = vec![0x00, 0x01, 0x00, 0x00]; // CDR header, origin = 4
         data.push(0x01); // offset = 5, (5 - 4) % 4 = 1, need 3 bytes padding
-                         // Add 3 padding bytes
+        // Add 3 padding bytes
         data.extend_from_slice(&[0x00, 0x00, 0x00]);
         data.extend_from_slice(&42u32.to_le_bytes()); // value to read after alignment
 
@@ -580,7 +580,7 @@ mod tests {
         let mut data = vec![0x00, 0x01, 0x00, 0x00]; // CDR header, origin = 4
         data.extend_from_slice(&1u32.to_le_bytes()); // offset = 8
         data.push(0x01); // offset = 9
-                         // Add 3 bytes padding for the align(4) call
+        // Add 3 bytes padding for the align(4) call
         data.extend_from_slice(&[0x00, 0x00, 0x00]);
 
         let mut cursor = CdrCursor::new(&data).unwrap();
@@ -869,7 +869,7 @@ mod tests {
         data.extend_from_slice(&[0x00]); // padding to align u16 to 2 (offset = 6)
         data.extend_from_slice(&[0x02, 0x03]); // u16, little-endian 0x0302 (offset = 8)
         data.extend_from_slice(&[0x04, 0x05, 0x06, 0x07]); // u32, little-endian 0x07060504 (offset = 12)
-                                                           // With origin = 4, offset 12 is already 8-byte aligned: (12 - 4) % 8 = 0
+        // With origin = 4, offset 12 is already 8-byte aligned: (12 - 4) % 8 = 0
         data.extend_from_slice(&[0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]); // u64 (offset = 20)
         data.extend_from_slice(&1.5f64.to_le_bytes()); // f64 (offset = 28, already 8-byte aligned: (28-4) % 8 = 0)
 

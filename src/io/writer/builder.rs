@@ -200,7 +200,7 @@ impl WriterBuilder {
                         return Err(CodecError::parse(
                             "WriterBuilder",
                             format!("Unknown file format from extension: {}", path.display()),
-                        ))
+                        ));
                     }
                 }
             }
@@ -223,7 +223,7 @@ impl WriterBuilder {
                 crate::io::formats::bag::BagFormat::create_writer(&path, &config)?
             }
             crate::io::metadata::FileFormat::Unknown => {
-                return Err(CodecError::parse("WriterBuilder", "Unknown file format"))
+                return Err(CodecError::parse("WriterBuilder", "Unknown file format"));
             }
         };
 

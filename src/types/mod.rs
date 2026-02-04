@@ -13,6 +13,6 @@ pub mod buffer_pool;
 pub mod chunk;
 
 pub use arena::MessageArena;
-pub use arena_pool::{global_pool, ArenaPool, PooledArena};
+pub use arena_pool::{ArenaPool, PooledArena, global_pool};
 pub use buffer_pool::BufferPool;
 pub use chunk::{ArenaMessage, CompressedChunk, MessageChunk};

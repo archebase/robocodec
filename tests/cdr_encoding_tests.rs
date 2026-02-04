@@ -229,7 +229,7 @@ fn test_cdr_encode_sequence() {
 fn test_cdr_alignment_u8_then_f64() {
     let mut encoder = CdrEncoder::new();
     let _ = encoder.uint8(1); // bool-like
-                              // Padding to 8-byte alignment happens automatically in float64()
+    // Padding to 8-byte alignment happens automatically in float64()
     let _ = encoder.float64(std::f64::consts::E);
     let data = encoder.finish();
 

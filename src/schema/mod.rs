@@ -22,7 +22,7 @@ pub use parser::{parse_schema, parse_schema_with_encoding};
 pub use parser::{msg_parser, ros2_idl_parser};
 
 // Legacy re-exports for compatibility
-pub use msg_parser::{parse_with_encoding, parse_with_version, RosVersion};
+pub use msg_parser::{RosVersion, parse_with_encoding, parse_with_version};
 pub use ros2_idl_parser::{normalize_ros2_idl, parse as parse_ros2_idl};
 
 /// Schema format type.

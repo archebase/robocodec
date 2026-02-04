@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
-use crate::common::{open_reader, Result};
+use crate::common::{Result, open_reader};
 use robocodec::FormatReader;
 
 /// Search within files.
@@ -560,10 +560,12 @@ mod tests {
 
         let result = cmd_search_bytes(path, "invalid hex".to_string(), 10, false);
         assert!(result.is_err(), "invalid hex pattern should fail");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid hex pattern"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid hex pattern")
+        );
     }
 
     #[test]
@@ -807,10 +809,12 @@ mod tests {
             result.is_err(),
             "json output should fail with not implemented"
         );
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 
     #[test]

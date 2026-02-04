@@ -5,7 +5,7 @@
 //! Integration tests for MCAP streaming parser.
 
 #[cfg(feature = "s3")]
-use robocodec::io::s3::{FatalError, StreamingMcapParser, MCAP_MAGIC};
+use robocodec::io::s3::{FatalError, MCAP_MAGIC, StreamingMcapParser};
 
 #[cfg(feature = "s3")]
 #[test]

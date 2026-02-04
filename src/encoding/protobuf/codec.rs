@@ -14,8 +14,8 @@ use prost_reflect::{
 use prost_types::FileDescriptorSet;
 
 use crate::core::{CodecError, CodecValue, DecodedMessage, Encoding, Result};
-use crate::encoding::transform::SchemaMetadata;
 use crate::encoding::DynCodec;
+use crate::encoding::transform::SchemaMetadata;
 
 /// Protobuf codec using prost-reflect for dynamic message encoding/decoding.
 ///

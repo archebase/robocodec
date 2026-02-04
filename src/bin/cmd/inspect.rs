@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
-use crate::common::{format_duration, format_timestamp, Result};
+use crate::common::{Result, format_duration, format_timestamp};
 use robocodec::{FormatReader, RoboReader};
 
 /// Inspect file contents.

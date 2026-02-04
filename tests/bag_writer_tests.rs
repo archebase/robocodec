@@ -199,15 +199,21 @@ fn test_add_multiple_connections() {
 
     let mut writer = BagWriter::create(&path).unwrap();
 
-    assert!(writer
-        .add_connection(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF)
-        .is_ok());
-    assert!(writer
-        .add_connection(1, "/numbers", "std_msgs/Int32", STD_MSGS_INT32_DEF)
-        .is_ok());
-    assert!(writer
-        .add_connection(2, "/camera", "sensor_msgs/Image", SENSOR_MSGS_IMAGE_DEF)
-        .is_ok());
+    assert!(
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", STD_MSGS_STRING_DEF)
+            .is_ok()
+    );
+    assert!(
+        writer
+            .add_connection(1, "/numbers", "std_msgs/Int32", STD_MSGS_INT32_DEF)
+            .is_ok()
+    );
+    assert!(
+        writer
+            .add_connection(2, "/camera", "sensor_msgs/Image", SENSOR_MSGS_IMAGE_DEF)
+            .is_ok()
+    );
 
     writer.finish().unwrap();
 }

@@ -25,4 +25,4 @@ pub use codec::{
 };
 pub use json::JsonDecoder;
 pub use protobuf::ProtobufDecoder;
-pub use registry::{global_registry, Codec, CodecProviderFactory, CodecRegistry};
+pub use registry::{Codec, CodecProviderFactory, CodecRegistry, global_registry};

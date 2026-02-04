@@ -804,11 +804,7 @@ fn ns_to_time(ns: u64) -> (u32, u32) {
 
 /// Compare two times.
 fn time_less_than(a: (u32, u32), b: (u32, u32)) -> bool {
-    if a.0 != b.0 {
-        a.0 < b.0
-    } else {
-        a.1 < b.1
-    }
+    if a.0 != b.0 { a.0 < b.0 } else { a.1 < b.1 }
 }
 
 impl FormatWriter for BagWriter {

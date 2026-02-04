@@ -12,8 +12,8 @@ use std::path::Path;
 
 use robocodec::io::formats::mcap::McapReader;
 use robocodec::io::formats::mcap::ParallelMcapWriter;
-use robocodec::rewriter::mcap::McapRewriter;
 use robocodec::rewriter::RewriteOptions;
+use robocodec::rewriter::mcap::McapRewriter;
 
 fn temp_dir() -> std::path::PathBuf {
     let random = std::time::SystemTime::now()

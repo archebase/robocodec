@@ -16,8 +16,8 @@ use std::path::PathBuf;
 
 use robocodec::io::formats::bag::{BagFormat, BagMessage, BagWriter};
 use robocodec::io::traits::FormatReader;
-use robocodec::rewriter::bag::BagRewriter;
 use robocodec::rewriter::RewriteOptions;
+use robocodec::rewriter::bag::BagRewriter;
 use robocodec::transform::TransformBuilder;
 
 // ============================================================================

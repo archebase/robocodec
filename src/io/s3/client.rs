@@ -435,7 +435,7 @@ impl S3Client {
                 return Err(FatalError::HttpError {
                     status: None,
                     message: format!("Unsupported HTTP method: {:?}", method),
-                })
+                });
             }
         };
 
@@ -532,7 +532,7 @@ impl S3Client {
                 return Err(FatalError::HttpError {
                     status: None,
                     message: format!("Unsupported HTTP method: {:?}", method),
-                })
+                });
             }
         };
 

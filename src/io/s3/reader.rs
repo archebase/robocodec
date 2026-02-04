@@ -161,7 +161,7 @@ impl S3Reader {
                 return Err(FatalError::InvalidFormat {
                     expected: "MCAP or BAG",
                     found: vec![],
-                })
+                });
             }
         };
 

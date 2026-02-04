@@ -144,8 +144,8 @@ uint32 nanosec
     // "base_link" = 9 chars + null = 10 bytes total
     data.extend_from_slice(&10u32.to_le_bytes()); // length = 10 (includes null terminator)
     data.extend_from_slice(b"base_link\0"); // 10 bytes (9 chars + null)
-                                            // Position after frame_id: 12 + 4 + 10 = 26
-                                            // Need to align to 4 bytes for the array length, so pad to 28
+    // Position after frame_id: 12 + 4 + 10 = 26
+    // Need to align to 4 bytes for the array length, so pad to 28
     data.extend_from_slice(&[0, 0]); // 2 padding bytes
 
     // names array (string[]) - sequence length first
@@ -155,37 +155,37 @@ uint32 nanosec
     // First string: "joint1" (6 chars + null = 7)
     data.extend_from_slice(&7u32.to_le_bytes()); // length = 7
     data.extend_from_slice(b"joint1\0"); // 7 bytes
-                                         // Position: 28 + 4 + 4 + 7 = 43, need to align to 4 for next string length
+    // Position: 28 + 4 + 4 + 7 = 43, need to align to 4 for next string length
     data.push(0); // 1 padding byte to reach 44
 
     // Second string: "joint2" (6 chars + null = 7)
     data.extend_from_slice(&7u32.to_le_bytes()); // length = 7
     data.extend_from_slice(b"joint2\0"); // 7 bytes
-                                         // Position: 44 + 4 + 7 = 55
+    // Position: 44 + 4 + 7 = 55
 
     // position array (float64[]) - needs 4-byte alignment for length
     // Position 55, need to align to 4 -> 56
     data.push(0); // 1 padding byte
     data.extend_from_slice(&2u32.to_le_bytes()); // 2 positions
-                                                 // Position: 56 + 4 = 60, need 8-byte alignment for float64 -> already aligned
+    // Position: 56 + 4 = 60, need 8-byte alignment for float64 -> already aligned
     data.extend_from_slice(&1.0f64.to_le_bytes());
     data.extend_from_slice(&2.0f64.to_le_bytes());
 
     // velocity array (float64[]) - position 60 + 16 = 76, aligned to 4
     data.extend_from_slice(&2u32.to_le_bytes()); // 2 velocities
-                                                 // Position: 76 + 4 = 80, (80 - 4) % 8 = 4 - need 4 bytes padding for 8-byte alignment
+    // Position: 76 + 4 = 80, (80 - 4) % 8 = 4 - need 4 bytes padding for 8-byte alignment
     data.extend_from_slice(&[0, 0, 0, 0]); // padding to align float64 data to 8 bytes
-                                           // Position: 80 + 4 = 84, (84 - 4) % 8 = 0 - now 8-byte aligned
+    // Position: 80 + 4 = 84, (84 - 4) % 8 = 0 - now 8-byte aligned
     data.extend_from_slice(&0.1f64.to_le_bytes()); // velocity[0] at 84-91
     data.extend_from_slice(&0.2f64.to_le_bytes()); // velocity[1] at 92-99 (contiguous)
-                                                   // After velocity array: pos = 100
+    // After velocity array: pos = 100
 
     // effort array (float64[]) - position 100, aligned to 4
     // After velocity: pos = 100, (100 - 4) % 4 = 0 ✓
     data.extend_from_slice(&2u32.to_le_bytes()); // 2 effort values
-                                                 // Position: 100 + 4 = 104, (104 - 4) % 8 = 4 - need 4 bytes padding for 8-byte alignment
+    // Position: 100 + 4 = 104, (104 - 4) % 8 = 4 - need 4 bytes padding for 8-byte alignment
     data.extend_from_slice(&[0, 0, 0, 0]); // padding to align float64 data to 8 bytes
-                                           // Position: 104 + 4 = 108, (108 - 4) % 8 = 0 - now 8-byte aligned
+    // Position: 104 + 4 = 108, (108 - 4) % 8 = 0 - now 8-byte aligned
     data.extend_from_slice(&0.0f64.to_le_bytes()); // effort[0] at 108-115
     data.extend_from_slice(&0.0f64.to_le_bytes()); // effort[1] at 116-123
 

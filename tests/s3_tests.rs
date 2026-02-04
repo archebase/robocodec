@@ -15,8 +15,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use robocodec::io::s3::{
-    S3Client, S3Location, S3Reader, S3ReaderConfig, S3ReaderConstructor, StreamingBagParser,
-    StreamingMcapParser, SummarySchemaInfo, MCAP_MAGIC,
+    MCAP_MAGIC, S3Client, S3Location, S3Reader, S3ReaderConfig, S3ReaderConstructor,
+    StreamingBagParser, StreamingMcapParser, SummarySchemaInfo,
 };
 use robocodec::io::traits::FormatReader;
 
@@ -602,8 +602,8 @@ mod golden_tests {
 mod wiremock_tests {
     use super::*;
     use wiremock::{
-        matchers::{header, method, path as wiremock_path},
         Mock, MockServer, ResponseTemplate,
+        matchers::{header, method, path as wiremock_path},
     };
 
     #[tokio::test]
