@@ -5,6 +5,9 @@
 //! CLI integration tests.
 //!
 //! These tests run the actual robocodec binary and verify its behavior.
+//!
+//! Note: These tests are only compiled and run when the `cli` feature is enabled,
+//! as the `robocodec` binary has `required-features = ["cli"]`.
 
 use std::{
     path::PathBuf,
@@ -65,343 +68,354 @@ fn run_err(args: &[&str]) -> String {
 }
 
 // ============================================================================
-// Basic CLI Tests
+// CLI Tests (only compiled when cli feature is enabled)
 // ============================================================================
 
-#[test]
-fn test_cli_help() {
-    let output = run_ok(&["--help"]);
-    assert!(output.contains("Robotics data format toolkit"));
-    assert!(output.contains("Inspect"));
-    assert!(output.contains("Rewrite"));
-    assert!(output.contains("Extract"));
-    assert!(output.contains("Search"));
-    assert!(output.contains("Schema"));
-}
+#[cfg(feature = "cli")]
+mod tests {
+    use super::*;
 
-#[test]
-fn test_cli_version() {
-    let output = run_ok(&["--version"]);
-    assert!(output.contains("robocodec"));
-}
+    // ============================================================================
+    // Basic CLI Tests
+    // ============================================================================
 
-#[test]
-fn test_cli_no_args() {
-    // Running without arguments shows help but exits with error code
-    let output = run(&[]);
-    // Clap shows help when no subcommand is provided, but exits with 1
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains("Usage:")
-            || String::from_utf8_lossy(&output.stdout).contains("USAGE")
-            || String::from_utf8_lossy(&output.stderr).contains("Usage:")
-            || String::from_utf8_lossy(&output.stderr).contains("USAGE")
-    );
-}
-
-#[test]
-fn test_cli_invalid_subcommand() {
-    let stderr = run_err(&["nonexistent"]);
-    assert!(stderr.contains("unrecognized") || stderr.contains("unknown"));
-}
-
-// ============================================================================
-// Inspect Info Tests
-// ============================================================================
-
-#[test]
-fn test_inspect_info_mcap() {
-    let path = fixture_path("robocodec_test_0.mcap");
-    if !path.exists() {
-        return;
+    #[test]
+    fn test_cli_help() {
+        let output = run_ok(&["--help"]);
+        assert!(output.contains("Robotics data format toolkit"));
+        assert!(output.contains("Inspect"));
+        assert!(output.contains("Rewrite"));
+        assert!(output.contains("Extract"));
+        assert!(output.contains("Search"));
+        assert!(output.contains("Schema"));
     }
 
-    let path_str = path.to_string_lossy().to_string();
-    let output = run_ok(&["inspect", "info", &path_str]);
-
-    assert!(output.contains("Format:"));
-    assert!(output.contains("Channels:"));
-}
-
-#[test]
-fn test_inspect_info_bag() {
-    let path = fixture_path("robocodec_test_15.bag");
-    if !path.exists() {
-        return;
+    #[test]
+    fn test_cli_version() {
+        let output = run_ok(&["--version"]);
+        assert!(output.contains("robocodec"));
     }
 
-    let path_str = path.to_string_lossy().to_string();
-    let output = run_ok(&["inspect", "info", &path_str]);
-
-    assert!(output.contains("Format:"));
-    assert!(output.contains("Bag"));
-}
-
-#[test]
-fn test_inspect_info_nonexistent_file() {
-    let stderr = run_err(&["inspect", "info", "/nonexistent/file.mcap"]);
-    assert!(stderr.contains("Error"));
-}
-
-// ============================================================================
-// Inspect Topics Tests
-// ============================================================================
-
-#[test]
-fn test_inspect_topics() {
-    let path = fixture_path("robocodec_test_0.mcap");
-    if !path.exists() {
-        return;
+    #[test]
+    fn test_cli_no_args() {
+        // Running without arguments shows help but exits with error code
+        let output = run(&[]);
+        // Clap shows help when no subcommand is provided, but exits with 1
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("Usage:")
+                || String::from_utf8_lossy(&output.stdout).contains("USAGE")
+                || String::from_utf8_lossy(&output.stderr).contains("Usage:")
+                || String::from_utf8_lossy(&output.stderr).contains("USAGE")
+        );
     }
 
-    let path_str = path.to_string_lossy().to_string();
-    let output = run_ok(&["inspect", "topics", &path_str]);
-
-    assert!(output.contains("Topics in"));
-}
-
-#[test]
-fn test_inspect_topics_with_filter() {
-    let path = fixture_path("robocodec_test_0.mcap");
-    if !path.exists() {
-        return;
+    #[test]
+    fn test_cli_invalid_subcommand() {
+        let stderr = run_err(&["nonexistent"]);
+        assert!(stderr.contains("unrecognized") || stderr.contains("unknown"));
     }
 
-    let path_str = path.to_string_lossy().to_string();
-    let _output = run_ok(&["inspect", "topics", &path_str, "--filter", "tf"]);
+    // ============================================================================
+    // Inspect Info Tests
+    // ============================================================================
 
-    // Filter should work - output may be empty or show filtered topics
-}
+    #[test]
+    fn test_inspect_info_mcap() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
 
-#[test]
-fn test_inspect_topics_with_counts() {
-    let path = fixture_path("robocodec_test_0.mcap");
-    if !path.exists() {
-        return;
-    }
-
-    let path_str = path.to_string_lossy().to_string();
-    let output = run_ok(&["inspect", "topics", &path_str, "--counts"]);
-
-    assert!(output.contains("Messages:"));
-}
-
-// ============================================================================
-// Inspect Schema Tests
-// ============================================================================
-
-#[test]
-fn test_inspect_schema() {
-    let path = fixture_path("robocodec_test_0.mcap");
-    if !path.exists() {
-        return;
-    }
-
-    let path_str = path.to_string_lossy().to_string();
-    let output = run_ok(&["inspect", "schema", &path_str]);
-
-    // Should show at least one schema
-    assert!(output.contains("===") || output.contains("Topic:"));
-}
-
-#[test]
-fn test_inspect_schema_with_filter() {
-    let path = fixture_path("robocodec_test_0.mcap");
-    if !path.exists() {
-        return;
-    }
-
-    let path_str = path.to_string_lossy().to_string();
-    let _output = run_ok(&["inspect", "schema", &path_str, "Point"]);
-
-    // Should filter results
-}
-
-// ============================================================================
-// Inspect Stats Tests
-// ============================================================================
-
-#[test]
-fn test_inspect_stats() {
-    let path = fixture_path("robocodec_test_0.mcap");
-    if !path.exists() {
-        return;
-    }
-
-    let path_str = path.to_string_lossy().to_string();
-    let output = run_ok(&["inspect", "stats", &path_str]);
-
-    assert!(output.contains("Statistics for"));
-    assert!(output.contains("Total messages:"));
-    assert!(output.contains("Channels:"));
-}
-
-// ============================================================================
-// Rewrite Command Tests
-// ============================================================================
-
-#[test]
-fn test_rewrite_help() {
-    let output = run_ok(&["rewrite", "--help"]);
-    assert!(output.contains("Rewrite a file"));
-    assert!(output.contains("INPUT") && output.contains("OUTPUT"));
-}
-
-#[test]
-fn test_rewrite_cross_format_not_supported() {
-    let input = fixture_path("robocodec_test_15.bag");
-    if !input.exists() {
-        return;
-    }
-
-    let output_path = std::env::temp_dir().join("test_cli_rewrite.mcap");
-    let _guard = TempGuard(output_path.clone());
-
-    let input_str = input.to_string_lossy().to_string();
-    let output_str = output_path.to_string_lossy().to_string();
-
-    // Cross-format rewrite should fail with helpful error message
-    let stderr = run_err(&["rewrite", &input_str, &output_str]);
-
-    // Should explain that cross-format rewrite is not supported
-    assert!(stderr.contains("not supported") || stderr.contains("Error"));
-    assert!(stderr.contains("MCAP") || stderr.contains("conversion"));
-
-    // Output file should NOT be created
-    assert!(
-        !output_path.exists(),
-        "Output file should NOT be created for cross-format rewrite"
-    );
-}
-
-#[test]
-fn test_rewrite_nonexistent_input() {
-    let stderr = run_err(&["rewrite", "/nonexistent/input.bag", "/tmp/output.bag"]);
-    assert!(stderr.contains("Error"));
-}
-
-// ============================================================================
-// Extract Command Tests
-// ============================================================================
-
-#[test]
-fn test_extract_help() {
-    let output = run_ok(&["extract", "--help"]);
-    assert!(output.contains("Extract subsets of data"));
-    assert!(output.contains("topics"));
-}
-
-#[test]
-fn test_extract_topics() {
-    let input = fixture_path("robocodec_test_0.mcap");
-    if !input.exists() {
-        return;
-    }
-
-    let output_path = std::env::temp_dir().join("test_cli_extract.mcap");
-    let _guard = TempGuard(output_path.clone());
-
-    let input_str = input.to_string_lossy().to_string();
-    let _output_str = output_path.to_string_lossy().to_string();
-
-    // Extract first topic (need to know a topic name first)
-    let _output = run_ok(&["inspect", "topics", &input_str]);
-    // For now, just verify the command doesn't crash
-    // Actual extraction would require knowing a valid topic name
-}
-
-// ============================================================================
-// Search Command Tests
-// ============================================================================
-
-#[test]
-fn test_search_help() {
-    let _output = run_ok(&["search", "--help"]);
-    // Verify help is available
-}
-
-// ============================================================================
-// Schema Command Tests
-// ============================================================================
-
-#[test]
-fn test_schema_help() {
-    let output = run_ok(&["schema", "--help"]);
-    assert!(output.contains("Schema operations"));
-    assert!(output.contains("list"));
-}
-
-#[test]
-fn test_schema_list() {
-    let path = fixture_path("robocodec_test_0.mcap");
-    if !path.exists() {
-        return;
-    }
-
-    let path_str = path.to_string_lossy().to_string();
-    let _output = run_ok(&["schema", "list", &path_str]);
-
-    // Should list schemas
-}
-
-// ============================================================================
-// Error Handling Tests
-// ============================================================================
-
-#[test]
-fn test_missing_required_arg() {
-    let stderr = run_err(&["inspect", "info"]);
-    assert!(stderr.contains("required") || stderr.contains("missing") || stderr.contains("usage"));
-}
-
-#[test]
-fn test_invalid_file_format() {
-    // Create a temporary invalid file
-    let temp_file = std::env::temp_dir().join("invalid_test.mcap");
-    std::fs::write(&temp_file, b"invalid magic bytes").ok();
-    let _guard = TempGuard(temp_file.clone());
-
-    let path_str = temp_file.to_string_lossy().to_string();
-    let stderr = run_err(&["inspect", "info", &path_str]);
-
-    assert!(stderr.contains("Error") || stderr.contains("Failed"));
-}
-
-// ============================================================================
-// Multiple File Format Tests
-// ============================================================================
-
-#[test]
-fn test_inspect_multiple_formats() {
-    let mcap_path = fixture_path("robocodec_test_0.mcap");
-    let bag_path = fixture_path("robocodec_test_15.bag");
-
-    let mut tested = 0;
-
-    if mcap_path.exists() {
-        let path_str = mcap_path.to_string_lossy().to_string();
+        let path_str = path.to_string_lossy().to_string();
         let output = run_ok(&["inspect", "info", &path_str]);
+
+        assert!(output.contains("Format:"));
         assert!(output.contains("Channels:"));
-        tested += 1;
     }
 
-    if bag_path.exists() {
-        let path_str = bag_path.to_string_lossy().to_string();
+    #[test]
+    fn test_inspect_info_bag() {
+        let path = fixture_path("robocodec_test_15.bag");
+        if !path.exists() {
+            return;
+        }
+
+        let path_str = path.to_string_lossy().to_string();
         let output = run_ok(&["inspect", "info", &path_str]);
-        assert!(output.contains("Channels:"));
-        tested += 1;
+
+        assert!(output.contains("Format:"));
+        assert!(output.contains("Bag"));
     }
 
-    assert!(tested > 0, "At least one fixture should exist");
-}
+    #[test]
+    fn test_inspect_info_nonexistent_file() {
+        let stderr = run_err(&["inspect", "info", "/nonexistent/file.mcap"]);
+        assert!(stderr.contains("Error"));
+    }
 
-// ============================================================================
-// Cleanup Guard
-// ============================================================================
+    // ============================================================================
+    // Inspect Topics Tests
+    // ============================================================================
 
-struct TempGuard(PathBuf);
+    #[test]
+    fn test_inspect_topics() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
 
-impl Drop for TempGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        let path_str = path.to_string_lossy().to_string();
+        let output = run_ok(&["inspect", "topics", &path_str]);
+
+        assert!(output.contains("Topics in"));
+    }
+
+    #[test]
+    fn test_inspect_topics_with_filter() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let path_str = path.to_string_lossy().to_string();
+        let _output = run_ok(&["inspect", "topics", &path_str, "--filter", "tf"]);
+
+        // Filter should work - output may be empty or show filtered topics
+    }
+
+    #[test]
+    fn test_inspect_topics_with_counts() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let path_str = path.to_string_lossy().to_string();
+        let output = run_ok(&["inspect", "topics", &path_str, "--counts"]);
+
+        assert!(output.contains("Messages:"));
+    }
+
+    // ============================================================================
+    // Inspect Schema Tests
+    // ============================================================================
+
+    #[test]
+    fn test_inspect_schema() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let path_str = path.to_string_lossy().to_string();
+        let output = run_ok(&["inspect", "schema", &path_str]);
+
+        // Should show at least one schema
+        assert!(output.contains("===") || output.contains("Topic:"));
+    }
+
+    #[test]
+    fn test_inspect_schema_with_filter() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let path_str = path.to_string_lossy().to_string();
+        let _output = run_ok(&["inspect", "schema", &path_str, "Point"]);
+
+        // Should filter results
+    }
+
+    // ============================================================================
+    // Inspect Stats Tests
+    // ============================================================================
+
+    #[test]
+    fn test_inspect_stats() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let path_str = path.to_string_lossy().to_string();
+        let output = run_ok(&["inspect", "stats", &path_str]);
+
+        assert!(output.contains("Statistics for"));
+        assert!(output.contains("Total messages:"));
+        assert!(output.contains("Channels:"));
+    }
+
+    // ============================================================================
+    // Rewrite Command Tests
+    // ============================================================================
+
+    #[test]
+    fn test_rewrite_help() {
+        let output = run_ok(&["rewrite", "--help"]);
+        assert!(output.contains("Rewrite a file"));
+        assert!(output.contains("INPUT") && output.contains("OUTPUT"));
+    }
+
+    #[test]
+    fn test_rewrite_cross_format_not_supported() {
+        let input = fixture_path("robocodec_test_15.bag");
+        if !input.exists() {
+            return;
+        }
+
+        let output_path = std::env::temp_dir().join("test_cli_rewrite.mcap");
+        let _guard = TempGuard(output_path.clone());
+
+        let input_str = input.to_string_lossy().to_string();
+        let output_str = output_path.to_string_lossy().to_string();
+
+        // Cross-format rewrite should fail with helpful error message
+        let stderr = run_err(&["rewrite", &input_str, &output_str]);
+
+        // Should explain that cross-format rewrite is not supported
+        assert!(stderr.contains("not supported") || stderr.contains("Error"));
+        assert!(stderr.contains("MCAP") || stderr.contains("conversion"));
+
+        // Output file should NOT be created
+        assert!(
+            !output_path.exists(),
+            "Output file should NOT be created for cross-format rewrite"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_nonexistent_input() {
+        let stderr = run_err(&["rewrite", "/nonexistent/input.bag", "/tmp/output.bag"]);
+        assert!(stderr.contains("Error"));
+    }
+
+    // ============================================================================
+    // Extract Command Tests
+    // ============================================================================
+
+    #[test]
+    fn test_extract_help() {
+        let output = run_ok(&["extract", "--help"]);
+        assert!(output.contains("Extract subsets of data"));
+        assert!(output.contains("topics"));
+    }
+
+    #[test]
+    fn test_extract_topics() {
+        let input = fixture_path("robocodec_test_0.mcap");
+        if !input.exists() {
+            return;
+        }
+
+        let output_path = std::env::temp_dir().join("test_cli_extract.mcap");
+        let _guard = TempGuard(output_path.clone());
+
+        let input_str = input.to_string_lossy().to_string();
+        let _output_str = output_path.to_string_lossy().to_string();
+
+        // Extract first topic (need to know a topic name first)
+        let _output = run_ok(&["inspect", "topics", &input_str]);
+        // For now, just verify the command doesn't crash
+        // Actual extraction would require knowing a valid topic name
+    }
+
+    // ============================================================================
+    // Search Command Tests
+    // ============================================================================
+
+    #[test]
+    fn test_search_help() {
+        let _output = run_ok(&["search", "--help"]);
+        // Verify help is available
+    }
+
+    // ============================================================================
+    // Schema Command Tests
+    // ============================================================================
+
+    #[test]
+    fn test_schema_help() {
+        let output = run_ok(&["schema", "--help"]);
+        assert!(output.contains("Schema operations"));
+        assert!(output.contains("list"));
+    }
+
+    #[test]
+    fn test_schema_list() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
+        let path_str = path.to_string_lossy().to_string();
+        let _output = run_ok(&["schema", "list", &path_str]);
+
+        // Should list schemas
+    }
+
+    // ============================================================================
+    // Error Handling Tests
+    // ============================================================================
+
+    #[test]
+    fn test_missing_required_arg() {
+        let stderr = run_err(&["inspect", "info"]);
+        assert!(
+            stderr.contains("required") || stderr.contains("missing") || stderr.contains("usage")
+        );
+    }
+
+    #[test]
+    fn test_invalid_file_format() {
+        // Create a temporary invalid file
+        let temp_file = std::env::temp_dir().join("invalid_test.mcap");
+        std::fs::write(&temp_file, b"invalid magic bytes").ok();
+        let _guard = TempGuard(temp_file.clone());
+
+        let path_str = temp_file.to_string_lossy().to_string();
+        let stderr = run_err(&["inspect", "info", &path_str]);
+
+        assert!(stderr.contains("Error") || stderr.contains("Failed"));
+    }
+
+    // ============================================================================
+    // Multiple File Format Tests
+    // ============================================================================
+
+    #[test]
+    fn test_inspect_multiple_formats() {
+        let mcap_path = fixture_path("robocodec_test_0.mcap");
+        let bag_path = fixture_path("robocodec_test_15.bag");
+
+        let mut tested = 0;
+
+        if mcap_path.exists() {
+            let path_str = mcap_path.to_string_lossy().to_string();
+            let output = run_ok(&["inspect", "info", &path_str]);
+            assert!(output.contains("Channels:"));
+            tested += 1;
+        }
+
+        if bag_path.exists() {
+            let path_str = bag_path.to_string_lossy().to_string();
+            let output = run_ok(&["inspect", "info", &path_str]);
+            assert!(output.contains("Channels:"));
+            tested += 1;
+        }
+
+        assert!(tested > 0, "At least one fixture should exist");
+    }
+
+    // ============================================================================
+    // Cleanup Guard
+    // ============================================================================
+
+    struct TempGuard(PathBuf);
+
+    impl Drop for TempGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
     }
 }

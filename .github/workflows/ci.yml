@@ -48,7 +48,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [macos-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -65,24 +65,8 @@ jobs:
       - name: Run tests
         run: cargo test
 
-  rust-test-windows:
-    name: Rust Tests (Windows)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build CLI binary (for CLI tests)
-        run: cargo build --bin robocodec --features cli
-
-      - name: Run tests
-        run: cargo test
-
-  coverage:
-    name: Coverage
+  rust-test-coverage:
+    name: Rust Tests + Coverage
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -104,16 +88,34 @@ jobs:
         if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
         run: cargo install cargo-llvm-cov
 
-      - name: Generate Rust coverage
+      # Note: Do NOT use --all-features or --features python here.
+      # PyO3's extension-module feature prevents linking in standalone test binaries.
+      - name: Run tests with coverage
         run: cargo llvm-cov --workspace --features "cli,s3" --lcov --output-path lcov-rust.info
 
-      - name: Upload Rust coverage to Codecov
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov-rust.info
           flags: rust
           name: codecov-rust
+
+  rust-test-windows:
+    name: Rust Tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build CLI binary (for CLI tests)
+        run: cargo build --bin robocodec --features cli
+
+      - name: Run tests
+        run: cargo test
 
   python-test:
     name: Python Tests

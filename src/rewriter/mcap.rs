@@ -2034,10 +2034,12 @@ mod tests {
 
     #[test]
     fn test_rewrite_stats_partial_update() {
-        let mut stats = RewriteStats::default();
-        stats.message_count = 10;
-        stats.reencoded_count = 8;
-        stats.passthrough_count = 2;
+        let stats = RewriteStats {
+            message_count: 10,
+            reencoded_count: 8,
+            passthrough_count: 2,
+            ..Default::default()
+        };
 
         assert_eq!(stats.message_count, 10);
         assert_eq!(stats.reencoded_count, 8);

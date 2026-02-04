@@ -1436,15 +1436,13 @@ mod tests {
             let reader = ParallelBagReader::open(fixture_path).expect("Failed to open");
             let iter = reader.iter_raw().expect("Failed to create iterator");
 
-            for result in iter.take(5) {
-                if let Ok((raw_msg, channel_info)) = result {
-                    // Verify raw message fields
-                    assert!(raw_msg.data.len() > 0, "Message data should not be empty");
-                    assert!(raw_msg.channel_id < 1000, "Channel ID should be reasonable");
+            for (raw_msg, channel_info) in iter.take(5).filter_map(|r| r.ok()) {
+                // Verify raw message fields
+                assert!(!raw_msg.data.is_empty(), "Message data should not be empty");
+                assert!(raw_msg.channel_id < 1000, "Channel ID should be reasonable");
 
-                    // Verify channel info matches
-                    assert_eq!(raw_msg.channel_id, channel_info.id);
-                }
+                // Verify channel info matches
+                assert_eq!(raw_msg.channel_id, channel_info.id);
             }
         }
     }
@@ -1570,10 +1568,8 @@ mod tests {
 
             let mut timestamps = Vec::new();
 
-            for result in stream.take(10) {
-                if let Ok((timestamped, _)) = result {
-                    timestamps.push((timestamped.log_time, timestamped.publish_time));
-                }
+            for (timestamped, _) in stream.take(10).filter_map(|r| r.ok()) {
+                timestamps.push((timestamped.log_time, timestamped.publish_time));
             }
 
             assert!(!timestamps.is_empty(), "Should collect some timestamps");
@@ -1785,15 +1781,15 @@ mod tests {
         let mut channel_sets = Vec::new();
 
         for (path, _name) in fixtures {
-            if Path::new(path).exists() {
-                if let Ok(reader) = ParallelBagReader::open(path) {
-                    let topics: Vec<_> = reader
-                        .channels()
-                        .values()
-                        .map(|c| c.topic.clone())
-                        .collect();
-                    channel_sets.push(topics);
-                }
+            if Path::new(path).exists()
+                && let Ok(reader) = ParallelBagReader::open(path)
+            {
+                let topics: Vec<_> = reader
+                    .channels()
+                    .values()
+                    .map(|c| c.topic.clone())
+                    .collect();
+                channel_sets.push(topics);
             }
         }
 
