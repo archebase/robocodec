@@ -186,3 +186,54 @@ jobs:
 
       - name: Test Python examples for API compatibility
         run: make test-examples
+
+  s3-test:
+    name: S3 Streaming Tests
+    runs-on: ubuntu-latest
+    services:
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports:
+          - 9000:9000
+          - 9001:9001
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          --health-start-period 5s
+        command: server /data --console-address ":9001"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install MinIO client
+        run: |
+          wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /tmp/mc
+          chmod +x /tmp/mc
+
+      - name: Configure MinIO alias and create bucket
+        run: |
+          /tmp/mc alias set robocodec-test http://127.0.0.1:9000 minioadmin minioadmin
+          /tmp/mc mb robocodec-test/test-bucket --ignore-existing
+
+      - name: Upload MCAP fixture to MinIO
+        run: |
+          /tmp/mc cp tests/fixtures/robocodec_test_0.mcap robocodec-test/test-bucket/test/robocodec_test_0.mcap
+
+      - name: Upload BAG fixture to MinIO
+        run: |
+          /tmp/mc cp tests/fixtures/robocodec_test_15.bag robocodec-test/test-bucket/test/robocodec_test_15.bag
+
+      - name: Run S3 tests
+        env:
+          MINIO_ENDPOINT: http://127.0.0.1:9000
+          MINIO_BUCKET: test-bucket
+          MINIO_REGION: us-east-1
+        run: cargo test --features s3 -- minio_tests
