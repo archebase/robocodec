@@ -143,42 +143,20 @@ let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
 println!("Found {} channels", reader.channels().len());
 ```
 
-For advanced S3 configuration (credentials, custom endpoint, region):
-
-```rust
-use robocodec::{RoboReader, S3Location, AwsCredentials, S3ReaderConfig};
-
-let config = S3ReaderConfig::default()
-    .with_endpoint("http://localhost:9000")  // MinIO
-    .with_credentials(Some(AwsCredentials::new(
-        "access_key".to_string(),
-        "secret_key".to_string(),
-    ).unwrap()))
-    .with_region("us-east-1");
-
-let location = S3Location::new("my-bucket", "data.mcap")
-    .with_endpoint("http://localhost:9000");
-
-// Use S3Reader directly for streaming without downloading entire file
-let rt = tokio::runtime::Runtime::new()?;
-let reader = rt.block_on(async {
-    robocodec::S3Reader::open_with_config(location, config).await
-})?;
-```
+S3 credentials are loaded from environment variables:
+- `AWS_ACCESS_KEY_ID` or `AWS_ACCESS_KEY`
+- `AWS_SECRET_ACCESS_KEY` or `AWS_SECRET_KEY`
+- `AWS_SESSION_TOKEN` (optional)
+- `AWS_REGION` (defaults to `us-east-1`)
 
 ### Write to S3
 
 ```rust
-use robocodec::{RoboWriter, S3Location, S3Client};
+use robocodec::RoboWriter;
 
-let location = S3Location::new("my-bucket", "output.mcap");
-let client = S3Client::default_client()?;
-
-// Create writer - format detected from .mcap extension
-let mut writer = RoboWriter::create_with_config(
-    "s3://my-bucket/output.mcap",
-    robocodec::WriterConfig::default().with_s3_client(Some(client)),
-)?;
+// Format detected from .mcap extension, S3 from s3:// URL
+let mut writer = RoboWriter::create("s3://my-bucket/output.mcap")?;
+let channel_id = writer.add_channel("/topic", "MessageType", "cdr", None)?;
 // ... write messages ...
 writer.finish()?;
 ```
@@ -243,11 +221,11 @@ Optional features:
 robocodec = { version = "0.1", features = ["jemalloc"] }
 ```
 
-| Feature | Description |
-|---------|-------------|
-| `python` | Python bindings |
-| `jemalloc` | Use jemalloc allocator (Linux only) |
-| `s3` | S3-compatible storage support (AWS S3, MinIO, etc.) |
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `s3` | S3-compatible storage support (AWS S3, MinIO, etc.) | ✅ Yes |
+| `python` | Python bindings | ❌ No |
+| `jemalloc` | Use jemalloc allocator (Linux only) | ❌ No |
 
 ### Python Users
 

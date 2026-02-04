@@ -63,11 +63,11 @@ robocodec = { version = "0.1", features = ["python", "jemalloc"] }
 
 ### 可选功能
 
-| 功能 | 描述 |
-|---------|-------------|
-| `python` | 通过 PyO3 提供 Python 绑定 |
-| `jemalloc` | 使用 jemalloc 分配器（仅 Linux） |
-| `s3` | 支持 S3 兼容存储（AWS S3、MinIO 等） |
+| 功能 | 描述 | 默认启用 |
+|---------|-------------|----------|
+| `s3` | 支持 S3 兼容存储（AWS S3、MinIO 等） | ✅ 是 |
+| `python` | 通过 PyO3 提供 Python 绑定 | ❌ 否 |
+| `jemalloc` | 使用 jemalloc 分配器（仅 Linux） | ❌ 否 |
 
 ## 快速开始
 
@@ -113,42 +113,20 @@ let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
 println!("找到 {} 个通道", reader.channels().len());
 ```
 
-对于高级 S3 配置（凭证、自定义端点、区域）：
-
-```rust
-use robocodec::{RoboReader, S3Location, AwsCredentials, S3ReaderConfig};
-
-let config = S3ReaderConfig::default()
-    .with_endpoint("http://localhost:9000")  // MinIO
-    .with_credentials(Some(AwsCredentials::new(
-        "access_key".to_string(),
-        "secret_key".to_string(),
-    ).unwrap()))
-    .with_region("us-east-1");
-
-let location = S3Location::new("my-bucket", "data.mcap")
-    .with_endpoint("http://localhost:9000");
-
-// 直接使用 S3Reader 进行流式读取，无需下载整个文件
-let rt = tokio::runtime::Runtime::new()?;
-let reader = rt.block_on(async {
-    robocodec::S3Reader::open_with_config(location, config).await
-})?;
-```
+S3 凭证从环境变量自动加载：
+- `AWS_ACCESS_KEY_ID` 或 `AWS_ACCESS_KEY`
+- `AWS_SECRET_ACCESS_KEY` 或 `AWS_SECRET_KEY`
+- `AWS_SESSION_TOKEN`（可选）
+- `AWS_REGION`（默认为 `us-east-1`）
 
 ### 写入到 S3
 
 ```rust
-use robocodec::{RoboWriter, S3Location, S3Client};
+use robocodec::RoboWriter;
 
-let location = S3Location::new("my-bucket", "output.mcap");
-let client = S3Client::default_client()?;
-
-// 创建写入器 - 从 .mcap 扩展名自动检测格式
-let mut writer = RoboWriter::create_with_config(
-    "s3://my-bucket/output.mcap",
-    robocodec::WriterConfig::default().with_s3_client(Some(client)),
-)?;
+// 从 .mcap 扩展名自动检测格式，从 s3:// URL 检测 S3
+let mut writer = RoboWriter::create("s3://my-bucket/output.mcap")?;
+let channel_id = writer.add_channel("/topic", "MessageType", "cdr", None)?;
 // ... 写入消息 ...
 writer.finish()?;
 ```
