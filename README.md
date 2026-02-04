@@ -296,12 +296,7 @@ make build-python-dev
 |--------|------|-------|
 | MCAP | ✅ | ✅ |
 | ROS1 Bag | ✅ | ✅ |
-
-### Experimental Support
-
-| Format | Status | Notes |
-|--------|--------|-------|
-| RRF2 (Rerun) | Partial | Basic reading works, full decoding in progress |
+| RRF2 (Rerun) | ✅ | ✅ |
 
 ## Message Encodings
 
