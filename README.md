@@ -297,13 +297,11 @@ make build-python-dev
 | MCAP | ✅ | ✅ |
 | ROS1 Bag | ✅ | ✅ |
 
-### Not Supported
+### Experimental Support
 
-| Format | Status | Alternative |
-|--------|--------|-------------|
-| RRD (Rerun) | Not planned | Use Rerun's tools to convert to MCAP first |
-
-See [docs/formats/rrd.md](docs/formats/rrd.md) for details on why RRD is not natively supported.
+| Format | Status | Notes |
+|--------|--------|-------|
+| RRF2 (Rerun) | Partial | Basic reading works, full decoding in progress |
 
 ## Message Encodings
 

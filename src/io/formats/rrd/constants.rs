@@ -24,6 +24,10 @@ pub const RRD_FOOTER_MAGIC: &[u8; 4] = RRD_FOOTER_ID;
 /// Current RRD format version (encoded as 4 bytes in the file).
 pub const RRD_VERSION: [u8; 4] = [0, 0, 0, 1];
 
+/// Minimum supported RRD version (files below this will be rejected).
+/// [0, 0, 0, 0] is considered invalid/unversioned.
+pub const RRD_MIN_VERSION: [u8; 4] = [0, 0, 0, 1];
+
 /// StreamHeader size: fourcc(4) + version(4) + options(4).
 pub const STREAM_HEADER_SIZE: usize = 12;
 

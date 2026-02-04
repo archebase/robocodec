@@ -91,6 +91,29 @@ impl RrdHeader {
             .read_exact(&mut version)
             .map_err(|e| CodecError::parse("RRD", format!("Failed to read version: {}", e)))?;
 
+        // Validate version - reject clearly incompatible versions
+        // Version [0, 0, 0, 0] indicates an unversioned/incompatible file
+        if version == [0, 0, 0, 0] {
+            return Err(CodecError::parse(
+                "RRD",
+                format!(
+                    "Incompatible RRD version: {:?}. This file appears to be from an old or incompatible Rerun version. \
+                    Please regenerate the file with a newer version of Rerun, or use Rerun's tools to convert the data.",
+                    version
+                ),
+            ));
+        }
+
+        // Warn about versions significantly different from current
+        if version < RRD_MIN_VERSION || version > [0, 0, 1, 0] {
+            warn!(
+                context = "rrd_reader",
+                "Unusual RRD version: {:?}. Expected {:?}. The file may not parse correctly.",
+                version,
+                RRD_VERSION
+            );
+        }
+
         // Read encoding options (4 bytes)
         let mut options = [0u8; 4];
         reader

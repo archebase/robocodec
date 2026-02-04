@@ -412,23 +412,36 @@ impl StreamingParser for StreamingRrdParser {
                     self.message_index += 1;
                 }
                 ParserState::NeedFooter => {
-                    if self.buffer.len() - self.buffer_pos < STREAM_FOOTER_SIZE {
-                        self.buffer = self.buffer.split_off(self.buffer_pos);
-                        self.buffer_pos = 0;
+                    let remaining = self.buffer.len() - self.buffer_pos;
+
+                    // For complete RRD files with full 32-byte footer, validate it
+                    if remaining >= STREAM_FOOTER_SIZE {
+                        // Footer structure: entries(20) + magic(4) + identifier(4) + num_entries(4)
+                        let fourcc_offset = self.buffer_pos + 20;
+                        let identifier_offset = self.buffer_pos + 24;
+
+                        let fourcc = &self.buffer[fourcc_offset..fourcc_offset + 4];
+                        let identifier = &self.buffer[identifier_offset..identifier_offset + 4];
+
+                        if fourcc == RRD_MAGIC && identifier == RRD_FOOTER_ID {
+                            // Valid footer found
+                            self.state = ParserState::Eof;
+                            break;
+                        }
+                        // Footer doesn't match expected format - fall through to check for FOOT marker
+                    }
+
+                    // Check for FOOT marker at the end of buffer (handles truncated/incomplete files)
+                    let buffer_end = &self.buffer[self.buffer_pos..];
+                    if buffer_end.ends_with(RRD_FOOTER_ID) {
+                        // Found FOOT marker - accept as EOF even if footer is incomplete
+                        self.state = ParserState::Eof;
                         break;
                     }
 
-                    // Validate footer format
-                    // Footer structure: entries(20) + magic(4) + identifier(4) + num_entries(4)
-                    let footer_start = self.buffer.len() - STREAM_FOOTER_SIZE;
-                    let fourcc = &self.buffer[footer_start + 20..footer_start + 24];
-                    let identifier = &self.buffer[footer_start + 24..footer_start + 28];
-
-                    if fourcc != RRD_MAGIC || identifier != RRD_FOOTER_ID {
-                        return Err(FatalError::invalid_format("RRD footer", fourcc.to_vec()));
-                    }
-
-                    self.state = ParserState::Eof;
+                    // Not enough data for footer and no FOOT marker - wait for more
+                    self.buffer = self.buffer.split_off(self.buffer_pos);
+                    self.buffer_pos = 0;
                     break;
                 }
                 ParserState::Eof => {
