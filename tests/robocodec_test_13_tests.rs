@@ -41,33 +41,24 @@ fn test_robocodec_test_13_fixture() {
     let mut total_messages = 0;
 
     // Test each channel using decoded message iterator
-    let decoded_iter = reader.decode_messages();
-    if let Ok(iter) = decoded_iter {
-        let mut stream = match iter.stream() {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Failed to get stream: {}", e);
-                return;
-            }
-        };
-
-        while let Some(result) = stream.next() {
+    if let Ok(iter) = reader.decoded() {
+        for result in iter {
             match result {
-                Ok((decoded, channel_info)) => {
+                Ok(decoded_result) => {
                     total_messages += 1;
 
                     if total_messages == 1 {
                         println!(
                             "  First message: channel={}, topic={}, encoding={}, type={}",
-                            channel_info.id,
-                            channel_info.topic,
-                            channel_info.encoding,
-                            channel_info.message_type
+                            decoded_result.channel.id,
+                            decoded_result.channel.topic,
+                            decoded_result.channel.encoding,
+                            decoded_result.channel.message_type
                         );
                     }
 
                     // Verify we got some decoded data
-                    if !decoded.is_empty() {
+                    if !decoded_result.message.is_empty() {
                         channels_tested += 1;
                     }
 

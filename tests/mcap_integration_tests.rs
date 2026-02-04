@@ -50,46 +50,35 @@ fn test_mcap_file(fixture_path: &Path, _expectations: &FixtureExpectations) -> T
     };
 
     // Test each channel using decoded message iterator
-    let decoded_iter_result = reader.decode_messages();
+    let decoded_iter_result = reader.decoded();
 
     let mut messages_tested = 0usize;
 
-    if decoded_iter_result.is_ok() {
-        let iter = decoded_iter_result.unwrap();
-        let stream_result = iter.stream();
+    if let Ok(iter) = decoded_iter_result {
+        for result in iter.take(100) {
+            match result {
+                Ok(decoded_result) => {
+                    messages_tested += 1;
 
-        if stream_result.is_ok() {
-            let mut stream = stream_result.unwrap();
-
-            loop {
-                match stream.next() {
-                    Some(Ok((decoded, channel_info))) => {
-                        messages_tested += 1;
-
-                        // Print channel info on first message
-                        if messages_tested == 1 {
-                            println!(
-                                "  Channel [{}]: {}, encoding: {}, type: {}",
-                                channel_info.id,
-                                channel_info.topic,
-                                channel_info.encoding,
-                                channel_info.message_type
-                            );
-                        }
-
-                        // Validate decoded message structure
-                        validate_decoded_message_simple(&decoded, &channel_info);
-
-                        // Limit messages tested
-                        if messages_tested >= 100 {
-                            break;
-                        }
+                    // Print channel info on first message
+                    if messages_tested == 1 {
+                        println!(
+                            "  Channel [{}]: {}, encoding: {}, type: {}",
+                            decoded_result.channel.id,
+                            decoded_result.channel.topic,
+                            decoded_result.channel.encoding,
+                            decoded_result.channel.message_type
+                        );
                     }
-                    Some(Err(e)) => {
-                        eprintln!("Decode error: {e}");
-                        continue;
-                    }
-                    None => break,
+
+                    // Validate decoded message structure
+                    validate_decoded_message_simple(
+                        &decoded_result.message,
+                        &decoded_result.channel,
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Decode error: {e}");
                 }
             }
         }

@@ -71,24 +71,13 @@ fn test_robocodec_test_2_iterate_messages() {
     let reader = RoboReader::open(fixture_path.to_str().unwrap()).expect("Should open MCAP");
 
     let mut count = 0;
-    let decoded_iter = reader.decode_messages();
-    if let Ok(iter) = decoded_iter {
-        let mut stream = match iter.stream() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-
-        loop {
-            match stream.next() {
-                Some(Ok(_)) => count += 1,
-                Some(Err(e)) => {
+    if let Ok(iter) = reader.decoded() {
+        for result in iter.take(10) {
+            match result {
+                Ok(_) => count += 1,
+                Err(e) => {
                     eprintln!("Decode error: {}", e);
                 }
-                None => break,
-            }
-
-            if count >= 10 {
-                break;
             }
         }
     }
@@ -146,22 +135,11 @@ fn test_robocodec_test_2_decode_messages() {
     let reader = RoboReader::open(fixture_path.to_str().unwrap()).expect("Should open MCAP");
 
     let mut decoded_count = 0;
-    let decoded_iter = reader.decode_messages();
-    if let Ok(iter) = decoded_iter {
-        let mut stream = match iter.stream() {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-
-        loop {
-            match stream.next() {
-                Some(Ok(_)) => decoded_count += 1,
-                Some(Err(_)) => continue,
-                None => break,
-            }
-
-            if decoded_count >= 10 {
-                break;
+    if let Ok(iter) = reader.decoded() {
+        for result in iter.take(10) {
+            match result {
+                Ok(_) => decoded_count += 1,
+                Err(_) => continue,
             }
         }
     }
@@ -184,28 +162,22 @@ fn test_robocodec_test_2_message_order() {
     let reader = RoboReader::open(fixture_path.to_str().unwrap()).expect("Should open MCAP");
     println!("Message count: {}", reader.message_count());
 
-    // Use regular decode_messages instead of with_timestamp for broader compatibility
-    let decoded_iter = reader.decode_messages();
+    // Use decoded() for message iteration
     let mut count = 0;
 
-    if let Ok(iter) = decoded_iter {
-        let mut stream = match iter.stream() {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Failed to get stream: {}", e);
-                panic!("Failed to get stream: {}", e);
-            }
-        };
-
-        while let Some(result) = stream.next() {
+    if let Ok(iter) = reader.decoded() {
+        for result in iter.take(10) {
             match result {
-                Ok((decoded, channel_info)) => {
+                Ok(decoded_result) => {
                     count += 1;
                     if count == 1 {
-                        println!("First message from channel: {}", channel_info.topic);
+                        println!(
+                            "First message from channel: {}",
+                            decoded_result.channel.topic
+                        );
                     }
 
-                    if !decoded.is_empty() && count >= 10 {
+                    if !decoded_result.message.is_empty() && count >= 10 {
                         break;
                     }
                 }

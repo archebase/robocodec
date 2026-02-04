@@ -7,6 +7,16 @@
 use std::path::Path;
 use std::time::Duration;
 
+/// Simple URL encoding for AWS credentials
+fn encode_url(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '&' | '=' | '?' | '#' | ' ' | '/' | ':' => format!("%{:02X}", c as u8),
+            _ => c.to_string(),
+        })
+        .collect()
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let endpoint =
@@ -65,8 +75,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 endpoint,
                 bucket,
                 filename,
-                urlencoding::encode(&access_key),
-                urlencoding::encode(&secret_key)
+                encode_url(&access_key),
+                encode_url(&secret_key)
             );
 
             let response = client
