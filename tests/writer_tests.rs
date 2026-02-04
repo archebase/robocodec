@@ -14,10 +14,10 @@
 use std::fs;
 use std::path::PathBuf;
 
-use robocodec::io::RoboWriter;
-use robocodec::io::formats::bag::{BagFormat, BagWriter};
+use robocodec::io::formats::bag::BagWriter;
 use robocodec::io::traits::FormatReader;
 use robocodec::io::traits::FormatWriter;
+use robocodec::io::{RoboReader, RoboWriter};
 use robocodec::io::{WriterBuilder, WriterConfig};
 
 // ============================================================================
@@ -175,8 +175,8 @@ fn test_robowriter_write_bag_round_trip() {
     writer.write(&raw_msg).unwrap();
     writer.finish().unwrap();
 
-    // Read back
-    let reader = BagFormat::open(&path).unwrap();
+    // Read back using public API
+    let reader = RoboReader::open(path.to_str().unwrap()).unwrap();
     let channels = reader.channels();
     assert_eq!(channels.len(), 1, "should have 1 channel");
 

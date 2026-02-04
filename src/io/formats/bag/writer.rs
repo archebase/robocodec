@@ -864,6 +864,13 @@ impl FormatWriter for BagWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::NamedTempFile;
+
+    fn create_temp_writer() -> (BagWriter, NamedTempFile) {
+        let temp_file = NamedTempFile::new().unwrap();
+        let writer = BagWriter::create(temp_file.path()).expect("Failed to create writer");
+        (writer, temp_file)
+    }
 
     #[test]
     fn test_ns_to_time() {
@@ -893,5 +900,352 @@ mod tests {
         let mut buffer = Vec::new();
         BagWriter::write_file_header_record(&mut buffer, 0, 0, 0);
         assert_eq!(buffer.len(), 4096);
+    }
+
+    #[test]
+    fn test_create_writer() {
+        let (mut writer, temp_file) = create_temp_writer();
+        use crate::io::traits::FormatWriter;
+        FormatWriter::finish(&mut writer).unwrap();
+        // File should be created with header
+        let metadata = std::fs::metadata(temp_file.path()).unwrap();
+        assert!(metadata.len() >= 4096); // At least the header
+    }
+
+    #[test]
+    fn test_add_connection() {
+        let (mut writer, _temp) = create_temp_writer();
+        let result = writer.add_connection(0, "/chatter", "std_msgs/String", "string data");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_add_connection_with_callerid() {
+        let (mut writer, _temp) = create_temp_writer();
+        let result = writer.add_connection_with_callerid(
+            0,
+            "/chatter",
+            "std_msgs/String",
+            "string data",
+            "/talker",
+        );
+        assert!(result.is_ok());
+        assert_eq!(writer.connections.len(), 1);
+    }
+
+    #[test]
+    fn test_add_duplicate_connection_same_topic_empty_callerid() {
+        let (mut writer, _temp) = create_temp_writer();
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", "string data")
+            .unwrap();
+        // Adding same topic with empty callerid should be idempotent
+        writer
+            .add_connection(1, "/chatter", "std_msgs/String", "string data")
+            .unwrap();
+        // Should still have only 1 connection (duplicate skipped)
+        assert_eq!(writer.connections.len(), 1);
+    }
+
+    #[test]
+    fn test_add_multiple_connections() {
+        let (mut writer, _temp) = create_temp_writer();
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", "string data")
+            .unwrap();
+        writer
+            .add_connection(0, "/scan", "sensor_msgs/LaserScan", "scan data")
+            .unwrap();
+        assert_eq!(writer.connections.len(), 2);
+    }
+
+    #[test]
+    fn test_write_single_message() {
+        let (mut writer, temp_file) = create_temp_writer();
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", "string data")
+            .unwrap();
+
+        let msg = BagMessage::new(0, 1234567890, b"hello".to_vec());
+        writer.write_message(&msg).unwrap();
+        use crate::io::traits::FormatWriter;
+        FormatWriter::finish(&mut writer).unwrap();
+
+        // File should have grown beyond header
+        let metadata = std::fs::metadata(temp_file.path()).unwrap();
+        assert!(metadata.len() >= 4096); // At least the header
+    }
+
+    #[test]
+    fn test_write_multiple_messages() {
+        let (mut writer, temp_file) = create_temp_writer();
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", "string data")
+            .unwrap();
+
+        for i in 0..10 {
+            let msg = BagMessage::new(0, 1234567890 + i * 1000, format!("msg{}", i).into_bytes());
+            writer.write_message(&msg).unwrap();
+        }
+        use crate::io::traits::FormatWriter;
+        FormatWriter::finish(&mut writer).unwrap();
+
+        let metadata = std::fs::metadata(temp_file.path()).unwrap();
+        assert!(metadata.len() > 5000);
+    }
+
+    #[test]
+    fn test_write_message_without_connection() {
+        let (mut writer, _temp) = create_temp_writer();
+        let msg = BagMessage::new(0, 1234567890, b"hello".to_vec());
+        let result = writer.write_message(&msg);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No connection found")
+        );
+    }
+
+    #[test]
+    fn test_write_after_finish() {
+        let (mut writer, _temp) = create_temp_writer();
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", "string data")
+            .unwrap();
+        use crate::io::traits::FormatWriter;
+        FormatWriter::finish(&mut writer).unwrap();
+
+        let msg = BagMessage::new(0, 1234567890, b"hello".to_vec());
+        let result = writer.write_message(&msg);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("closed"));
+    }
+
+    #[test]
+    fn test_add_connection_after_finish() {
+        let (mut writer, _temp) = create_temp_writer();
+        use crate::io::traits::FormatWriter;
+        FormatWriter::finish(&mut writer).unwrap();
+
+        let result = writer.add_connection(0, "/chatter", "std_msgs/String", "string data");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("closed"));
+    }
+
+    #[test]
+    fn test_bag_message_from_raw() {
+        let msg = BagMessage::from_raw(1, 1000000, vec![1, 2, 3, 4]);
+        assert_eq!(msg.conn_id, 1);
+        assert_eq!(msg.time_ns, 1000000);
+        assert_eq!(msg.data, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_bag_message_new() {
+        let msg = BagMessage::new(5, 999999999, vec![10, 20, 30]);
+        assert_eq!(msg.conn_id, 5);
+        assert_eq!(msg.time_ns, 999999999);
+        assert_eq!(msg.data, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn test_finish_creates_valid_bag() {
+        let (mut writer, temp_file) = create_temp_writer();
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", "string data")
+            .unwrap();
+
+        let msg = BagMessage::new(0, 1234567890, b"test".to_vec());
+        writer.write_message(&msg).unwrap();
+        use crate::io::traits::FormatWriter;
+        FormatWriter::finish(&mut writer).unwrap();
+
+        // Verify file starts with ROSBAG version
+        let contents = std::fs::read(temp_file.path()).unwrap();
+        let header_str = String::from_utf8_lossy(&contents[..50]);
+        assert!(header_str.contains("#ROSBAG V2.0"));
+    }
+
+    #[test]
+    fn test_message_count() {
+        let (mut writer, _temp) = create_temp_writer();
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", "string data")
+            .unwrap();
+
+        // Before any messages
+        assert_eq!(writer.message_count(), 0);
+
+        // Write 5 messages
+        for i in 0..5 {
+            let msg = BagMessage::new(0, 1234567890 + i, format!("msg{}", i).into_bytes());
+            writer.write_message(&msg).unwrap();
+        }
+
+        // message_count reports finalized chunks, not current chunk
+        // So it's still 0 until finish
+        assert_eq!(writer.message_count(), 0);
+
+        use crate::io::traits::FormatWriter;
+        FormatWriter::finish(&mut writer).unwrap();
+        // Now message_count should reflect written messages
+        assert_eq!(writer.message_count(), 5);
+    }
+
+    #[test]
+    fn test_channel_count() {
+        let (mut writer, _temp) = create_temp_writer();
+        assert_eq!(writer.channel_count(), 0);
+
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", "string data")
+            .unwrap();
+        assert_eq!(writer.channel_count(), 1);
+
+        writer
+            .add_connection(0, "/scan", "sensor_msgs/LaserScan", "scan data")
+            .unwrap();
+        assert_eq!(writer.channel_count(), 2);
+    }
+
+    #[test]
+    fn test_writer_path() {
+        let (_writer, temp_file) = create_temp_writer();
+        // Path is stored internally
+        assert!(temp_file.path().exists());
+    }
+
+    #[test]
+    fn test_format_writer_add_channel() {
+        let (mut writer, _temp) = create_temp_writer();
+        use crate::io::traits::FormatWriter;
+
+        let id = FormatWriter::add_channel(&mut writer, "/test", "test/Msg", "cdr", Some("schema"))
+            .unwrap();
+        assert_eq!(id, 0);
+        assert_eq!(writer.channel_count(), 1);
+    }
+
+    #[test]
+    fn test_format_writer_write() {
+        let (mut writer, _temp) = create_temp_writer();
+        use crate::io::traits::FormatWriter;
+
+        FormatWriter::add_channel(&mut writer, "/test", "test/Msg", "cdr", Some("schema")).unwrap();
+
+        let msg = crate::io::metadata::RawMessage {
+            channel_id: 0,
+            log_time: 1000,
+            publish_time: 1000,
+            data: b"test".to_vec(),
+            sequence: Some(0),
+        };
+
+        FormatWriter::write(&mut writer, &msg).unwrap();
+        FormatWriter::finish(&mut writer).unwrap();
+
+        assert_eq!(writer.message_count(), 1);
+    }
+
+    #[test]
+    fn test_format_writer_write_batch() {
+        let (mut writer, _temp) = create_temp_writer();
+        use crate::io::traits::FormatWriter;
+
+        FormatWriter::add_channel(&mut writer, "/test", "test/Msg", "cdr", Some("schema")).unwrap();
+
+        let messages = vec![
+            crate::io::metadata::RawMessage {
+                channel_id: 0,
+                log_time: 1000,
+                publish_time: 1000,
+                data: b"msg1".to_vec(),
+                sequence: Some(0),
+            },
+            crate::io::metadata::RawMessage {
+                channel_id: 0,
+                log_time: 2000,
+                publish_time: 2000,
+                data: b"msg2".to_vec(),
+                sequence: Some(1),
+            },
+        ];
+
+        FormatWriter::write_batch(&mut writer, &messages).unwrap();
+        FormatWriter::finish(&mut writer).unwrap();
+
+        assert_eq!(writer.message_count(), 2);
+    }
+
+    #[test]
+    fn test_format_writer_as_any() {
+        let (writer, _temp) = create_temp_writer();
+        use crate::io::traits::FormatWriter;
+
+        let any = FormatWriter::as_any(&writer);
+        assert!(any.is::<BagWriter>());
+    }
+
+    #[test]
+    fn test_write_large_message_triggers_chunk() {
+        let (mut writer, _temp) = create_temp_writer();
+        writer
+            .add_connection(0, "/chatter", "std_msgs/String", "string data")
+            .unwrap();
+
+        // Write a large message that should trigger chunking
+        let large_data = vec![0u8; DEFAULT_CHUNK_THRESHOLD];
+        let msg = BagMessage::new(0, 1234567890, large_data);
+        writer.write_message(&msg).unwrap();
+
+        // Chunk should be finalized
+        assert!(writer.current_chunk_info.is_none() || writer.chunk_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_u32_to_bytes() {
+        let bytes = u32_to_bytes(0x12345678);
+        assert_eq!(bytes, vec![0x78, 0x56, 0x34, 0x12]);
+    }
+
+    #[test]
+    fn test_u64_to_bytes() {
+        let bytes = u64_to_bytes(0x123456789ABCDEF0);
+        assert_eq!(bytes, vec![0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12]);
+    }
+
+    #[test]
+    fn test_time_to_bytes() {
+        let bytes = time_to_bytes((0x12345678, 0x9ABCDEF0));
+        assert_eq!(bytes.len(), 8);
+    }
+
+    #[test]
+    fn test_drop_warning() {
+        // Test that dropping without finish prints a warning
+        let temp_file = NamedTempFile::new().unwrap();
+        let writer = BagWriter::create(temp_file.path()).unwrap();
+        // Don't call finish - just drop
+        drop(writer);
+        // Warning should be printed (we can't easily test this in unit tests)
+        // But we verify the file exists
+        assert!(temp_file.path().exists());
+    }
+
+    #[test]
+    fn test_multiple_connections_same_topic_different_callerid() {
+        let (mut writer, _temp) = create_temp_writer();
+
+        writer
+            .add_connection_with_callerid(0, "/chatter", "std_msgs/String", "string data", "/node1")
+            .unwrap();
+        writer
+            .add_connection_with_callerid(0, "/chatter", "std_msgs/String", "string data", "/node2")
+            .unwrap();
+
+        // Should have 2 connections since callerid differs
+        assert_eq!(writer.connections.len(), 2);
     }
 }

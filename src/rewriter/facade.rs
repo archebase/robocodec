@@ -316,4 +316,151 @@ mod tests {
         assert_eq!(stats.message_count, 0);
         assert_eq!(stats.channel_count, 0);
     }
+
+    #[test]
+    fn test_rewrite_stats_new() {
+        let stats = RewriteStats::new();
+        assert_eq!(stats.message_count, 0);
+        assert_eq!(stats.channel_count, 0);
+        assert_eq!(stats.reencoded_count, 0);
+        assert_eq!(stats.passthrough_count, 0);
+        assert_eq!(stats.decode_failures, 0);
+        assert_eq!(stats.encode_failures, 0);
+        assert_eq!(stats.topics_renamed, 0);
+        assert_eq!(stats.types_renamed, 0);
+    }
+
+    #[test]
+    fn test_rewrite_options_with_transforms() {
+        use crate::transform::TransformBuilder;
+        let pipeline = TransformBuilder::new()
+            .with_topic_rename("/old", "/new")
+            .build();
+
+        let options = RewriteOptions::default().with_transforms(pipeline);
+        assert!(options.has_transforms());
+    }
+
+    #[test]
+    fn test_rewrite_options_has_transforms_empty_pipeline() {
+        use crate::transform::MultiTransform;
+        let options = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: false,
+            passthrough_non_cdr: false,
+            transforms: Some(MultiTransform::new()),
+        };
+        assert!(!options.has_transforms());
+    }
+
+    #[test]
+    fn test_rewrite_options_has_transforms_none() {
+        let options = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: false,
+            passthrough_non_cdr: false,
+            transforms: None,
+        };
+        assert!(!options.has_transforms());
+    }
+
+    #[test]
+    fn test_rewrite_options_all_false() {
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: false,
+            passthrough_non_cdr: false,
+            transforms: None,
+        };
+        assert!(!options.validate_schemas);
+        assert!(!options.skip_decode_failures);
+        assert!(!options.passthrough_non_cdr);
+        assert!(!options.has_transforms());
+    }
+
+    #[test]
+    fn test_rewrite_options_all_true() {
+        use crate::transform::TransformBuilder;
+        let pipeline = TransformBuilder::new()
+            .with_topic_rename("/old", "/new")
+            .build();
+
+        let options = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: Some(pipeline),
+        };
+        assert!(options.validate_schemas);
+        assert!(options.skip_decode_failures);
+        assert!(options.passthrough_non_cdr);
+        assert!(options.has_transforms());
+    }
+
+    #[test]
+    fn test_rewrite_stats_clone() {
+        let stats1 = RewriteStats {
+            message_count: 10,
+            ..Default::default()
+        };
+        let stats2 = stats1.clone();
+        assert_eq!(stats2.message_count, 10);
+    }
+
+    #[test]
+    fn test_detect_format_case_insensitive() {
+        // File extensions should be case-sensitive on Unix
+        let path_mcap = Path::new("test.mcap");
+        assert_eq!(detect_format(path_mcap), Some("mcap"));
+
+        let path_bag = Path::new("test.bag");
+        assert_eq!(detect_format(path_bag), Some("bag"));
+
+        // Uppercase extensions are not recognized
+        let path_upper = Path::new("test.MCAP");
+        assert_eq!(detect_format(path_upper), None);
+    }
+
+    #[test]
+    fn test_detect_format_with_dot_in_name() {
+        // Files with dots in name should still detect from extension
+        let path = Path::new("test.data.mcap");
+        assert_eq!(detect_format(path), Some("mcap"));
+
+        let path = Path::new("my.file.bag");
+        assert_eq!(detect_format(path), Some("bag"));
+    }
+
+    #[test]
+    fn test_robo_rewriter_open_unknown_format() {
+        // This would try to open a file, so we test the error path differently
+        let path = Path::new("test.unknown");
+        let result = RoboRewriter::open(path);
+        // Should fail due to unknown format OR file not found
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_robo_rewriter_open_nonexistent_file() {
+        let path = Path::new("nonexistent.mcap");
+        let result = RoboRewriter::open(path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_robo_rewriter_with_options_unknown_format() {
+        let path = Path::new("test.unknown");
+        let options = RewriteOptions::default();
+        let result = RoboRewriter::with_options(path, options);
+        // Should fail due to unknown format
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_robo_rewriter_input_path_unsupported_extension() {
+        // Test that unsupported extensions are handled
+        let path = Path::new("test.txt");
+        let format = detect_format(path);
+        assert_eq!(format, None);
+    }
 }

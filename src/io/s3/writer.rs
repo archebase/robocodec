@@ -155,15 +155,15 @@ impl S3Writer {
         }
 
         // Upload the buffer as a part
+        // SAFETY: upload_id is guaranteed to be Some after the check above
+        let upload_id = self
+            .upload_id
+            .as_ref()
+            .expect("upload_id must be set after initialization");
         let data = Bytes::from(self.buffer.clone());
         let etag = self
             .client
-            .upload_part(
-                &self.location,
-                self.upload_id.as_ref().unwrap(),
-                self.next_part_number,
-                data,
-            )
+            .upload_part(&self.location, upload_id, self.next_part_number, data)
             .await?;
 
         self.parts.push((self.next_part_number, etag));

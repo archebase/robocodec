@@ -12,6 +12,7 @@
 //!
 //! - **MCAP**: Identified by magic number at start or end of file
 //! - **ROS1 Bag**: Identified by file header structure
+//! - **RRD**: Identified by RRD magic number
 //!
 //! # Example
 //!
@@ -59,6 +60,7 @@ use super::metadata::FileFormat;
 /// match format {
 ///     FileFormat::Mcap => println!("MCAP file detected"),
 ///     FileFormat::Bag => println!("ROS1 bag file detected"),
+///     FileFormat::Rrd => println!("RRD file detected"),
 ///     FileFormat::Unknown => println!("Unknown format"),
 /// }
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -96,6 +98,11 @@ fn detect_from_magic(path: &Path) -> Result<FileFormat, CodecError> {
         return Ok(FileFormat::Unknown);
     }
 
+    // Check for RRD magic number first (simple 4-byte signature)
+    if is_rrd_magic(&header[..n]) {
+        return Ok(FileFormat::Rrd);
+    }
+
     // Check for MCAP magic number
     // MCAP files start with a magic number and end with one
     // The magic is not a simple string, so we check the MCAP record structure
@@ -110,6 +117,11 @@ fn detect_from_magic(path: &Path) -> Result<FileFormat, CodecError> {
     }
 
     Ok(FileFormat::Unknown)
+}
+
+/// Check if the header starts with RRD magic.
+fn is_rrd_magic(header: &[u8]) -> bool {
+    header.len() >= 4 && &header[0..4] == b"RRF2"
 }
 
 /// Check if the header starts with MCAP magic.
@@ -175,6 +187,7 @@ fn detect_from_extension(path: &Path) -> FileFormat {
         .map(|ext| match ext.to_lowercase().as_str() {
             "mcap" => FileFormat::Mcap,
             "bag" => FileFormat::Bag,
+            "rrd" => FileFormat::Rrd,
             _ => FileFormat::Unknown,
         })
         .unwrap_or(FileFormat::Unknown)
@@ -210,6 +223,13 @@ pub fn is_mcap_file<P: AsRef<Path>>(path: P) -> bool {
 /// This is a convenience function that only checks for bag format.
 pub fn is_bag_file<P: AsRef<Path>>(path: P) -> bool {
     matches!(detect_format(path), Ok(FileFormat::Bag))
+}
+
+/// Check if a file is likely an RRD file.
+///
+/// This is a convenience function that only checks for RRD format.
+pub fn is_rrd_file<P: AsRef<Path>>(path: P) -> bool {
+    matches!(detect_format(path), Ok(FileFormat::Rrd))
 }
 
 #[cfg(test)]

@@ -18,7 +18,7 @@ pub mod s3;
 
 // Re-exports
 pub use arena::{MmapArena, MmapArenaRef};
-pub use detection::{FormatDetector, detect_format, is_bag_file, is_mcap_file};
+pub use detection::{FormatDetector, detect_format, is_bag_file, is_mcap_file, is_rrd_file};
 pub use metadata::{
     ChannelInfo, FileFormat, FileInfo, MessageMetadata, RawMessage, TimestampedDecodedMessage,
 };

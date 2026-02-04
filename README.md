@@ -296,6 +296,7 @@ make build-python-dev
 |--------|------|-------|
 | MCAP | ✅ | ✅ |
 | ROS1 Bag | ✅ | ✅ |
+| RRF2 (Rerun) | ✅ | ✅ |
 
 ## Message Encodings
 

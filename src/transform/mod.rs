@@ -424,14 +424,118 @@ impl TransformBuilder {
 mod tests {
     use super::*;
 
+    // =========================================================================
+    // TransformError::Display tests
+    // =========================================================================
+
     #[test]
-    fn test_transform_error_display() {
+    fn test_transform_error_display_topic_collision() {
         let err = TransformError::TopicCollision {
             sources: vec!["/a".to_string(), "/b".to_string()],
             target: "/c".to_string(),
         };
         assert!(err.to_string().contains("Topic rename collision"));
+        assert!(err.to_string().contains("/c"));
     }
+
+    #[test]
+    fn test_transform_error_display_type_collision() {
+        let err = TransformError::TypeCollision {
+            sources: vec!["old::Type".to_string(), "old2::Type".to_string()],
+            target: "new::Type".to_string(),
+        };
+        assert!(err.to_string().contains("Type rename collision"));
+        assert!(err.to_string().contains("new::Type"));
+    }
+
+    #[test]
+    fn test_transform_error_display_invalid_rule() {
+        let err = TransformError::InvalidRule {
+            rule: "test_rule".to_string(),
+            reason: "is invalid".to_string(),
+        };
+        assert!(err.to_string().contains("Invalid rule"));
+        assert!(err.to_string().contains("test_rule"));
+        assert!(err.to_string().contains("is invalid"));
+    }
+
+    #[test]
+    fn test_transform_error_display_schema_transform_error() {
+        let err = TransformError::SchemaTransformError {
+            type_name: "test::Msg".to_string(),
+            reason: "parse failed".to_string(),
+        };
+        assert!(err.to_string().contains("Schema transform error"));
+        assert!(err.to_string().contains("test::Msg"));
+        assert!(err.to_string().contains("parse failed"));
+    }
+
+    #[test]
+    fn test_transform_error_display_not_found_topic() {
+        let err = TransformError::NotFound {
+            name: "/missing".to_string(),
+            kind: "topic",
+        };
+        assert!(err.to_string().contains("Cannot rename topic"));
+        assert!(err.to_string().contains("/missing"));
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_transform_error_display_not_found_type() {
+        let err = TransformError::NotFound {
+            name: "MissingType".to_string(),
+            kind: "type",
+        };
+        assert!(err.to_string().contains("Cannot rename type"));
+        assert!(err.to_string().contains("MissingType"));
+    }
+
+    // =========================================================================
+    // TransformError::Debug tests
+    // =========================================================================
+
+    #[test]
+    fn test_transform_error_debug() {
+        let err = TransformError::TopicCollision {
+            sources: vec!["/a".to_string()],
+            target: "/b".to_string(),
+        };
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("TopicCollision"));
+    }
+
+    // =========================================================================
+    // TransformError::Clone tests
+    // =========================================================================
+
+    #[test]
+    fn test_transform_error_clone() {
+        let err = TransformError::InvalidRule {
+            rule: "test".to_string(),
+            reason: "because".to_string(),
+        };
+        let cloned = err.clone();
+        assert_eq!(err.to_string(), cloned.to_string());
+    }
+
+    // =========================================================================
+    // TransformError::Error conversion tests
+    // =========================================================================
+
+    #[test]
+    fn test_transform_error_into_codec_error() {
+        let err = TransformError::NotFound {
+            name: "test".to_string(),
+            kind: "topic",
+        };
+        let codec_err: crate::CodecError = err.into();
+        assert!(codec_err.to_string().contains("Transform"));
+    }
+
+    // =========================================================================
+    // ChannelInfo tests
+    // =========================================================================
 
     #[test]
     fn test_channel_info_new() {
@@ -446,7 +550,106 @@ mod tests {
         assert_eq!(info.id, 1);
         assert_eq!(info.topic, "/test");
         assert_eq!(info.message_type, "std_msgs/String");
+        assert_eq!(info.encoding, "cdr");
+        assert_eq!(info.schema, Some("string data".to_string()));
+        assert_eq!(info.schema_encoding, Some("ros2msg".to_string()));
     }
+
+    #[test]
+    fn test_channel_info_new_without_schema() {
+        let info = ChannelInfo::new(
+            2,
+            "/test2".to_string(),
+            "std_msgs/Empty".to_string(),
+            "json".to_string(),
+            None,
+            None,
+        );
+        assert_eq!(info.id, 2);
+        assert_eq!(info.topic, "/test2");
+        assert_eq!(info.schema, None);
+        assert_eq!(info.schema_encoding, None);
+    }
+
+    #[test]
+    fn test_channel_info_from_reader_info() {
+        let reader_info = crate::io::ChannelInfo {
+            id: 5,
+            topic: "/camera".to_string(),
+            message_type: "sensor_msgs/Image".to_string(),
+            encoding: "cdr".to_string(),
+            schema: Some("Image schema".to_string()),
+            schema_data: None,
+            schema_encoding: Some("ros2msg".to_string()),
+            message_count: 100,
+            callerid: Some("/camera_node".to_string()),
+        };
+
+        let info = ChannelInfo::from_reader_info(&reader_info);
+        assert_eq!(info.id, 5);
+        assert_eq!(info.topic, "/camera");
+        assert_eq!(info.message_type, "sensor_msgs/Image");
+        assert_eq!(info.encoding, "cdr");
+        assert_eq!(info.schema, Some("Image schema".to_string()));
+        assert_eq!(info.schema_encoding, Some("ros2msg".to_string()));
+    }
+
+    // =========================================================================
+    // ChannelInfo::Debug tests
+    // =========================================================================
+
+    #[test]
+    fn test_channel_info_debug() {
+        let info = ChannelInfo::new(
+            1,
+            "/test".to_string(),
+            "test/Msg".to_string(),
+            "cdr".to_string(),
+            None,
+            None,
+        );
+        let debug_str = format!("{:?}", info);
+        assert!(debug_str.contains("ChannelInfo"));
+        assert!(debug_str.contains("/test"));
+    }
+
+    // =========================================================================
+    // TransformedChannel tests
+    // =========================================================================
+
+    #[test]
+    fn test_transformed_channel_debug() {
+        let channel = TransformedChannel {
+            original_id: 1,
+            topic: "/new_topic".to_string(),
+            message_type: "new/Msg".to_string(),
+            schema: Some("new schema".to_string()),
+            encoding: "cdr".to_string(),
+            schema_encoding: Some("ros2msg".to_string()),
+        };
+        let debug_str = format!("{:?}", channel);
+        assert!(debug_str.contains("TransformedChannel"));
+        assert!(debug_str.contains("/new_topic"));
+    }
+
+    #[test]
+    fn test_transformed_channel_clone() {
+        let channel = TransformedChannel {
+            original_id: 1,
+            topic: "/test".to_string(),
+            message_type: "test/Msg".to_string(),
+            schema: None,
+            encoding: "cdr".to_string(),
+            schema_encoding: None,
+        };
+        let cloned = channel.clone();
+        assert_eq!(cloned.original_id, 1);
+        assert_eq!(cloned.topic, "/test");
+    }
+
+    // =========================================================================
+    // TransformBuilder tests
+    // =========================================================================
 
     #[test]
     fn test_transform_builder_empty() {
@@ -461,5 +664,86 @@ mod tests {
             .with_type_rename("old_pkg/Msg", "new_pkg/Msg")
             .build();
         assert_eq!(pipeline.transform_count(), 2);
+    }
+
+    #[test]
+    fn test_transform_builder_with_wildcards() {
+        let pipeline = TransformBuilder::new()
+            .with_topic_rename_wildcard("/old/*", "/new/*")
+            .with_type_rename_wildcard("old_pkg/*", "new_pkg/*")
+            .build();
+        assert_eq!(pipeline.transform_count(), 2);
+    }
+
+    #[test]
+    fn test_transform_builder_with_topic_type_rename() {
+        let pipeline = TransformBuilder::new()
+            .with_topic_type_rename("/topic", "old/Type", "new/Type")
+            .build();
+        assert_eq!(pipeline.transform_count(), 1);
+    }
+
+    #[test]
+    fn test_transform_builder_combined() {
+        let pipeline = TransformBuilder::new()
+            .with_topic_rename("/old", "/new")
+            .with_topic_rename_wildcard("/wild/*", "/rewild/*")
+            .with_type_rename("old/Old", "new/New")
+            .with_type_rename_wildcard("old/*", "new/*")
+            .with_topic_type_rename("/specific", "old/Type", "new/Type")
+            .build();
+        assert_eq!(pipeline.transform_count(), 3); // topic, type, topic-type transforms
+    }
+
+    #[test]
+    fn test_transform_builder_multiple_same_type() {
+        let pipeline = TransformBuilder::new()
+            .with_topic_rename("/a", "/b")
+            .with_topic_rename("/c", "/d")
+            .build();
+        assert_eq!(pipeline.transform_count(), 1); // Single topic transform
+    }
+
+    // =========================================================================
+    // TransformBuilder::Default tests
+    // =========================================================================
+
+    #[test]
+    fn test_transform_builder_default() {
+        let builder = TransformBuilder::default();
+        let pipeline = builder.build();
+        assert_eq!(pipeline.transform_count(), 0);
+    }
+
+    // =========================================================================
+    // TransformBuilder chain tests
+    // =========================================================================
+
+    #[test]
+    fn test_transform_builder_chain_all_methods() {
+        let pipeline = TransformBuilder::new()
+            .with_topic_rename("/t1", "/t2")
+            .with_topic_rename_wildcard("/old/*", "/new/*")
+            .with_type_rename("old/Old", "new/New")
+            .with_type_rename_wildcard("old_pkg/*", "new_pkg/*")
+            .with_topic_type_rename("/topic", "src/Type", "dst/Type")
+            .with_topic_type_rename("/topic2", "src/Type2", "dst/Type2")
+            .build();
+        // Should create 3 transforms: topic rename, type rename, topic-aware type rename
+        assert!(pipeline.transform_count() >= 3);
+    }
+
+    // =========================================================================
+    // TransformError std::error::Error tests
+    // =========================================================================
+
+    #[test]
+    fn test_transform_error_as_error() {
+        let err = TransformError::InvalidRule {
+            rule: "test".to_string(),
+            reason: "failed".to_string(),
+        };
+        // Should work as std::error::Error
+        let _err: &dyn std::error::Error = &err;
     }
 }

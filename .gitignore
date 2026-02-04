@@ -27,6 +27,7 @@ wheels/
 *.egg
 .pytest_cache/
 .coverage
+lcov-rust.info
 htmlcov/
 .venv/
 venv/

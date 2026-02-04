@@ -1,0 +1,136 @@
+# S3 Integration Test Workflow
+#
+# This workflow sets up MinIO (S3-compatible server) and runs
+# integration tests for S3 streaming functionality.
+
+name: S3 Integration Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    paths:
+      - 'src/io/s3/**'
+      - 'tests/s3_integration_test.rs'
+      - 'tests/s3_tests.rs'
+      - '.github/workflows/test-s3.yml'
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+
+jobs:
+  s3-integration-tests:
+    name: S3 Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      minio:
+        image: quay.io/minio/minio:RELEASE.2024-01-16T16-07-38Z
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+          MINIO_DEFAULT_BUCKETS: robocodec-test
+        ports:
+          - 9000:9000
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt clippy
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-s3-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-s3-
+
+      - name: Build robocodec
+        run: cargo build --release
+
+      - name: Wait for MinIO to be ready
+        run: |
+          for i in {1..60}; do
+            if curl -f http://127.0.0.1:9000/minio/health/live 2>/dev/null || wget -q --spider http://127.0.0.1:9000/minio/health/live 2>/dev/null; then
+              echo "MinIO is ready"
+              break
+            fi
+            echo "Waiting for MinIO... ($i/60)"
+            sleep 1
+          done
+
+      - name: Install MinIO client
+        run: |
+          curl -sLo /tmp/mc https://dl.min.io/client/mc/release/linux-amd64/mc
+          chmod +x /tmp/mc
+          sudo mv /tmp/mc /usr/local/bin/mc
+
+      - name: Configure MinIO and upload test fixtures
+        run: |
+          mc alias set s3 http://127.0.0.1:9000 minioadmin minioadmin
+          mc mb s3/robocodec-test --ignore-existing
+
+          # Upload MCAP test fixtures
+          for f in tests/fixtures/robocodec_test_*.mcap; do
+            if [ -f "$f" ]; then
+              mc cp "$f" s3/robocodec-test/fixtures/
+            fi
+          done
+
+          # Upload BAG test fixtures
+          for f in tests/fixtures/robocodec_test_*.bag; do
+            if [ -f "$f" ]; then
+              mc cp "$f" s3/robocodec-test/fixtures/
+            fi
+          done
+
+          # Upload RRD test fixtures
+          if [ -d tests/fixtures/rrd ]; then
+            mc mirror tests/fixtures/rrd s3/robocodec-test/fixtures/rrd/
+          fi
+
+          # List uploaded files
+          mc ls s3/robocodec-test/fixtures/
+
+      - name: Set S3 endpoint environment variables
+        run: |
+          echo "S3_ENDPOINT=http://127.0.0.1:9000" >> $GITHUB_ENV
+          echo "S3_ACCESS_KEY=minioadmin" >> $GITHUB_ENV
+          echo "S3_SECRET_KEY=minioadmin" >> $GITHUB_ENV
+          echo "S3_BUCKET=robocodec-test" >> $GITHUB_ENV
+          echo "S3_REGION=us-east-1" >> $GITHUB_ENV
+
+      - name: Run S3 integration tests
+        run: cargo test --test s3_integration -- --test-threads=1
+        env:
+          S3_ENDPOINT: http://127.0.0.1:9000
+          S3_ACCESS_KEY: minioadmin
+          S3_SECRET_KEY: minioadmin
+          S3_BUCKET: robocodec-test
+          S3_REGION: us-east-1
+
+      - name: Run S3 unit tests
+        run: cargo test --package robocodec --lib io::s3 -- --test-threads=1
+        env:
+          S3_ENDPOINT: http://127.0.0.1:9000
+          S3_ACCESS_KEY: minioadmin
+          S3_SECRET_KEY: minioadmin
+          S3_BUCKET: robocodec-test
+          S3_REGION: us-east-1
+
+      - name: Run clippy on S3 module
+        run: cargo clippy --package robocodec -- -D warnings -D clippy::all
+        if: always()
+
+      - name: Format check
+        run: cargo fmt --package robocodec -- --check
+        if: always()

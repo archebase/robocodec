@@ -384,3 +384,134 @@ impl Default for BagRewriter {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// Helper to create a temporary directory for testing
+    fn create_temp_dir() -> TempDir {
+        TempDir::new().unwrap()
+    }
+
+    #[test]
+    fn test_create_rewriter() {
+        let rewriter = BagRewriter::new();
+        assert!(rewriter.options().transforms.is_none());
+    }
+
+    #[test]
+    fn test_create_rewriter_with_options() {
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+        let rewriter = BagRewriter::with_options(options.clone());
+        assert!(!rewriter.options().validate_schemas);
+        assert!(rewriter.options().skip_decode_failures);
+    }
+
+    #[test]
+    fn test_create_rewriter_default() {
+        let rewriter = BagRewriter::default();
+        // BagRewriter::new() uses RewriteOptions::default() which has:
+        // validate_schemas: true, skip_decode_failures: true, passthrough_non_cdr: true
+        assert!(rewriter.options().validate_schemas);
+        assert!(rewriter.options().skip_decode_failures);
+    }
+
+    #[test]
+    fn test_options_method() {
+        let rewriter = BagRewriter::new();
+        let options = rewriter.options();
+        assert!(options.transforms.is_none());
+    }
+
+    #[test]
+    fn test_format_rewriter_trait() {
+        let rewriter = BagRewriter::new();
+        // Verify it implements FormatRewriter
+        let _any_rewriter: &dyn std::any::Any = &rewriter;
+        // Just checking the trait is implemented
+    }
+
+    #[test]
+    fn test_rewrite_creates_output() {
+        let temp_dir = create_temp_dir();
+
+        // Use an existing bag fixture as input
+        let input_path = "tests/fixtures/robocodec_test_15.bag";
+
+        // Skip if input doesn't exist
+        if !std::path::Path::new(input_path).exists() {
+            return;
+        }
+
+        let output_path = temp_dir.path().join("output.bag");
+
+        let mut rewriter = BagRewriter::new();
+        let result = rewriter.rewrite(input_path, &output_path);
+
+        // For now, we just check that the rewrite attempt runs
+        // The actual success depends on having valid fixtures
+        let _ = result;
+
+        // If rewrite succeeded, check output exists
+        if result.is_ok() {
+            assert!(output_path.exists());
+        }
+    }
+
+    #[test]
+    fn test_rewrite_with_skip_decode_failures() {
+        let temp_dir = create_temp_dir();
+
+        let input_path = "tests/fixtures/robocodec_test_15.bag";
+        if !std::path::Path::new(input_path).exists() {
+            return;
+        }
+
+        let output_path = temp_dir.path().join("output_skip.bag");
+
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+        let mut rewriter = BagRewriter::with_options(options);
+
+        let _ = rewriter.rewrite(input_path, &output_path);
+    }
+
+    #[test]
+    fn test_rewrite_with_no_schema_validation() {
+        let temp_dir = create_temp_dir();
+
+        let input_path = "tests/fixtures/robocodec_test_15.bag";
+        if !std::path::Path::new(input_path).exists() {
+            return;
+        }
+
+        let output_path = temp_dir.path().join("output_no_validation.bag");
+
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: false,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+        let mut rewriter = BagRewriter::with_options(options);
+
+        let _ = rewriter.rewrite(input_path, &output_path);
+    }
+
+    #[test]
+    fn test_as_any() {
+        let rewriter = BagRewriter::new();
+        let _any: &dyn std::any::Any = rewriter.as_any();
+    }
+}

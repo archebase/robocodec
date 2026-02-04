@@ -222,6 +222,9 @@ impl WriterBuilder {
             crate::io::metadata::FileFormat::Bag => {
                 crate::io::formats::bag::BagFormat::create_writer(&path, &config)?
             }
+            crate::io::metadata::FileFormat::Rrd => {
+                crate::io::formats::rrd::RrdFormat::create_writer(&path, &config)?
+            }
             crate::io::metadata::FileFormat::Unknown => {
                 return Err(CodecError::parse("WriterBuilder", "Unknown file format"));
             }

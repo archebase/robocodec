@@ -1,0 +1,52 @@
+# Docker Compose for local development with MinIO S3 server
+#
+# Usage:
+#   make dev-up    # Start MinIO
+#   make dev-down  # Stop MinIO
+#
+# Or manually:
+#   docker compose -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.dev.yml down
+#
+# The MinIO server will be available at:
+#   - S3 API: http://localhost:9000
+#   - Web UI: http://localhost:9001
+#   - Access key: minioadmin
+#   - Secret key: minioadmin
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # Web UI
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_DEFAULT_BUCKETS=robocodec-test
+    volumes:
+      - minio-data:/data
+      - ./tests/fixtures:/fixtures:ro
+    # MinIO is ready shortly after starting - no healthcheck needed for local use
+
+  # Optional: mc (MinIO client) for managing buckets
+  mc:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+      sleep 5 &&
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb local/robocodec-test --ignore-existing &&
+      mc mirror /fixtures local/robocodec-test/fixtures/ &&
+      echo 'MinIO setup complete!' &&
+      sleep infinity
+      "
+    volumes:
+      - ./tests/fixtures:/fixtures:ro
+
+volumes:
+  minio-data:

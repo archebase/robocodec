@@ -386,6 +386,11 @@ impl S3Location {
         self.extension() == Some("mcap")
     }
 
+    /// Check if this location points to an RRD file.
+    pub fn is_rrd(&self) -> bool {
+        self.extension() == Some("rrd")
+    }
+
     /// Check if this location points to a BAG file.
     pub fn is_bag(&self) -> bool {
         self.extension() == Some("bag")
