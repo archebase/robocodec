@@ -190,29 +190,25 @@ jobs:
   s3-test:
     name: S3 Streaming Tests
     runs-on: ubuntu-latest
-    services:
-      minio:
-        image: minio/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-        ports:
-          - 9000:9000
-          - 9001:9001
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-          --health-start-period 5s
-          --entrypoint /usr/bin/minio
-          server /data --console-address ":9001"
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Start MinIO container
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest \
+            server /data --console-address ":9001"
+
+      - name: Wait for MinIO to be ready
+        run: |
+          timeout 60 bash -c 'until curl -f http://127.0.0.1:9000/minio/health/live; do sleep 1; done'
 
       - name: Install MinIO client
         run: |
