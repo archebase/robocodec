@@ -274,6 +274,7 @@ impl S3Location {
     /// assert_eq!(location.bucket(), "my-bucket");
     /// assert_eq!(location.key(), "path/to/file.mcap");
     /// ```
+    #[must_use]
     pub fn from_s3_url(url: &str) -> Result<Self, S3UrlParseError> {
         let url = url.trim();
 

@@ -104,6 +104,7 @@ impl S3Reader {
     /// # Arguments
     ///
     /// * `location` - The S3 location to open
+    #[must_use]
     pub async fn open(location: S3Location) -> Result<Self, FatalError> {
         Self::open_with_config(location, S3ReaderConfig::default()).await
     }
@@ -114,6 +115,7 @@ impl S3Reader {
     ///
     /// * `location` - The S3 location to open
     /// * `config` - Custom configuration for the reader
+    #[must_use]
     pub async fn open_with_config(
         location: S3Location,
         config: S3ReaderConfig,
@@ -675,7 +677,7 @@ impl FormatReader for S3Reader {
     }
 }
 
-// Empty channel map constant - use lazy_static for const HashMap
+// Empty channel map constant - use OnceLock for lazy initialization
 fn empty_channels() -> &'static HashMap<u16, ChannelInfo> {
     use std::sync::OnceLock;
     static EMPTY: OnceLock<HashMap<u16, ChannelInfo>> = OnceLock::new();

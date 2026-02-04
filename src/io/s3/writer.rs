@@ -92,6 +92,7 @@ impl S3Writer {
     ///
     /// * `location` - S3 location to write to
     /// * `client` - S3 client for upload operations
+    #[must_use]
     pub fn new(location: S3Location, client: S3Client) -> Result<Self> {
         Ok(Self {
             client,
@@ -115,6 +116,7 @@ impl S3Writer {
     /// * `location` - S3 location to write to
     /// * `client` - S3 client for upload operations
     /// * `part_size` - Part size for multipart upload (must be >= 5MB)
+    #[must_use]
     pub fn with_part_size(
         location: S3Location,
         client: S3Client,
