@@ -81,7 +81,7 @@ pub fn sign_request(
     let signed_headers = "host;x-amz-content-sha256;x-amz-date";
 
     // Add session token to signed headers if present
-    let signed_headers = if session_token.map_or(false, |t| !t.is_empty()) {
+    let signed_headers = if session_token.is_some_and(|t| !t.is_empty()) {
         "host;x-amz-content-sha256;x-amz-date;x-amz-security-token"
     } else {
         signed_headers
@@ -147,7 +147,7 @@ fn format_canonical_headers(headers: &HeaderMap) -> String {
                 canonical_headers.push_str(name);
                 canonical_headers.push(':');
                 canonical_headers.push_str(value_str.trim());
-                canonical_headers.push_str("\n");
+                canonical_headers.push('\n');
             }
         }
     }

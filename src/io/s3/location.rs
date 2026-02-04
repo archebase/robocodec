@@ -35,7 +35,7 @@ fn validate_bucket_name(bucket: &str) -> Result<(), S3UrlParseError> {
     let len = bucket.len();
 
     // Length check
-    if len < 3 || len > 63 {
+    if !(3..=63).contains(&len) {
         return Err(S3UrlParseError::InvalidBucketName);
     }
 
@@ -84,7 +84,7 @@ fn validate_endpoint(endpoint: &str) -> Result<(), S3UrlParseError> {
     let url = Url::parse(endpoint).map_err(|_| S3UrlParseError::InvalidEndpoint)?;
 
     // For testing, allow HTTP for localhost
-    let is_localhost = url.host_str().map_or(false, |host| {
+    let is_localhost = url.host_str().is_some_and(|host| {
         host == "localhost"
             || host.starts_with("127.0.0.1")
             || host.starts_with("[::1]")
@@ -274,7 +274,6 @@ impl S3Location {
     /// assert_eq!(location.bucket(), "my-bucket");
     /// assert_eq!(location.key(), "path/to/file.mcap");
     /// ```
-    #[must_use]
     pub fn from_s3_url(url: &str) -> Result<Self, S3UrlParseError> {
         let url = url.trim();
 

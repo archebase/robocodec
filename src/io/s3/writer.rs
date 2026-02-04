@@ -27,11 +27,12 @@ use crate::io::s3::{client::S3Client, error::FatalError, location::S3Location};
 ///
 /// # Multipart Upload
 ///
+/// Get or create a shared Tokio runtime for blocking async operations.
+///
 /// S3 multipart upload is used for efficient handling of large files:
 /// - Default part size: 5MB (S3 minimum)
 /// - Parts are uploaded sequentially during `finish()`
 /// - Maximum 10,000 parts per upload (50GB with default part size)
-/// Get or create a shared Tokio runtime for blocking async operations.
 ///
 /// This reuses a single runtime across all S3 operations, avoiding
 /// the overhead of creating a new runtime for each operation.
@@ -92,7 +93,6 @@ impl S3Writer {
     ///
     /// * `location` - S3 location to write to
     /// * `client` - S3 client for upload operations
-    #[must_use]
     pub fn new(location: S3Location, client: S3Client) -> Result<Self> {
         Ok(Self {
             client,
@@ -116,7 +116,6 @@ impl S3Writer {
     /// * `location` - S3 location to write to
     /// * `client` - S3 client for upload operations
     /// * `part_size` - Part size for multipart upload (must be >= 5MB)
-    #[must_use]
     pub fn with_part_size(
         location: S3Location,
         client: S3Client,
@@ -199,11 +198,10 @@ impl S3Writer {
         self.buffer.extend_from_slice(data);
 
         // Check if buffer exceeds part size
-        while self.buffer.len() >= self.part_size {
+        if self.buffer.len() >= self.part_size {
             // For async compatibility, we drain ready parts but don't upload yet
             // The actual upload happens in finish() with the tokio runtime
             // This is a limitation of the sync FormatWriter trait
-            break;
         }
 
         Ok(())

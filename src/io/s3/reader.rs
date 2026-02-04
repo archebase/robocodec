@@ -104,7 +104,6 @@ impl S3Reader {
     /// # Arguments
     ///
     /// * `location` - The S3 location to open
-    #[must_use]
     pub async fn open(location: S3Location) -> Result<Self, FatalError> {
         Self::open_with_config(location, S3ReaderConfig::default()).await
     }
@@ -115,7 +114,6 @@ impl S3Reader {
     ///
     /// * `location` - The S3 location to open
     /// * `config` - Custom configuration for the reader
-    #[must_use]
     pub async fn open_with_config(
         location: S3Location,
         config: S3ReaderConfig,
@@ -305,7 +303,10 @@ impl S3Reader {
                     }
                 }
                 OP_CHANNEL => {
-                    if let Ok(_) = self.parse_channel_record(body, &schemas, &mut channels) {
+                    if self
+                        .parse_channel_record(body, &schemas, &mut channels)
+                        .is_ok()
+                    {
                         // Channel added
                     }
                 }

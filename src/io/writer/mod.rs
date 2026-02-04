@@ -96,7 +96,12 @@ impl RoboWriter {
                             message: e.to_string(),
                         }
                     })?;
-                    Ok::<_, CodecError>(crate::io::s3::S3Writer::new(location, client)?)
+                    crate::io::s3::S3Writer::new(location, client).map_err(|e| {
+                        CodecError::EncodeError {
+                            codec: "S3".to_string(),
+                            message: e.to_string(),
+                        }
+                    })
                 })?;
                 return Ok(Self {
                     inner: Box::new(writer),

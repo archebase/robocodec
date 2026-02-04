@@ -300,9 +300,7 @@ mod streaming_tests {
             mcap_data.push(0x07); // OP_MESSAGE_INDEX
             mcap_data.extend_from_slice(&22u64.to_le_bytes());
             // Add dummy index data
-            for _ in 0..22 {
-                mcap_data.push(0);
-            }
+            mcap_data.extend_from_slice(&[0u8; 22]);
         }
 
         // DATA_END record
@@ -575,7 +573,7 @@ mod golden_tests {
         eprintln!("Regular reader: {} channels", reader.channels().len());
         eprintln!("Regular reader: {} messages", reader.message_count());
 
-        assert!(reader.channels().len() > 0, "Should have channels");
+        assert!(!reader.channels().is_empty(), "Should have channels");
         assert!(reader.message_count() > 0, "Should have messages");
     }
 
@@ -592,7 +590,7 @@ mod golden_tests {
         eprintln!("BAG reader: {} channels", reader.channels().len());
         eprintln!("BAG reader: {} messages", reader.message_count());
 
-        assert!(reader.channels().len() > 0, "Should have channels");
+        assert!(!reader.channels().is_empty(), "Should have channels");
         // Note: Some BAG files may have channels but no messages
     }
 }
@@ -623,8 +621,7 @@ mod wiremock_tests {
         let config = S3ReaderConfig::default();
         let client = S3Client::new(config).unwrap();
 
-        let location =
-            S3Location::new("test-bucket", "test.mcap").with_endpoint(&mock_server.uri());
+        let location = S3Location::new("test-bucket", "test.mcap").with_endpoint(mock_server.uri());
 
         let result = client.fetch_range(&location, 0, 11).await;
         assert!(result.is_ok());
@@ -644,7 +641,7 @@ mod wiremock_tests {
         let client = S3Client::new(config).unwrap();
 
         let location =
-            S3Location::new("test-bucket", "missing.mcap").with_endpoint(&mock_server.uri());
+            S3Location::new("test-bucket", "missing.mcap").with_endpoint(mock_server.uri());
 
         let result = client.fetch_range(&location, 0, 100).await;
         assert!(result.is_err());
@@ -663,8 +660,7 @@ mod wiremock_tests {
         let config = S3ReaderConfig::default();
         let client = S3Client::new(config).unwrap();
 
-        let location =
-            S3Location::new("test-bucket", "test.mcap").with_endpoint(&mock_server.uri());
+        let location = S3Location::new("test-bucket", "test.mcap").with_endpoint(mock_server.uri());
 
         let result = client.object_size(&location).await;
         assert!(result.is_ok());
@@ -685,7 +681,7 @@ mod wiremock_tests {
         let client = S3Client::new(config).unwrap();
 
         let location =
-            S3Location::new("test-bucket", "empty.mcap").with_endpoint(&mock_server.uri());
+            S3Location::new("test-bucket", "empty.mcap").with_endpoint(mock_server.uri());
 
         let result = client.fetch_range(&location, 0, 100).await;
         assert!(result.is_ok());
@@ -903,7 +899,7 @@ mod minio_tests {
 
         assert!(message_count > 0, "Should stream at least one message");
         assert!(
-            reader.channels().len() > 0,
+            !reader.channels().is_empty(),
             "Should have discovered channels"
         );
     }

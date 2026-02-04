@@ -27,7 +27,7 @@ pub struct S3Client {
 
 impl S3Client {
     /// Create a new S3 client with the given configuration.
-    #[must_use]
+    #[must_use = "client creation can fail if configuration is invalid"]
     pub fn new(config: S3ReaderConfig) -> Result<Self, FatalError> {
         config.validate().map_err(|e| FatalError::ConfigError {
             message: e.to_string(),
@@ -51,7 +51,6 @@ impl S3Client {
     }
 
     /// Create a new S3 client with default configuration.
-    #[must_use]
     pub fn default_client() -> Result<Self, FatalError> {
         Self::new(S3ReaderConfig::default())
     }
@@ -69,7 +68,6 @@ impl S3Client {
     /// # Returns
     ///
     /// The requested bytes as a `Bytes` object.
-    #[must_use]
     pub async fn fetch_range(
         &self,
         location: &S3Location,
@@ -109,7 +107,6 @@ impl S3Client {
     /// # Returns
     ///
     /// The requested bytes as a `Bytes` object.
-    #[must_use]
     pub async fn fetch_header(
         &self,
         location: &S3Location,
@@ -132,7 +129,6 @@ impl S3Client {
     /// # Returns
     ///
     /// The requested bytes as a `Bytes` object.
-    #[must_use]
     pub async fn fetch_tail(
         &self,
         location: &S3Location,
@@ -146,7 +142,6 @@ impl S3Client {
     /// Get the size of the S3 object.
     ///
     /// Uses a HEAD request to get the object metadata.
-    #[must_use]
     pub async fn object_size(&self, location: &S3Location) -> Result<u64, FatalError> {
         let url = location.url();
         let response = self
@@ -181,7 +176,6 @@ impl S3Client {
     /// # Returns
     ///
     /// The upload ID that must be used for subsequent upload_part calls.
-    #[must_use]
     pub async fn create_upload(&self, location: &S3Location) -> Result<String, FatalError> {
         let url = location.url();
         let response = self
@@ -239,7 +233,6 @@ impl S3Client {
     /// # Returns
     ///
     /// The ETag of the uploaded part, needed for complete_upload.
-    #[must_use]
     pub async fn upload_part(
         &self,
         location: &S3Location,
@@ -297,7 +290,6 @@ impl S3Client {
     /// * `location` - The S3 location
     /// * `upload_id` - The upload ID returned by create_upload
     /// * `parts` - List of (part_number, etag) tuples for each uploaded part
-    #[must_use]
     pub async fn complete_upload(
         &self,
         location: &S3Location,
@@ -353,7 +345,6 @@ impl S3Client {
     ///
     /// * `location` - The S3 location
     /// * `upload_id` - The upload ID to abort
-    #[must_use]
     pub async fn abort_upload(
         &self,
         location: &S3Location,
@@ -426,9 +417,9 @@ impl S3Client {
 
         // Sign the request if credentials are available
         if let Some(credentials) = self.config.credentials() {
-            if signer::should_sign(&credentials) {
+            if signer::should_sign(credentials) {
                 let region = location.region().unwrap_or(DEFAULT_AWS_REGION);
-                signer::sign_request(&credentials, region, "s3", method, &uri, &mut headers)
+                signer::sign_request(credentials, region, "s3", method, &uri, &mut headers)
                     .map_err(|e| FatalError::HttpError {
                         status: None,
                         message: format!("Failed to sign request: {}", e),
@@ -522,9 +513,9 @@ impl S3Client {
 
         // Sign the request if credentials are available
         if let Some(credentials) = self.config.credentials() {
-            if signer::should_sign(&credentials) {
+            if signer::should_sign(credentials) {
                 let region = location.region().unwrap_or(DEFAULT_AWS_REGION);
-                signer::sign_request(&credentials, region, "s3", method, &uri, &mut headers)
+                signer::sign_request(credentials, region, "s3", method, &uri, &mut headers)
                     .map_err(|e| FatalError::HttpError {
                         status: None,
                         message: format!("Failed to sign request: {}", e),
