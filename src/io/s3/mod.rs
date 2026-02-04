@@ -14,7 +14,9 @@ mod config;
 mod error;
 mod location;
 pub mod mcap_stream;
+pub mod parser;
 mod reader;
+pub mod rrd_stream;
 mod signer;
 mod writer;
 
@@ -28,6 +30,10 @@ pub use error::{FatalError, RecoverableError, S3Error};
 pub use location::S3Location;
 pub use mcap_stream::{
     ChannelRecordInfo, McapRecord, McapRecordHeader, MessageRecord, SchemaInfo, StreamingMcapParser,
+};
+pub use rrd_stream::{
+    Compression, MessageKind, RRD_STREAM_MAGIC, RrdMessageRecord, RrdStreamHeader,
+    StreamingRrdParser,
 };
 // Re-export MCAP magic from formats module
 pub use crate::io::formats::mcap::constants::MCAP_MAGIC;

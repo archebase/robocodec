@@ -25,6 +25,8 @@ use crate::io::s3::{
     error::FatalError,
     location::S3Location,
     mcap_stream::{MessageRecord, StreamingMcapParser},
+    parser::StreamingParser,
+    rrd_stream::{RrdMessageRecord, StreamingRrdParser},
 };
 use crate::io::traits::FormatReader;
 
@@ -123,9 +125,11 @@ impl S3Reader {
             crate::io::metadata::FileFormat::Mcap
         } else if location.is_bag() {
             crate::io::metadata::FileFormat::Bag
+        } else if location.is_rrd() {
+            crate::io::metadata::FileFormat::Rrd
         } else {
             return Err(FatalError::InvalidFormat {
-                expected: "MCAP or BAG file",
+                expected: "MCAP, BAG, or RRD file",
                 found: location.key().as_bytes().to_vec(),
             });
         };
@@ -157,9 +161,10 @@ impl S3Reader {
         let (channels, stream_position) = match self.format {
             crate::io::metadata::FileFormat::Mcap => self.initialize_mcap(file_size).await?,
             crate::io::metadata::FileFormat::Bag => self.initialize_bag(file_size).await?,
+            crate::io::metadata::FileFormat::Rrd => self.initialize_rrd(file_size).await?,
             _ => {
                 return Err(FatalError::InvalidFormat {
-                    expected: "MCAP or BAG",
+                    expected: "MCAP, BAG, or RRD",
                     found: vec![],
                 });
             }
@@ -534,6 +539,50 @@ impl S3Reader {
         self.parse_bag_header(&header_data)
     }
 
+    /// Initialize RRD reader.
+    async fn initialize_rrd(
+        &mut self,
+        _file_size: u64,
+    ) -> Result<(HashMap<u16, ChannelInfo>, u64), FatalError> {
+        // For RRD files, parse the header to discover channels
+        // RRD files have a fixed-size header with format metadata
+        let header_data = self
+            .client
+            .fetch_header(&self.location, 128) // RRD header is 32 bytes
+            .await?;
+
+        self.parse_rrd_header(&header_data)
+    }
+
+    /// Parse RRD header to discover channels.
+    fn parse_rrd_header(
+        &self,
+        data: &[u8],
+    ) -> Result<(HashMap<u16, ChannelInfo>, u64), FatalError> {
+        use crate::io::formats::rrd::constants::{RRD_MAGIC, STREAM_HEADER_SIZE};
+
+        if data.len() < STREAM_HEADER_SIZE {
+            return Err(FatalError::invalid_format(
+                "RRD header",
+                data[..data.len().min(20)].to_vec(),
+            ));
+        }
+
+        let magic = &data[0..4];
+        if magic != RRD_MAGIC {
+            return Err(FatalError::invalid_format(
+                "RRD magic (expected RRF2)",
+                magic.to_vec(),
+            ));
+        }
+
+        // Use streaming parser to discover channels
+        let mut parser = StreamingRrdParser::new();
+        let _ = parser.parse_chunk(data);
+
+        Ok((parser.channels().clone(), 0))
+    }
+
     /// Parse MCAP header to discover channels.
     ///
     /// This is a simple method used for testing. For production use,
@@ -740,6 +789,7 @@ pub struct S3MessageStream<'a> {
     /// Format-specific streaming parser state
     mcap_parser: Option<StreamingMcapParser>,
     bag_parser: Option<StreamingBagParser>,
+    rrd_parser: Option<StreamingRrdParser>,
     channels: HashMap<u16, ChannelInfo>,
 
     /// Current chunk of message data being processed
@@ -755,10 +805,11 @@ pub struct S3MessageStream<'a> {
     eof: bool,
 }
 
-/// Parsed message from either MCAP or BAG format.
+/// Parsed message from MCAP, BAG, or RRD format.
 enum ParsedMessage {
     Mcap(MessageRecord),
     Bag(BagMessageRecord),
+    Rrd(RrdMessageRecord),
 }
 
 impl ParsedMessage {
@@ -767,6 +818,7 @@ impl ParsedMessage {
         match self {
             ParsedMessage::Mcap(m) => m.channel_id as u32,
             ParsedMessage::Bag(b) => b.conn_id,
+            ParsedMessage::Rrd(r) => r.index as u32, // RRF2 uses message index
         }
     }
 
@@ -775,6 +827,7 @@ impl ParsedMessage {
         match self {
             ParsedMessage::Mcap(m) => m.data,
             ParsedMessage::Bag(b) => b.data,
+            ParsedMessage::Rrd(r) => r.data,
         }
     }
 
@@ -784,6 +837,7 @@ impl ParsedMessage {
         match self {
             ParsedMessage::Mcap(m) => m.log_time,
             ParsedMessage::Bag(b) => b.log_time,
+            ParsedMessage::Rrd(r) => r.index, // RRF2 uses message index as timestamp
         }
     }
 }
@@ -800,19 +854,21 @@ impl<'a> S3MessageStream<'a> {
             _ => (HashMap::new(), 0, 0),
         };
 
-        let (mcap_parser, bag_parser) = match reader.format {
+        let (mcap_parser, bag_parser, rrd_parser) = match reader.format {
             crate::io::metadata::FileFormat::Mcap => {
                 // Parser already initialized during header scan, create a new one for streaming
-                (Some(StreamingMcapParser::new()), None)
+                (Some(StreamingMcapParser::new()), None, None)
             }
-            crate::io::metadata::FileFormat::Bag => (None, Some(StreamingBagParser::new())),
-            _ => (None, None),
+            crate::io::metadata::FileFormat::Bag => (None, Some(StreamingBagParser::new()), None),
+            crate::io::metadata::FileFormat::Rrd => (None, None, Some(StreamingRrdParser::new())),
+            _ => (None, None, None),
         };
 
         Self {
             reader,
             mcap_parser,
             bag_parser,
+            rrd_parser,
             channels,
             pending_messages: Vec::new(),
             stream_position,
@@ -931,6 +987,15 @@ impl<'a> S3MessageStream<'a> {
                             {
                                 for msg in msgs {
                                     self.pending_messages.push(ParsedMessage::Bag(msg));
+                                }
+                            }
+                        }
+                        crate::io::metadata::FileFormat::Rrd => {
+                            if let Some(ref mut parser) = self.rrd_parser
+                                && let Ok(msgs) = parser.parse_chunk(&chunk_data)
+                            {
+                                for msg in msgs {
+                                    self.pending_messages.push(ParsedMessage::Rrd(msg));
                                 }
                             }
                         }
@@ -1113,5 +1178,42 @@ mod tests {
 
         let stream = S3MessageStream::new(&reader);
         assert_eq!(stream.stream_position, 1000);
+    }
+
+    #[test]
+    fn test_parsed_message_log_time() {
+        use crate::io::s3::bag_stream::BagMessageRecord;
+        use crate::io::s3::mcap_stream::MessageRecord;
+        use crate::io::s3::rrd_stream::{MessageKind, RrdMessageRecord};
+
+        // MCAP message has timestamp
+        let mcap_msg = MessageRecord {
+            channel_id: 1,
+            log_time: 12345,
+            publish_time: 12340,
+            data: vec![1, 2, 3],
+            sequence: 5,
+        };
+        let parsed = ParsedMessage::Mcap(mcap_msg);
+        assert_eq!(parsed.log_time(), 12345);
+
+        // BAG message has timestamp
+        let bag_msg = BagMessageRecord {
+            conn_id: 2,
+            log_time: 67890,
+            data: vec![4, 5, 6],
+        };
+        let parsed = ParsedMessage::Bag(bag_msg);
+        assert_eq!(parsed.log_time(), 67890);
+
+        // RRD message uses index as timestamp (RRF2 format limitation)
+        let rrd_msg = RrdMessageRecord {
+            kind: MessageKind::ArrowMsg,
+            topic: "/entity".to_string(),
+            data: vec![7, 8, 9],
+            index: 42,
+        };
+        let parsed = ParsedMessage::Rrd(rrd_msg);
+        assert_eq!(parsed.log_time(), 42); // Uses index as timestamp
     }
 }

@@ -311,8 +311,9 @@ impl RoboReader {
         }
 
         // Try RRD - use timestamped stream to get timestamps
-        if let Some(_rrd) = self.inner.as_any().downcast_ref::<RrdReader>() {
-            let rrd_stream = std::iter::empty();
+        if let Some(rrd) = self.inner.as_any().downcast_ref::<RrdReader>() {
+            let rrd_iter = rrd.decode_messages_with_timestamp()?;
+            let rrd_stream = rrd_iter.stream()?;
             return Ok(DecodedMessageIter {
                 inner: Inner::Rrd(rrd_stream),
             });

@@ -12,10 +12,19 @@ crate-type = ["rlib", "cdylib"]
 [[bin]]
 name = "robocodec"
 path = "src/bin/robocodec.rs"
+required-features = ["cli"]
 
 [[example]]
 name = "upload-fixtures"
 path = "scripts/upload-fixtures.rs"
+
+[[bin]]
+name = "generate_rrd_fixtures"
+path = "tests/generate_rrd_fixtures.rs"
+
+[[bin]]
+name = "generate_rrf2_fixtures"
+path = "tests/generate_rrf2_fixtures.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -51,9 +60,9 @@ tracing = "0.1"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 tikv-jemallocator = { version = "0.6", optional = true }
 pyo3 = { version = "0.25", features = ["abi3-py311", "extension-module"], optional = true }
-clap = { version = "4.5", features = ["derive"] }
-indicatif = "0.17"
-human-size = "0.4"
+clap = { version = "4.5", features = ["derive"], optional = true }
+indicatif = { version = "0.17", optional = true }
+human-size = { version = "0.4", optional = true }
 # S3 streaming support (gated behind s3 feature)
 reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false, optional = true }
 bytes = { version = "1.6", optional = true }
@@ -74,6 +83,7 @@ percent-encoding = { version = "2.3.2", optional = true }
 default = ["s3"]
 python = ["pyo3"]
 jemalloc = ["dep:tikv-jemallocator"]
+cli = ["clap", "indicatif", "human-size"]
 s3 = [
     "aws-config",
     "aws-credential-types",

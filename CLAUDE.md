@@ -81,6 +81,7 @@ Robocodec is a **format-centric** robotics data codec library with a layered arc
 - `src/io/writer/` - Unified writer API (RoboWriter, config)
 - `src/io/formats/mcap/` - MCAP format (read/write)
 - `src/io/formats/bag/` - ROS1 bag format (read/write)
+- `src/io/formats/rrd/` - RRF2 format (read/write)
 - `src/io/metadata.rs` - Unified types (ChannelInfo, RawMessage, DecodedMessageResult)
 - `src/io/traits.rs` - FormatReader, FormatWriter traits
 - `src/encoding/` - Message codecs (CDR, Protobuf, JSON)
@@ -177,6 +178,12 @@ As a staff Rust engineer, always follow these guidelines:
 - Use integration tests in `tests/` for cross-module testing
 - Test both success and error paths
 - Use descriptive test names (`test_round_trip_preserves_topics`)
+
+**Always use public API in tests** (`RoboReader`, `RoboWriter`):
+- Tests should verify the library works through its public interface
+- Never use format-specific types directly (e.g., `BagFormat`, `McapFormat`, `RrdFormat`)
+- This ensures the "chain of API" is tested - code changes that break the public API will fail tests
+- Example: `RoboReader::open(path).expect("...")` not `BagFormat::open(path)`
 
 ## Features
 

@@ -12,8 +12,6 @@ use std::collections::HashMap;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::sync::Arc;
-
-use byteorder::{LittleEndian, ReadBytesExt};
 use tracing::warn;
 
 use crate::core::{CodecError, DecodedMessage, Result};
@@ -47,27 +45,31 @@ impl RrdFormat {
     }
 }
 
-/// RRD file header.
+/// RRD file header (RRF2 stream header format).
+///
+/// The RRF2 stream header is 12 bytes:
+/// - fourcc (4 bytes): "RRF2"
+/// - version (4 bytes): [0, 0, 0, 1]
+/// - options (4 bytes): compression(1) + serializer(1) + reserved(2)
 #[derive(Debug, Clone)]
 pub struct RrdHeader {
-    /// Magic number ("RRD\0")
+    /// Magic number ("RRF2")
     pub magic: [u8; 4],
-    /// Format version
-    pub version: u16,
-    /// Flags (reserved for future use)
-    pub flags: u32,
-    /// Compression type (0=none, 1=lz4, 2=zstd)
+    /// Format version (4 bytes, e.g., [0, 0, 0, 1])
+    pub version: [u8; 4],
+    /// Compression type (0=off, 1=lz4)
     pub compression: u8,
-    /// Schema encoding (1=protobuf, 2=flatbuffers, 3=json)
-    pub schema_encoding: u8,
-    /// Chunk size
-    pub chunk_size: u32,
-    /// Number of chunks
-    pub chunk_count: u64,
+    /// Serializer type (2=msgpack, 3=protobuf)
+    pub serializer: u8,
 }
 
 impl RrdHeader {
-    /// Read the RRD header from a file.
+    /// Read the RRF2 stream header from a file.
+    ///
+    /// The RRF2 stream header is 12 bytes:
+    /// - magic (4): "RRF2"
+    /// - version (4): [0, 0, 0, 1]
+    /// - options (4): compression(1) + serializer(1) + reserved(2)
     fn read<R: Read>(reader: &mut R) -> Result<Self> {
         let mut magic = [0u8; 4];
         reader
@@ -84,87 +86,53 @@ impl RrdHeader {
             ));
         }
 
-        let version = reader
-            .read_u16::<LittleEndian>()
+        let mut version = [0u8; 4];
+        reader
+            .read_exact(&mut version)
             .map_err(|e| CodecError::parse("RRD", format!("Failed to read version: {}", e)))?;
 
-        let flags = reader
-            .read_u32::<LittleEndian>()
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read flags: {}", e)))?;
-
-        let compression = reader
-            .read_u8()
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read compression: {}", e)))?;
-
-        let schema_encoding = reader.read_u8().map_err(|e| {
-            CodecError::parse("RRD", format!("Failed to read schema encoding: {}", e))
-        })?;
-
-        // Skip 2 bytes (reserved)
-        let mut reserved = [0u8; 2];
+        // Read encoding options (4 bytes)
+        let mut options = [0u8; 4];
         reader
-            .read_exact(&mut reserved)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read reserved: {}", e)))?;
+            .read_exact(&mut options)
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read options: {}", e)))?;
 
-        let chunk_size = reader
-            .read_u32::<LittleEndian>()
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read chunk size: {}", e)))?;
+        let compression = options[0];
+        let serializer = options[1];
 
-        // Skip 4 bytes (reserved)
-        let mut reserved2 = [0u8; 4];
-        reader
-            .read_exact(&mut reserved2)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read reserved2: {}", e)))?;
-
-        let chunk_count = reader
-            .read_u64::<LittleEndian>()
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read chunk count: {}", e)))?;
+        // Check reserved bytes are zero
+        if options[2] != 0 || options[3] != 0 {
+            warn!(
+                context = "rrd_reader",
+                "Non-zero reserved bytes in RRF2 header"
+            );
+        }
 
         Ok(Self {
             magic,
             version,
-            flags,
             compression,
-            schema_encoding,
-            chunk_size,
-            chunk_count,
+            serializer,
         })
     }
 
     /// Get the compression name for this header.
     fn compression_name(&self) -> &'static str {
         match self.compression {
-            COMPRESSION_NONE => "none",
+            COMPRESSION_OFF => "off",
             COMPRESSION_LZ4 => "lz4",
-            COMPRESSION_ZSTD => "zstd",
             _ => "unknown",
         }
     }
 
-    /// Get the schema encoding name for this header.
-    fn schema_encoding_name(&self) -> &'static str {
-        match self.schema_encoding {
-            SCHEMA_ENCODING_PROTOBUF => "protobuf",
-            SCHEMA_ENCODING_FLATBUFFERS => "flatbuffers",
-            SCHEMA_ENCODING_JSON => "json",
+    /// Get the serializer name for this header.
+    fn serializer_name(&self) -> &'static str {
+        match self.serializer {
+            SERIALIZER_MSGPACK => "msgpack",
+            SERIALIZER_PROTOBUF => "protobuf",
             _ => "unknown",
         }
     }
-}
-
-/// Chunk index entry for fast seeking.
-#[derive(Debug, Clone)]
-struct ChunkIndex {
-    /// Chunk offset in file
-    pub offset: u64,
-    /// Chunk size in bytes (compressed)
-    pub size: u32,
-    /// Uncompressed size
-    pub uncompressed_size: u32,
-    /// Start timestamp (nanoseconds)
-    pub time_start: u64,
-    /// End timestamp (nanoseconds)
-    pub time_end: u64,
 }
 
 /// Robotics data reader - handles RRD files with automatic encoding detection.
@@ -183,8 +151,6 @@ pub struct RrdReader {
     end_time: Option<u64>,
     /// File size
     file_size: u64,
-    /// Chunk index for fast seeking
-    chunk_index: Vec<ChunkIndex>,
     /// Decoders for different encodings
     cdr_decoder: Arc<CdrDecoder>,
     proto_decoder: Arc<ProtobufDecoder>,
@@ -217,14 +183,12 @@ impl RrdReader {
         let mut reader = BufReader::new(file);
         let header = RrdHeader::read(&mut reader)?;
 
-        // Validate version
-        if header.version > RRD_VERSION {
+        // Validate version (RRF2 version is [0, 0, 0, 1])
+        // For now, we accept any version that starts with 0.0.0.x
+        if header.version[0] != 0 || header.version[1] != 0 || header.version[2] != 0 {
             return Err(CodecError::parse(
                 "RRD",
-                format!(
-                    "Unsupported version: {} (supported: up to {})",
-                    header.version, RRD_VERSION
-                ),
+                format!("Unsupported version: {:?}", header.version),
             ));
         }
 
@@ -233,30 +197,21 @@ impl RrdReader {
         let default_channel = ChannelInfo {
             id: 0,
             topic: DEFAULT_TOPIC.to_string(),
-            message_type: "rerun.DataCell".to_string(),
+            message_type: "rerun.ArrowMsg".to_string(),
             encoding: MESSAGE_ENCODING_PROTOBUF.to_string(),
             schema: None,
             schema_data: None,
-            schema_encoding: Some(header.schema_encoding_name().to_string()),
+            schema_encoding: Some(header.serializer_name().to_string()),
             message_count: 0,
             callerid: None,
         };
         channels.insert(0, default_channel);
 
-        // Read chunk index from end of file if available
-        let chunk_index = Self::read_chunk_index(&path_str, &header, file_size)?;
-
-        // Calculate message count from chunks
-        let message_count = chunk_index.iter().map(|_| 1u64).sum(); // Placeholder
-
-        // Get time range from chunks
-        let (start_time, end_time) = if !chunk_index.is_empty() {
-            let start = chunk_index.first().map(|c| c.time_start).unwrap_or(0);
-            let end = chunk_index.last().map(|c| c.time_end).unwrap_or(0);
-            (Some(start), Some(end))
-        } else {
-            (None, None)
-        };
+        // Note: RRF2 doesn't use chunk-based indexing like legacy RRD
+        // Message count and timestamps are not available without parsing all messages
+        let message_count = 0;
+        let start_time = None;
+        let end_time = None;
 
         if channels.is_empty() {
             warn!(context = "rrd_reader", "No channels found in RRD file");
@@ -270,32 +225,10 @@ impl RrdReader {
             start_time,
             end_time,
             file_size,
-            chunk_index,
             cdr_decoder: Arc::new(CdrDecoder::new()),
             proto_decoder: Arc::new(ProtobufDecoder::new()),
             json_decoder: Arc::new(JsonDecoder::new()),
         })
-    }
-
-    /// Read the chunk index from the end of the file.
-    fn read_chunk_index(path: &str, header: &RrdHeader, file_size: u64) -> Result<Vec<ChunkIndex>> {
-        let _file = std::fs::File::open(path).map_err(|e| {
-            CodecError::parse("RRD", format!("Failed to open file for index: {}", e))
-        })?;
-
-        // For now, return empty index (full implementation would read index from end)
-        let index = Vec::new();
-
-        // If the file has at least header + footer, try to read the index
-        if file_size > (HEADER_SIZE + FOOTER_SIZE) as u64 {
-            // Skip to potential index position
-            let index_offset = file_size - FOOTER_SIZE as u64 - (header.chunk_count * 24);
-            if index_offset > HEADER_SIZE as u64 {
-                // TODO: Implement actual index reading
-            }
-        }
-
-        Ok(index)
     }
 
     /// Get all channel information.
@@ -337,10 +270,7 @@ impl RrdReader {
     ///
     /// An iterator yielding `(DecodedMessage, ChannelInfo)` tuples.
     pub fn decode_messages(&self) -> Result<DecodedMessageIter<'_>> {
-        Ok(DecodedMessageIter {
-            reader: self,
-            current_index: 0,
-        })
+        DecodedMessageIter::new(self)
     }
 
     /// Iterate over decoded messages with timestamps.
@@ -351,15 +281,15 @@ impl RrdReader {
     ///
     /// An iterator yielding `(TimestampedDecodedMessage, ChannelInfo)` tuples.
     pub fn decode_messages_with_timestamp(&self) -> Result<DecodedMessageWithTimestampIter<'_>> {
-        Ok(DecodedMessageWithTimestampIter {
-            reader: self,
-            current_index: 0,
-        })
+        DecodedMessageWithTimestampIter::new(self)
     }
 
-    /// Get the chunk count.
+    /// Get the chunk count (always 0 for RRF2).
+    ///
+    /// RRF2 doesn't use chunk-based indexing like legacy RRD formats.
+    /// This method returns 0 to indicate no chunk information is available.
     pub fn chunk_count(&self) -> usize {
-        self.chunk_index.len()
+        0
     }
 
     /// Get the RRD header.
@@ -410,21 +340,137 @@ impl FormatReader for RrdReader {
 pub struct DecodedMessageIter<'a> {
     /// Reference to the reader
     reader: &'a RrdReader,
-    /// Current chunk index
+    /// Parsed messages from the file
+    messages: Vec<(Vec<u8>, String)>,
+    /// Current position in messages
     current_index: usize,
+}
+
+impl<'a> DecodedMessageIter<'a> {
+    /// Create a new iterator from the reader.
+    fn new(reader: &'a RrdReader) -> Result<Self> {
+        let messages = Self::parse_messages(reader)?;
+        Ok(Self {
+            reader,
+            messages,
+            current_index: 0,
+        })
+    }
+
+    /// Parse all messages from the RRD file.
+    fn parse_messages(reader: &RrdReader) -> Result<Vec<(Vec<u8>, String)>> {
+        use std::io::Read;
+
+        use super::constants::{
+            MESSAGE_HEADER_SIZE, MSG_KIND_ARROW_MSG, MSG_KIND_END, MSG_KIND_SET_STORE_INFO,
+            RRD_MAGIC, STREAM_FOOTER_SIZE, STREAM_HEADER_SIZE,
+        };
+
+        let mut file = std::fs::File::open(&reader.path)
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to open file: {}", e)))?;
+
+        // Skip stream header (STREAM_HEADER_SIZE bytes)
+        let mut header_buf = vec![0u8; STREAM_HEADER_SIZE];
+        file.read_exact(&mut header_buf)
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read header: {}", e)))?;
+
+        // Verify magic
+        if &header_buf[0..4] != RRD_MAGIC {
+            return Err(CodecError::parse(
+                "RRD",
+                format!("Invalid magic: {:?}", &header_buf[0..4]),
+            ));
+        }
+
+        let mut messages = Vec::new();
+        let mut data_buf = Vec::new();
+
+        // Read remaining file data
+        file.read_to_end(&mut data_buf)
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read data: {}", e)))?;
+
+        let mut pos = 0;
+
+        // Parse messages until we reach the footer
+        while pos + MESSAGE_HEADER_SIZE <= data_buf.len() {
+            // Check if we're at the footer (last 32 bytes)
+            if pos + STREAM_FOOTER_SIZE <= data_buf.len() {
+                let footer_start = data_buf.len() - STREAM_FOOTER_SIZE;
+                if pos >= footer_start {
+                    break;
+                }
+            }
+
+            // Read message header: kind(u64 le) + len(u64 le)
+            let kind = u64::from_le_bytes(data_buf[pos..pos + 8].try_into().unwrap_or([0u8; 8]));
+            let len = u64::from_le_bytes(data_buf[pos + 8..pos + 16].try_into().unwrap_or([0u8; 8]))
+                as usize;
+
+            pos += MESSAGE_HEADER_SIZE;
+
+            // Check for end marker
+            if kind == MSG_KIND_END {
+                break;
+            }
+
+            // Extract topic based on message kind
+            let topic = match kind {
+                MSG_KIND_ARROW_MSG => "/".to_string(),
+                MSG_KIND_SET_STORE_INFO => "/store/info".to_string(),
+                _ => "/".to_string(),
+            };
+
+            // Read payload if we have data
+            if pos + len <= data_buf.len() {
+                let payload = data_buf[pos..pos + len].to_vec();
+                messages.push((payload, topic));
+                pos += len;
+            } else {
+                break;
+            }
+        }
+
+        Ok(messages)
+    }
 }
 
 impl<'a> Iterator for DecodedMessageIter<'a> {
     type Item = Result<(DecodedMessage, ChannelInfo)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // For now, return None (placeholder implementation)
-        // Full implementation would:
-        // 1. Read next chunk from file
-        // 2. Decompress (LZ4 or Zstd)
-        // 3. Parse messages
-        // 4. Decode based on channel encoding
-        None
+        use crate::core::CodecValue;
+
+        if self.current_index >= self.messages.len() {
+            return None;
+        }
+
+        let (data, topic) = &self.messages[self.current_index];
+        self.current_index += 1;
+
+        // Get channel info
+        let channel = self
+            .reader
+            .channels()
+            .get(&0)
+            .cloned()
+            .unwrap_or_else(|| ChannelInfo {
+                id: 0,
+                topic: topic.clone(),
+                message_type: "rerun.ArrowMsg".to_string(),
+                encoding: "protobuf".to_string(),
+                schema: None,
+                schema_data: None,
+                schema_encoding: Some("protobuf".to_string()),
+                message_count: 0,
+                callerid: None,
+            });
+
+        // Create decoded message with raw data as bytes field
+        // RRF2 messages are Protobuf-encoded; we store the raw payload
+        let mut decoded = DecodedMessage::new();
+        decoded.insert("data".to_string(), CodecValue::Bytes(data.clone()));
+
+        Some(Ok((decoded, channel)))
     }
 }
 
@@ -432,16 +478,193 @@ impl<'a> Iterator for DecodedMessageIter<'a> {
 pub struct DecodedMessageWithTimestampIter<'a> {
     /// Reference to the reader
     reader: &'a RrdReader,
-    /// Current chunk index
+    /// Parsed messages from the file
+    messages: Vec<(Vec<u8>, String)>,
+    /// Current position in messages
     current_index: usize,
+    /// Current message timestamp (nanoseconds, RRF2 doesn't have per-message timestamps)
+    current_timestamp: u64,
+}
+
+impl<'a> DecodedMessageWithTimestampIter<'a> {
+    /// Create a new iterator from the reader.
+    fn new(reader: &'a RrdReader) -> Result<Self> {
+        let messages = Self::parse_messages(reader)?;
+        // RRF2 doesn't have timestamps at message level, use a reasonable default
+        let start_timestamp = reader.start_time.unwrap_or(0);
+        Ok(Self {
+            reader,
+            messages,
+            current_index: 0,
+            current_timestamp: start_timestamp,
+        })
+    }
+
+    /// Parse all messages from the RRD file.
+    fn parse_messages(reader: &RrdReader) -> Result<Vec<(Vec<u8>, String)>> {
+        use std::io::Read;
+
+        use super::constants::{
+            MESSAGE_HEADER_SIZE, MSG_KIND_ARROW_MSG, MSG_KIND_END, MSG_KIND_SET_STORE_INFO,
+            RRD_MAGIC, STREAM_FOOTER_SIZE, STREAM_HEADER_SIZE,
+        };
+
+        let mut file = std::fs::File::open(&reader.path)
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to open file: {}", e)))?;
+
+        // Skip stream header (STREAM_HEADER_SIZE bytes)
+        let mut header_buf = vec![0u8; STREAM_HEADER_SIZE];
+        file.read_exact(&mut header_buf)
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read header: {}", e)))?;
+
+        // Verify magic
+        if &header_buf[0..4] != RRD_MAGIC {
+            return Err(CodecError::parse(
+                "RRD",
+                format!("Invalid magic: {:?}", &header_buf[0..4]),
+            ));
+        }
+
+        let mut messages = Vec::new();
+        let mut data_buf = Vec::new();
+
+        // Read remaining file data
+        file.read_to_end(&mut data_buf)
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read data: {}", e)))?;
+
+        let mut pos = 0;
+
+        // Parse messages until we reach the footer
+        while pos + MESSAGE_HEADER_SIZE <= data_buf.len() {
+            // Check if we're at the footer (last 32 bytes)
+            if pos + STREAM_FOOTER_SIZE <= data_buf.len() {
+                let footer_start = data_buf.len() - STREAM_FOOTER_SIZE;
+                if pos >= footer_start {
+                    break;
+                }
+            }
+
+            // Read message header: kind(u64 le) + len(u64 le)
+            let kind = u64::from_le_bytes(data_buf[pos..pos + 8].try_into().unwrap_or([0u8; 8]));
+            let len = u64::from_le_bytes(data_buf[pos + 8..pos + 16].try_into().unwrap_or([0u8; 8]))
+                as usize;
+
+            pos += MESSAGE_HEADER_SIZE;
+
+            // Check for end marker
+            if kind == MSG_KIND_END {
+                break;
+            }
+
+            // Extract topic based on message kind
+            let topic = match kind {
+                MSG_KIND_ARROW_MSG => "/".to_string(),
+                MSG_KIND_SET_STORE_INFO => "/store/info".to_string(),
+                _ => "/".to_string(),
+            };
+
+            // Read payload if we have data
+            if pos + len <= data_buf.len() {
+                let payload = data_buf[pos..pos + len].to_vec();
+                messages.push((payload, topic));
+                pos += len;
+            } else {
+                break;
+            }
+        }
+
+        Ok(messages)
+    }
+
+    /// Create a stream for use with the unified API.
+    pub fn stream(
+        self,
+    ) -> Result<std::vec::IntoIter<Result<(TimestampedDecodedMessage, ChannelInfo)>>> {
+        use crate::core::CodecValue;
+
+        let mut results = Vec::new();
+        let start_timestamp = self.current_timestamp;
+
+        for (index, (data, topic)) in self.messages.into_iter().enumerate() {
+            let channel = self
+                .reader
+                .channels()
+                .get(&0)
+                .cloned()
+                .unwrap_or_else(|| ChannelInfo {
+                    id: 0,
+                    topic: topic.clone(),
+                    message_type: "rerun.ArrowMsg".to_string(),
+                    encoding: "protobuf".to_string(),
+                    schema: None,
+                    schema_data: None,
+                    schema_encoding: Some("protobuf".to_string()),
+                    message_count: 0,
+                    callerid: None,
+                });
+
+            // Create decoded message with raw data as bytes field
+            let mut message = DecodedMessage::new();
+            message.insert("data".to_string(), CodecValue::Bytes(data));
+
+            let timestamped = TimestampedDecodedMessage {
+                message,
+                log_time: start_timestamp + index as u64,
+                publish_time: start_timestamp + index as u64,
+            };
+
+            results.push(Ok((timestamped, channel)));
+        }
+
+        Ok(results.into_iter())
+    }
 }
 
 impl<'a> Iterator for DecodedMessageWithTimestampIter<'a> {
     type Item = Result<(TimestampedDecodedMessage, ChannelInfo)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // For now, return None (placeholder implementation)
-        None
+        use crate::core::CodecValue;
+
+        if self.current_index >= self.messages.len() {
+            return None;
+        }
+
+        let (data, topic) = &self.messages[self.current_index];
+        self.current_index += 1;
+
+        // Get channel info
+        let channel = self
+            .reader
+            .channels()
+            .get(&0)
+            .cloned()
+            .unwrap_or_else(|| ChannelInfo {
+                id: 0,
+                topic: topic.clone(),
+                message_type: "rerun.ArrowMsg".to_string(),
+                encoding: "protobuf".to_string(),
+                schema: None,
+                schema_data: None,
+                schema_encoding: Some("protobuf".to_string()),
+                message_count: 0,
+                callerid: None,
+            });
+
+        // Create decoded message with raw data as bytes field
+        let mut message = DecodedMessage::new();
+        message.insert("data".to_string(), CodecValue::Bytes(data.clone()));
+
+        // Create timestamped decoded message
+        let timestamped = TimestampedDecodedMessage {
+            message,
+            log_time: self.current_timestamp,
+            publish_time: self.current_timestamp,
+        };
+
+        self.current_timestamp += 1;
+
+        Some(Ok((timestamped, channel)))
     }
 }
 
@@ -449,7 +672,7 @@ impl<'a> Iterator for DecodedMessageWithTimestampIter<'a> {
 ///
 /// This type alias is used for compatibility with the unified API.
 pub type DecodedMessageWithTimestampStream<'a> =
-    std::iter::Empty<Result<(TimestampedDecodedMessage, ChannelInfo)>>;
+    std::vec::IntoIter<Result<(TimestampedDecodedMessage, ChannelInfo)>>;
 
 #[cfg(test)]
 mod tests {
@@ -458,36 +681,31 @@ mod tests {
 
     #[test]
     fn test_rrd_magic() {
-        assert_eq!(RRD_MAGIC, b"RRD\0");
-        assert_eq!(RRD_FOOTER_MAGIC, b"RRD\0");
+        // RRF2 is the current Rerun RRD format
+        assert_eq!(RRD_MAGIC, b"RRF2");
+        assert_eq!(RRD_FOOTER_MAGIC, b"FOOT");
     }
 
     #[test]
     fn test_constants() {
-        assert_eq!(RRD_VERSION, 1);
-        assert_eq!(DEFAULT_CHUNK_SIZE, 256 * 1024);
-        assert_eq!(MAX_CHUNK_SIZE, 16 * 1024 * 1024);
+        // RRF2 uses 4-byte version
+        assert_eq!(RRD_VERSION, [0, 0, 0, 1]);
+        assert_eq!(COMPRESSION_OFF, 0);
         assert_eq!(COMPRESSION_LZ4, 1);
-        assert_eq!(COMPRESSION_ZSTD, 2);
-        assert_eq!(COMPRESSION_NONE, 0);
-        assert_eq!(SCHEMA_ENCODING_PROTOBUF, 1);
-        assert_eq!(SCHEMA_ENCODING_FLATBUFFERS, 2);
-        assert_eq!(SCHEMA_ENCODING_JSON, 3);
+        assert_eq!(SERIALIZER_MSGPACK, 1);
+        assert_eq!(SERIALIZER_PROTOBUF, 2);
     }
 
     #[test]
     fn test_compression_names() {
         let header = RrdHeader {
             magic: *RRD_MAGIC,
-            version: 1,
-            flags: 0,
-            compression: COMPRESSION_NONE,
-            schema_encoding: SCHEMA_ENCODING_PROTOBUF,
-            chunk_size: DEFAULT_CHUNK_SIZE as u32,
-            chunk_count: 0,
+            version: RRD_VERSION,
+            compression: COMPRESSION_OFF,
+            serializer: SERIALIZER_PROTOBUF,
         };
-        assert_eq!(header.compression_name(), "none");
-        assert_eq!(header.schema_encoding_name(), "protobuf");
+        assert_eq!(header.compression_name(), "off");
+        assert_eq!(header.serializer_name(), "protobuf");
     }
 
     #[test]
@@ -499,18 +717,19 @@ mod tests {
     fn create_test_rrd_file(path: &str) -> std::io::Result<()> {
         let mut file = std::fs::File::create(path)?;
 
-        // Write header
-        file.write_all(RRD_MAGIC)?;
-        file.write_all(&1u16.to_le_bytes())?; // version
-        file.write_all(&0u32.to_le_bytes())?; // flags
-        file.write_all(&[COMPRESSION_LZ4])?; // compression
-        file.write_all(&[SCHEMA_ENCODING_PROTOBUF])?; // schema encoding
-        file.write_all(&[0u8, 0u8])?; // reserved
-        file.write_all(&(DEFAULT_CHUNK_SIZE as u32).to_le_bytes())?; // chunk size
-        file.write_all(&[0u8; 4])?; // reserved
-        file.write_all(&0u64.to_le_bytes())?; // chunk count
+        // Write RRF2 stream header (12 bytes): fourcc(4) + version(4) + options(4)
+        file.write_all(RRD_MAGIC)?; // fourcc: "RRF2"
+        file.write_all(&RRD_VERSION)?; // version: [0, 0, 0, 1]
 
-        // Write footer (minimal)
+        // Write options: compression(1) + serializer(1) + reserved(2)
+        file.write_all(&[COMPRESSION_OFF])?; // compression
+        file.write_all(&[SERIALIZER_PROTOBUF])?; // serializer
+        file.write_all(&[0u8, 0u8])?; // reserved
+
+        // Write RRF2 stream footer (32 bytes)
+        // For an empty file, just write zeros with the footer magic at the end
+        let footer_data = vec![0u8; STREAM_FOOTER_SIZE - RRD_FOOTER_MAGIC.len()];
+        file.write_all(&footer_data)?;
         file.write_all(RRD_FOOTER_MAGIC)?;
 
         Ok(())
@@ -534,21 +753,6 @@ mod tests {
         assert!(result.is_err());
 
         std::fs::remove_file(&temp_path).ok();
-    }
-
-    #[test]
-    fn test_chunk_index() {
-        let index = ChunkIndex {
-            offset: 100,
-            size: 1024,
-            uncompressed_size: 2048,
-            time_start: 1000,
-            time_end: 2000,
-        };
-        assert_eq!(index.offset, 100);
-        assert_eq!(index.size, 1024);
-        assert_eq!(index.time_start, 1000);
-        assert_eq!(index.time_end, 2000);
     }
 
     #[test]
@@ -664,8 +868,9 @@ mod tests {
 
         let reader = RrdReader::open(&temp_path).unwrap();
         let header = reader.header();
-        assert_eq!(header.version, 1);
-        assert_eq!(header.compression, COMPRESSION_LZ4);
+        assert_eq!(header.version, RRD_VERSION);
+        assert_eq!(header.compression, COMPRESSION_OFF);
+        assert_eq!(header.serializer, SERIALIZER_PROTOBUF);
 
         std::fs::remove_file(&temp_path).ok();
     }
@@ -674,26 +879,17 @@ mod tests {
     fn test_all_compression_names() {
         let header = RrdHeader {
             magic: *RRD_MAGIC,
-            version: 1,
-            flags: 0,
+            version: RRD_VERSION,
             compression: COMPRESSION_LZ4,
-            schema_encoding: SCHEMA_ENCODING_PROTOBUF,
-            chunk_size: DEFAULT_CHUNK_SIZE as u32,
-            chunk_count: 0,
+            serializer: SERIALIZER_PROTOBUF,
         };
         assert_eq!(header.compression_name(), "lz4");
 
-        let header_zstd = RrdHeader {
-            compression: COMPRESSION_ZSTD,
+        let header_off = RrdHeader {
+            compression: COMPRESSION_OFF,
             ..header
         };
-        assert_eq!(header_zstd.compression_name(), "zstd");
-
-        let header_none = RrdHeader {
-            compression: COMPRESSION_NONE,
-            ..header
-        };
-        assert_eq!(header_none.compression_name(), "none");
+        assert_eq!(header_off.compression_name(), "off");
 
         let header_unknown = RrdHeader {
             compression: 255,
@@ -703,35 +899,26 @@ mod tests {
     }
 
     #[test]
-    fn test_all_schema_encoding_names() {
+    fn test_all_serializer_names() {
         let header = RrdHeader {
             magic: *RRD_MAGIC,
-            version: 1,
-            flags: 0,
-            compression: COMPRESSION_NONE,
-            schema_encoding: SCHEMA_ENCODING_PROTOBUF,
-            chunk_size: DEFAULT_CHUNK_SIZE as u32,
-            chunk_count: 0,
+            version: RRD_VERSION,
+            compression: COMPRESSION_OFF,
+            serializer: SERIALIZER_PROTOBUF,
         };
-        assert_eq!(header.schema_encoding_name(), "protobuf");
+        assert_eq!(header.serializer_name(), "protobuf");
 
-        let header_flatbuffers = RrdHeader {
-            schema_encoding: SCHEMA_ENCODING_FLATBUFFERS,
+        let header_msgpack = RrdHeader {
+            serializer: SERIALIZER_MSGPACK,
             ..header
         };
-        assert_eq!(header_flatbuffers.schema_encoding_name(), "flatbuffers");
-
-        let header_json = RrdHeader {
-            schema_encoding: SCHEMA_ENCODING_JSON,
-            ..header
-        };
-        assert_eq!(header_json.schema_encoding_name(), "json");
+        assert_eq!(header_msgpack.serializer_name(), "msgpack");
 
         let header_unknown = RrdHeader {
-            schema_encoding: 255,
+            serializer: 255,
             ..header
         };
-        assert_eq!(header_unknown.schema_encoding_name(), "unknown");
+        assert_eq!(header_unknown.serializer_name(), "unknown");
     }
 
     #[test]
@@ -739,16 +926,12 @@ mod tests {
         let temp_path = std::env::temp_dir().join("test_version.rrd");
         {
             let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Write RRF2 header with unsupported version
             file.write_all(RRD_MAGIC).unwrap();
-            file.write_all(&255u16.to_le_bytes()).unwrap(); // unsupported version
-            file.write_all(&0u32.to_le_bytes()).unwrap();
-            file.write_all(&[COMPRESSION_NONE]).unwrap();
-            file.write_all(&[SCHEMA_ENCODING_PROTOBUF]).unwrap();
-            file.write_all(&[0u8, 0u8]).unwrap();
-            file.write_all(&(DEFAULT_CHUNK_SIZE as u32).to_le_bytes())
-                .unwrap();
-            file.write_all(&[0u8; 4]).unwrap();
-            file.write_all(&0u64.to_le_bytes()).unwrap();
+            file.write_all(&[1, 0, 0, 0]).unwrap(); // unsupported version [1, 0, 0, 0]
+            file.write_all(&0u32.to_le_bytes()).unwrap(); // options
+            // Write minimal footer
+            file.write_all(&[0u8; 28]).unwrap();
             file.write_all(RRD_FOOTER_MAGIC).unwrap();
         }
 
