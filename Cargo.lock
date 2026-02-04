@@ -2077,6 +2077,7 @@ dependencies = [
  "memmap2",
  "num_cpus",
  "once_cell",
+ "percent-encoding",
  "pest",
  "pest_derive",
  "proptest",
