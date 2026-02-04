@@ -104,11 +104,8 @@ jobs:
         if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
         run: cargo install cargo-llvm-cov
 
-      - name: Build CLI binary (for CLI tests)
-        run: cargo build --bin robocodec --features cli
-
       - name: Generate Rust coverage
-        run: cargo llvm-cov --workspace --lcov --output-path lcov-rust.info
+        run: cargo llvm-cov --workspace --features "cli,s3" --lcov --output-path lcov-rust.info
 
       - name: Upload Rust coverage to Codecov
         uses: codecov/codecov-action@v5
