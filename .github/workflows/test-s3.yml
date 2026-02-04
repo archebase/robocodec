@@ -60,7 +60,7 @@ jobs:
       - name: Wait for MinIO to be ready
         run: |
           for i in {1..60}; do
-            if curl -f http://localhost:9000/minio/health/live 2>/dev/null || wget -q --spider http://localhost:9000/minio/health/live 2>/dev/null; then
+            if curl -f http://127.0.0.1:9000/minio/health/live 2>/dev/null || wget -q --spider http://127.0.0.1:9000/minio/health/live 2>/dev/null; then
               echo "MinIO is ready"
               break
             fi
@@ -76,7 +76,7 @@ jobs:
 
       - name: Configure MinIO and upload test fixtures
         run: |
-          mc alias set s3 http://localhost:9000 minioadmin minioadmin
+          mc alias set s3 http://127.0.0.1:9000 minioadmin minioadmin
           mc mb s3/robocodec-test --ignore-existing
 
           # Upload MCAP test fixtures
@@ -103,7 +103,7 @@ jobs:
 
       - name: Set S3 endpoint environment variables
         run: |
-          echo "S3_ENDPOINT=http://localhost:9000" >> $GITHUB_ENV
+          echo "S3_ENDPOINT=http://127.0.0.1:9000" >> $GITHUB_ENV
           echo "S3_ACCESS_KEY=minioadmin" >> $GITHUB_ENV
           echo "S3_SECRET_KEY=minioadmin" >> $GITHUB_ENV
           echo "S3_BUCKET=robocodec-test" >> $GITHUB_ENV
@@ -112,7 +112,7 @@ jobs:
       - name: Run S3 integration tests
         run: cargo test --test s3_integration -- --test-threads=1
         env:
-          S3_ENDPOINT: http://localhost:9000
+          S3_ENDPOINT: http://127.0.0.1:9000
           S3_ACCESS_KEY: minioadmin
           S3_SECRET_KEY: minioadmin
           S3_BUCKET: robocodec-test
@@ -121,7 +121,7 @@ jobs:
       - name: Run S3 unit tests
         run: cargo test --package robocodec --lib io::s3 -- --test-threads=1
         env:
-          S3_ENDPOINT: http://localhost:9000
+          S3_ENDPOINT: http://127.0.0.1:9000
           S3_ACCESS_KEY: minioadmin
           S3_SECRET_KEY: minioadmin
           S3_BUCKET: robocodec-test
