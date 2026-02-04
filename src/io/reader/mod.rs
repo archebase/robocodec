@@ -37,7 +37,6 @@ use crate::io::formats::mcap::McapFormat;
 use crate::io::metadata::{ChannelInfo, DecodedMessageResult, FileFormat};
 use crate::io::traits::{FormatReader, ParallelReader};
 use crate::{CodecError, Result};
-use std::path::Path;
 
 /// Get or create a shared Tokio runtime for blocking async operations.
 ///
@@ -565,7 +564,7 @@ mod tests {
         let temp_path = std::env::temp_dir().join("test_unknown.xyz123");
         std::fs::write(&temp_path, b"invalid content").unwrap();
 
-        let result = RoboReader::open(&temp_path);
+        let result = RoboReader::open(temp_path.to_str().unwrap());
         assert!(result.is_err());
         match result {
             Err(err) => {
@@ -586,7 +585,7 @@ mod tests {
 
         // Just verify it accepts the config parameter
         let config = ReaderConfig::default();
-        let result = RoboReader::open_with_config(&temp_path, config);
+        let result = RoboReader::open_with_config(temp_path.to_str().unwrap(), config);
         // Will fail to parse as valid MCAP but should accept the config param
         assert!(result.is_err());
 

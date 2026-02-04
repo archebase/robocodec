@@ -73,8 +73,9 @@ fn test_round_trip_bag_to_mcap_sequential() {
     let (mcap_file, _guard) = temp_path("round_trip_bag_to_mcap.mcap");
 
     // Step 1: Read the bag file with sequential strategy
-    let reader = RoboReader::open_with_config(&bag_file, ReaderConfig::sequential())
-        .expect("Failed to open bag file");
+    let reader =
+        RoboReader::open_with_config(bag_file.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open bag file");
 
     let original_channels = reader.channels().clone();
     let original_message_count = reader.message_count();
@@ -82,7 +83,8 @@ fn test_round_trip_bag_to_mcap_sequential() {
     let original_end_time = reader.end_time();
 
     // Step 2: Write to MCAP file
-    let mut writer = RoboWriter::create(&mcap_file).expect("Failed to create MCAP writer");
+    let mut writer =
+        RoboWriter::create(mcap_file.to_str().unwrap()).expect("Failed to create MCAP writer");
 
     // Add all channels from the original file
     let mut channel_map: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
@@ -103,7 +105,7 @@ fn test_round_trip_bag_to_mcap_sequential() {
     use robocodec::io::formats::bag::BagFormat;
 
     // Use the bag format reader directly to iterate over messages
-    let bag_reader = BagFormat::open(&bag_file).expect("Failed to open bag format");
+    let bag_reader = BagFormat::open(bag_file.as_path()).expect("Failed to open bag format");
 
     // Get sequential iterator
     let iter = bag_reader.iter_raw().expect("Failed to create iterator");
@@ -119,8 +121,9 @@ fn test_round_trip_bag_to_mcap_sequential() {
     writer.finish().expect("Failed to finish writer");
 
     // Step 3: Read back the MCAP file and verify
-    let mcap_reader = RoboReader::open_with_config(&mcap_file, ReaderConfig::sequential())
-        .expect("Failed to open MCAP file");
+    let mcap_reader =
+        RoboReader::open_with_config(mcap_file.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open MCAP file");
 
     let mcap_channels = mcap_reader.channels();
     let mcap_message_count = mcap_reader.message_count();
@@ -173,8 +176,9 @@ fn test_round_trip_bag_to_mcap_preserves_topics() {
     let (mcap_file, _guard) = temp_path("round_trip_topics.mcap");
 
     // Read bag and collect topics
-    let reader = RoboReader::open_with_config(&bag_file, ReaderConfig::sequential())
-        .expect("Failed to open bag file");
+    let reader =
+        RoboReader::open_with_config(bag_file.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open bag file");
 
     let original_topics: std::collections::HashSet<String> = reader
         .channels()
@@ -183,7 +187,8 @@ fn test_round_trip_bag_to_mcap_preserves_topics() {
         .collect();
 
     // Write to MCAP
-    let mut writer = RoboWriter::create(&mcap_file).expect("Failed to create MCAP writer");
+    let mut writer =
+        RoboWriter::create(mcap_file.to_str().unwrap()).expect("Failed to create MCAP writer");
 
     // Collect channel IDs for writing a dummy message
     let mut channel_ids: Vec<u16> = Vec::new();
@@ -216,8 +221,9 @@ fn test_round_trip_bag_to_mcap_preserves_topics() {
     writer.finish().expect("Failed to finish writer");
 
     // Verify topics are preserved
-    let mcap_reader = RoboReader::open_with_config(&mcap_file, ReaderConfig::sequential())
-        .expect("Failed to open MCAP file");
+    let mcap_reader =
+        RoboReader::open_with_config(mcap_file.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open MCAP file");
 
     let mcap_topics: std::collections::HashSet<String> = mcap_reader
         .channels()
@@ -241,8 +247,9 @@ fn test_round_trip_bag_to_mcap_preserves_message_types() {
     let (mcap_file, _guard) = temp_path("round_trip_types.mcap");
 
     // Read bag and collect message types
-    let reader = RoboReader::open_with_config(&bag_file, ReaderConfig::sequential())
-        .expect("Failed to open bag file");
+    let reader =
+        RoboReader::open_with_config(bag_file.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open bag file");
 
     let original_types: std::collections::HashMap<String, String> = reader
         .channels()
@@ -251,7 +258,8 @@ fn test_round_trip_bag_to_mcap_preserves_message_types() {
         .collect();
 
     // Write to MCAP
-    let mut writer = RoboWriter::create(&mcap_file).expect("Failed to create MCAP writer");
+    let mut writer =
+        RoboWriter::create(mcap_file.to_str().unwrap()).expect("Failed to create MCAP writer");
 
     for channel in reader.channels().values() {
         writer
@@ -267,8 +275,9 @@ fn test_round_trip_bag_to_mcap_preserves_message_types() {
     writer.finish().ok();
 
     // Verify message types are preserved
-    let mcap_reader = RoboReader::open_with_config(&mcap_file, ReaderConfig::sequential())
-        .expect("Failed to open MCAP file");
+    let mcap_reader =
+        RoboReader::open_with_config(mcap_file.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open MCAP file");
 
     let mcap_types: std::collections::HashMap<String, String> = mcap_reader
         .channels()
@@ -310,14 +319,16 @@ fn test_round_trip_mcap_to_bag_sequential() {
     let (bag_file, _guard) = temp_path("round_trip_mcap_to_bag.bag");
 
     // Step 1: Read the MCAP file with sequential strategy
-    let reader = RoboReader::open_with_config(&mcap_file, ReaderConfig::sequential())
-        .expect("Failed to open MCAP file");
+    let reader =
+        RoboReader::open_with_config(mcap_file.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open MCAP file");
 
     let original_channels = reader.channels().clone();
     let original_message_count = reader.message_count();
 
     // Step 2: Write to bag file
-    let mut writer = RoboWriter::create(&bag_file).expect("Failed to create bag writer");
+    let mut writer =
+        RoboWriter::create(bag_file.to_str().unwrap()).expect("Failed to create bag writer");
 
     // Add all channels from the original file
     let mut channel_map: std::collections::HashMap<u16, u16> = std::collections::HashMap::new();
@@ -339,8 +350,9 @@ fn test_round_trip_mcap_to_bag_sequential() {
     writer.finish().expect("Failed to finish writer");
 
     // Step 3: Read back the bag file and verify
-    let bag_reader = RoboReader::open_with_config(&bag_file, ReaderConfig::sequential())
-        .expect("Failed to open bag file");
+    let bag_reader =
+        RoboReader::open_with_config(bag_file.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open bag file");
 
     let bag_channels = bag_reader.channels();
 
@@ -380,8 +392,9 @@ fn test_round_trip_bag_mcap_bag() {
     let (final_bag, _guard2) = temp_path("final.bag");
 
     // Step 1: Read original bag
-    let reader1 = RoboReader::open_with_config(&original_bag, ReaderConfig::sequential())
-        .expect("Failed to open original bag");
+    let reader1 =
+        RoboReader::open_with_config(original_bag.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open original bag");
 
     let original_channels: Vec<(String, String)> = reader1
         .channels()
@@ -390,7 +403,8 @@ fn test_round_trip_bag_mcap_bag() {
         .collect();
 
     // Step 2: Write to intermediate MCAP
-    let mut writer = RoboWriter::create(&intermediate_mcap).expect("Failed to create MCAP writer");
+    let mut writer = RoboWriter::create(intermediate_mcap.to_str().unwrap())
+        .expect("Failed to create MCAP writer");
     for channel in reader1.channels().values() {
         writer
             .add_channel(
@@ -404,10 +418,14 @@ fn test_round_trip_bag_mcap_bag() {
     writer.finish().ok();
 
     // Step 3: Read MCAP and write to final bag
-    let reader2 = RoboReader::open_with_config(&intermediate_mcap, ReaderConfig::sequential())
-        .expect("Failed to open MCAP file");
+    let reader2 = RoboReader::open_with_config(
+        intermediate_mcap.to_str().unwrap(),
+        ReaderConfig::sequential(),
+    )
+    .expect("Failed to open MCAP file");
 
-    let mut writer2 = RoboWriter::create(&final_bag).expect("Failed to create bag writer");
+    let mut writer2 =
+        RoboWriter::create(final_bag.to_str().unwrap()).expect("Failed to create bag writer");
     for channel in reader2.channels().values() {
         writer2
             .add_channel(
@@ -421,8 +439,9 @@ fn test_round_trip_bag_mcap_bag() {
     writer2.finish().ok();
 
     // Step 4: Verify final bag matches original
-    let final_reader = RoboReader::open_with_config(&final_bag, ReaderConfig::sequential())
-        .expect("Failed to open final bag");
+    let final_reader =
+        RoboReader::open_with_config(final_bag.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open final bag");
 
     let final_channels: Vec<(String, String)> = final_reader
         .channels()
@@ -449,8 +468,9 @@ fn test_sequential_strategy_bag_reader() {
     }
 
     // Test that sequential strategy works for bag files
-    let reader = RoboReader::open_with_config(&bag_file, ReaderConfig::sequential())
-        .expect("Failed to open bag with sequential strategy");
+    let reader =
+        RoboReader::open_with_config(bag_file.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open bag with sequential strategy");
 
     // Verify we can access channels
     assert!(!reader.channels().is_empty(), "Should have channels");
@@ -464,8 +484,9 @@ fn test_sequential_strategy_mcap_reader() {
     }
 
     // Test that sequential strategy works for MCAP files
-    let reader = RoboReader::open_with_config(&mcap_file, ReaderConfig::sequential())
-        .expect("Failed to open MCAP with sequential strategy");
+    let reader =
+        RoboReader::open_with_config(mcap_file.to_str().unwrap(), ReaderConfig::sequential())
+            .expect("Failed to open MCAP with sequential strategy");
 
     // Verify we can access channels
     assert!(!reader.channels().is_empty(), "Should have channels");
@@ -482,13 +503,15 @@ fn test_round_trip_with_auto_strategy() {
     let (mcap_file, _guard) = temp_path("auto_round_trip.mcap");
 
     // Use auto strategy for reading
-    let reader = RoboReader::open(&bag_file).expect("Failed to open bag with auto strategy");
+    let reader = RoboReader::open(bag_file.to_str().unwrap())
+        .expect("Failed to open bag with auto strategy");
 
     let channel_count = reader.channels().len();
     assert!(channel_count > 0, "Should have channels");
 
     // Write to MCAP
-    let mut writer = RoboWriter::create(&mcap_file).expect("Failed to create MCAP writer");
+    let mut writer =
+        RoboWriter::create(mcap_file.to_str().unwrap()).expect("Failed to create MCAP writer");
     for channel in reader.channels().values() {
         writer
             .add_channel(
@@ -502,7 +525,8 @@ fn test_round_trip_with_auto_strategy() {
     writer.finish().ok();
 
     // Verify with auto strategy
-    let mcap_reader = RoboReader::open(&mcap_file).expect("Failed to open MCAP with auto strategy");
+    let mcap_reader = RoboReader::open(mcap_file.to_str().unwrap())
+        .expect("Failed to open MCAP with auto strategy");
     assert_eq!(
         mcap_reader.channels().len(),
         channel_count,
