@@ -141,14 +141,17 @@ impl RrdWriter {
 
         // Write stream footer (32 bytes)
         // Format: entries(20) + magic(4) + identifier(4) + count(4)
-        let footer_data = vec![0u8; STREAM_FOOTER_SIZE];
+        let mut footer_data = vec![0u8; STREAM_FOOTER_SIZE];
+        // Set magic at offset 20
+        footer_data[20..24].copy_from_slice(RRD_MAGIC);
+        // Set identifier at offset 24
+        footer_data[24..28].copy_from_slice(RRD_FOOTER_MAGIC);
+        // Set entry count at offset 28
+        footer_data[28..32].copy_from_slice(&1u32.to_le_bytes());
+
         self.file
             .write_all(&footer_data)
             .map_err(|e| CodecError::parse("RRD", format!("Failed to write footer: {}", e)))?;
-
-        self.file.write_all(RRD_FOOTER_MAGIC).map_err(|e| {
-            CodecError::parse("RRD", format!("Failed to write footer magic: {}", e))
-        })?;
 
         Ok(())
     }

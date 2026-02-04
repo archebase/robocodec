@@ -121,7 +121,7 @@ fn detect_from_magic(path: &Path) -> Result<FileFormat, CodecError> {
 
 /// Check if the header starts with RRD magic.
 fn is_rrd_magic(header: &[u8]) -> bool {
-    header.len() >= 4 && &header[0..4] == b"RRD\0"
+    header.len() >= 4 && &header[0..4] == b"RRF2"
 }
 
 /// Check if the header starts with MCAP magic.

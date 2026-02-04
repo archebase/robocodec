@@ -59,6 +59,9 @@ jobs:
       # Note: Do NOT use --all-features or --features python here.
       # PyO3's extension-module feature prevents linking in standalone test binaries.
       # Python bindings would be tested separately via maturin if needed.
+      - name: Build CLI binary (for CLI tests)
+        run: cargo build --bin robocodec --features cli
+
       - name: Run tests
         run: cargo test
 
