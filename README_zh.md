@@ -113,11 +113,21 @@ let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
 println!("找到 {} 个通道", reader.channels().len());
 ```
 
-S3 凭证从环境变量自动加载：
-- `AWS_ACCESS_KEY_ID` 或 `AWS_ACCESS_KEY`
-- `AWS_SECRET_ACCESS_KEY` 或 `AWS_SECRET_KEY`
-- `AWS_SESSION_TOKEN`（可选）
-- `AWS_REGION`（默认为 `us-east-1`）
+**兼容 S3 的存储服务**（AWS S3、阿里云 OSS、MinIO 等）需要通过环境变量配置凭证：
+
+```bash
+# AWS S3
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export AWS_REGION="us-east-1"  # 可选，默认为 us-east-1
+
+# 阿里云 OSS、MinIO 或其他兼容 S3 的服务
+# 使用相同的环境变量 - robocodec 可与任何兼容 S3 的 API 配合使用
+export AWS_ACCESS_KEY_ID="your-oss-access-key"
+export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
+```
+
+> **注意：** 虽然我们使用 AWS 标准的环境变量名称以确保兼容性，但 robocodec 可以与任何兼容 S3 的存储服务（阿里云 OSS、MinIO、Wasabi 等）配合使用，只需配置相应的端点即可。
 
 ### 写入到 S3
 
@@ -129,6 +139,30 @@ let mut writer = RoboWriter::create("s3://my-bucket/output.mcap")?;
 let channel_id = writer.add_channel("/topic", "MessageType", "cdr", None)?;
 // ... 写入消息 ...
 writer.finish()?;
+```
+
+### 自定义 S3 端点（MinIO、阿里云 OSS 等）
+
+对于具有自定义端点的兼容 S3 服务，有两种配置方式：
+
+**方式 1：环境变量**（全局应用）
+```bash
+# 为所有 s3:// URL 设置自定义端点
+export S3_ENDPOINT="http://localhost:9000"  # MinIO
+export S3_ENDPOINT="https://oss-cn-hangzhou.aliyuncs.com"  # 阿里云 OSS
+```
+
+**方式 2：URL 查询参数**（按请求配置）
+```rust
+use robocodec::RoboReader;
+
+// 本地运行的 MinIO
+let reader = RoboReader::open("s3://bucket/data.mcap?endpoint=http://localhost:9000")?;
+
+// 阿里云 OSS（杭州区域）
+let reader = RoboReader::open(
+    "s3://bucket/data.mcap?endpoint=https://oss-cn-hangzhou.aliyuncs.com"
+)?;
 ```
 
 ### 写入消息到文件

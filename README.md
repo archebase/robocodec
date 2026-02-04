@@ -143,11 +143,21 @@ let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
 println!("Found {} channels", reader.channels().len());
 ```
 
-S3 credentials are loaded from environment variables:
-- `AWS_ACCESS_KEY_ID` or `AWS_ACCESS_KEY`
-- `AWS_SECRET_ACCESS_KEY` or `AWS_SECRET_KEY`
-- `AWS_SESSION_TOKEN` (optional)
-- `AWS_REGION` (defaults to `us-east-1`)
+**S3-compatible services** (AWS S3, Alibaba Cloud OSS, MinIO, etc.) require credentials set via environment variables:
+
+```bash
+# For AWS S3
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export AWS_REGION="us-east-1"  # optional, defaults to us-east-1
+
+# For Alibaba Cloud OSS, MinIO, or other S3-compatible services
+# Use the same env vars above - robocodec works with any S3-compatible API
+export AWS_ACCESS_KEY_ID="your-oss-access-key"
+export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
+```
+
+> **Note:** While we use AWS-standard environment variable names for compatibility, robocodec works with any S3-compatible storage service (Alibaba OSS, MinIO, Wasabi, etc.) by configuring the appropriate endpoint.
 
 ### Write to S3
 
@@ -159,6 +169,30 @@ let mut writer = RoboWriter::create("s3://my-bucket/output.mcap")?;
 let channel_id = writer.add_channel("/topic", "MessageType", "cdr", None)?;
 // ... write messages ...
 writer.finish()?;
+```
+
+### Custom S3 Endpoints (MinIO, Alibaba OSS, etc.)
+
+For S3-compatible services with custom endpoints, there are two configuration options:
+
+**Option 1: Environment variable** (applies globally)
+```bash
+# Set custom endpoint for all s3:// URLs
+export S3_ENDPOINT="http://localhost:9000"  # MinIO
+export S3_ENDPOINT="https://oss-cn-hangzhou.aliyuncs.com"  # Alibaba OSS
+```
+
+**Option 2: URL query parameter** (per-request)
+```rust
+use robocodec::RoboReader;
+
+// MinIO running locally
+let reader = RoboReader::open("s3://bucket/data.mcap?endpoint=http://localhost:9000")?;
+
+// Alibaba Cloud OSS (Hangzhou region)
+let reader = RoboReader::open(
+    "s3://bucket/data.mcap?endpoint=https://oss-cn-hangzhou.aliyuncs.com"
+)?;
 ```
 
 ### Convert between formats
