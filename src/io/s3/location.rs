@@ -278,7 +278,7 @@ impl S3Location {
     /// let location = S3Location::from_s3_url(
     ///     "s3://my-bucket/file.mcap?endpoint=http://localhost:9000"
     /// ).unwrap();
-    /// assert_eq!(location.endpoint(), Some(&"http://localhost:9000".to_string()));
+    /// assert_eq!(location.endpoint(), Some("http://localhost:9000"));
     /// ```
     pub fn from_s3_url(url: &str) -> Result<Self, S3UrlParseError> {
         let url = url.trim();
