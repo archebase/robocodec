@@ -28,11 +28,7 @@ services:
     volumes:
       - minio-data:/data
       - ./tests/fixtures:/fixtures:ro
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+    # MinIO is ready shortly after starting - no healthcheck needed for local use
 
   # Optional: mc (MinIO client) for managing buckets
   mc:

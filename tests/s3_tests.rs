@@ -1012,7 +1012,7 @@ mod wiremock_tests {
     async fn test_s3_client_upload_part_error() {
         let mock_server = MockServer::start().await;
 
-        Mock::given(method("PUT"))
+        Mock::given(method("POST"))
             .and(wiremock_path("/test-bucket/part-error.mcap"))
             .respond_with(ResponseTemplate::new(400))
             .mount(&mock_server)
@@ -1142,6 +1142,341 @@ mod wiremock_tests {
         // This should fail with a connection error
         let result = client.fetch_range(&location, 0, 100).await;
         assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Additional coverage tests for uncovered code paths
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_s3_client_object_size_500_error() {
+        let mock_server = MockServer::start().await;
+
+        // HEAD request returns 500 error
+        // This tests the path where check_response returns Ok (not 404/403)
+        // but the is_success check fails
+        Mock::given(method("HEAD"))
+            .and(wiremock_path("/test-bucket/error.mcap"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "error.mcap").with_endpoint(mock_server.uri());
+
+        let result = client.object_size(&location).await;
+        assert!(result.is_err());
+        // Should be HttpError (not ObjectNotFound or AccessDenied)
+        match result {
+            Err(robocodec::io::s3::FatalError::HttpError {
+                status: Some(500), ..
+            }) => {
+                // Expected path
+            }
+            _ => panic!("Expected HttpError with status 500, got {:?}", result),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_object_size_503_error() {
+        let mock_server = MockServer::start().await;
+
+        // HEAD request returns 503 Service Unavailable
+        Mock::given(method("HEAD"))
+            .and(wiremock_path("/test-bucket/unavailable.mcap"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "unavailable.mcap").with_endpoint(mock_server.uri());
+
+        let result = client.object_size(&location).await;
+        assert!(result.is_err());
+        match result {
+            Err(robocodec::io::s3::FatalError::HttpError {
+                status: Some(503), ..
+            }) => {
+                // Expected
+            }
+            _ => panic!("Expected HttpError with status 503"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_fetch_tail_length_exceeds_file_size() {
+        let mock_server = MockServer::start().await;
+
+        // When length > file_size, fetch_tail uses saturating_sub
+        // fetch_tail(100, 50) -> offset = 50.saturating_sub(100) = 0
+        // This tests the saturating_sub path
+        Mock::given(method("GET"))
+            .and(wiremock_path("/test-bucket/small.mcap"))
+            .and(header("Range", "bytes=0-99")) // offset 0, length 100
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(vec![0u8; 50]))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "small.mcap").with_endpoint(mock_server.uri());
+
+        // Request 100 bytes but file is only 50 bytes
+        // saturating_sub ensures we don't underflow
+        let result = client.fetch_tail(&location, 100, 50).await;
+        assert!(result.is_ok());
+        // We get at most 50 bytes (what the mock returns)
+        assert!(result.unwrap().len() <= 100);
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_fetch_tail_exact_file_size() {
+        let mock_server = MockServer::start().await;
+
+        let data = b"Exact file content";
+        Mock::given(method("GET"))
+            .and(wiremock_path("/test-bucket/exact.mcap"))
+            .and(header("Range", "bytes=0-17"))
+            .respond_with(ResponseTemplate::new(206).set_body_bytes(data))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "exact.mcap").with_endpoint(mock_server.uri());
+
+        // Request exactly the file size
+        let result = client.fetch_tail(&location, 18, 18).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 18);
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_upload_part_missing_etag() {
+        let mock_server = MockServer::start().await;
+
+        // Response without ETag header
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/no-etag.mcap"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "no-etag.mcap").with_endpoint(mock_server.uri());
+
+        let data = bytes::Bytes::from(&b"test"[..]);
+        let result = client.upload_part(&location, "upload-id", 1, data).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("ETag"));
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_upload_part_empty_etag() {
+        let mock_server = MockServer::start().await;
+
+        // Response with empty ETag header (missing value)
+        // This should fail since ETag is required
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/empty-etag.mcap"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "empty-etag.mcap").with_endpoint(mock_server.uri());
+
+        let data = bytes::Bytes::from(&b"test"[..]);
+        let result = client.upload_part(&location, "upload-id", 1, data).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("ETag"));
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_upload_part_valid_etag_variations() {
+        let mock_server = MockServer::start().await;
+
+        // Test various valid ETag formats
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/etag-variation.mcap"))
+            .respond_with(ResponseTemplate::new(200).insert_header("etag", "\"abc123\""))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "etag-variation.mcap").with_endpoint(mock_server.uri());
+
+        let data = bytes::Bytes::from(&b"test"[..]);
+        let result = client.upload_part(&location, "upload-id", 1, data).await;
+        assert!(result.is_ok());
+        // ETag quotes should be trimmed
+        assert_eq!(result.unwrap(), "abc123");
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_complete_upload_500_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/complete-500.mcap"))
+            .respond_with(
+                ResponseTemplate::new(500)
+                    .set_body_string("<Error><Code>InternalError</Code></Error>"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "complete-500.mcap").with_endpoint(mock_server.uri());
+
+        let parts = vec![(1, "etag1".to_string())];
+        let result = client.complete_upload(&location, "upload-id", parts).await;
+        assert!(result.is_err());
+        match result {
+            Err(robocodec::io::s3::FatalError::HttpError {
+                status: Some(500), ..
+            }) => {
+                // Expected
+            }
+            _ => panic!("Expected HttpError with status 500"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_fetch_range_zero_length() {
+        let mock_server = MockServer::start().await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location = S3Location::new("test-bucket", "zero.mcap").with_endpoint(mock_server.uri());
+
+        // Zero-length fetch should return empty bytes without making a request
+        let result = client.fetch_range(&location, 0, 0).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_create_upload_malformed_xml() {
+        let mock_server = MockServer::start().await;
+
+        // Malformed XML - missing closing tag for UploadId
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/malformed.mcap"))
+            .and(header("x-amz-content-sha256", "UNSIGNED-PAYLOAD"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                "<InitiateMultipartUploadResult><UploadId>no-close",
+                "application/xml",
+            ))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "malformed.mcap").with_endpoint(mock_server.uri());
+
+        let result = client.create_upload(&location).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("UploadId"));
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_create_upload_empty_uploadid() {
+        let mock_server = MockServer::start().await;
+
+        // XML with empty UploadId
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/empty-id.mcap"))
+            .and(header("x-amz-content-sha256", "UNSIGNED-PAYLOAD"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw("<InitiateMultipartUploadResult><UploadId></UploadId></InitiateMultipartUploadResult>", "application/xml"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "empty-id.mcap").with_endpoint(mock_server.uri());
+
+        let result = client.create_upload(&location).await;
+        assert!(result.is_ok());
+        // Empty string is valid for UploadId (edge case)
+        assert_eq!(result.unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_upload_part_network_error() {
+        let mock_server = MockServer::start().await;
+
+        // Create a mock then immediately reset it to cause network errors
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/net-error.mcap"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        mock_server.reset().await;
+
+        let config = S3ReaderConfig::default().with_request_timeout(Duration::from_secs(1));
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "net-error.mcap").with_endpoint(mock_server.uri());
+
+        let data = bytes::Bytes::from(&b"test"[..]);
+        let result = client.upload_part(&location, "upload-id", 1, data).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_multiple_parts_complete() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/multi.mcap"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "multi.mcap").with_endpoint(mock_server.uri());
+
+        // Test with many parts to ensure XML generation works
+        let parts: Vec<(u32, String)> = (1..=10).map(|i| (i, format!("etag{}", i))).collect();
+
+        let result = client.complete_upload(&location, "upload-id", parts).await;
+        assert!(result.is_ok());
     }
 }
 

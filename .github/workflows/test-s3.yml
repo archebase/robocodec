@@ -26,18 +26,13 @@ jobs:
 
     services:
       minio:
-        image: minio/minio:latest
+        image: quay.io/minio/minio:RELEASE.2024-01-16T16-07-38Z
         env:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: minioadmin
           MINIO_DEFAULT_BUCKETS: robocodec-test
         ports:
           - 9000:9000
-        options: >-
-          --health-cmd "curl -f http://localhost:9000/minio/health/live"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 5
 
     steps:
       - name: Checkout code
@@ -64,13 +59,13 @@ jobs:
 
       - name: Wait for MinIO to be ready
         run: |
-          for i in {1..30}; do
-            if curl -f http://localhost:9000/minio/health/live; then
+          for i in {1..60}; do
+            if curl -f http://localhost:9000/minio/health/live 2>/dev/null || wget -q --spider http://localhost:9000/minio/health/live 2>/dev/null; then
               echo "MinIO is ready"
               break
             fi
-            echo "Waiting for MinIO... ($i/30)"
-            sleep 2
+            echo "Waiting for MinIO... ($i/60)"
+            sleep 1
           done
 
       - name: Install MinIO client
