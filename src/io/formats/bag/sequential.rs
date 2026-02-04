@@ -70,31 +70,31 @@ impl SequentialBagReader {
             let record = record.map_err(|e| {
                 CodecError::encode("SequentialBagReader", format!("Failed to read index: {e}"))
             })?;
-            if let rosbag::IndexRecord::Connection(conn) = record {
-                if connections_seen.insert(conn.id) {
-                    let channel_id = next_channel_id;
-                    next_channel_id = next_channel_id.wrapping_add(1);
+            if let rosbag::IndexRecord::Connection(conn) = record
+                && connections_seen.insert(conn.id)
+            {
+                let channel_id = next_channel_id;
+                next_channel_id = next_channel_id.wrapping_add(1);
 
-                    channels.insert(
-                        channel_id,
-                        ChannelInfo {
-                            id: channel_id,
-                            topic: conn.topic.to_string(),
-                            message_type: conn.tp.to_string(),
-                            encoding: "ros1".to_string(), // ROS1 serialization format
-                            schema: Some(conn.message_definition.to_string()),
-                            schema_data: None,
-                            schema_encoding: Some("ros1msg".to_string()),
-                            message_count: 0,
-                            callerid: if conn.caller_id.is_empty() {
-                                None
-                            } else {
-                                Some(conn.caller_id.to_string())
-                            },
+                channels.insert(
+                    channel_id,
+                    ChannelInfo {
+                        id: channel_id,
+                        topic: conn.topic.to_string(),
+                        message_type: conn.tp.to_string(),
+                        encoding: "ros1".to_string(), // ROS1 serialization format
+                        schema: Some(conn.message_definition.to_string()),
+                        schema_data: None,
+                        schema_encoding: Some("ros1msg".to_string()),
+                        message_count: 0,
+                        callerid: if conn.caller_id.is_empty() {
+                            None
+                        } else {
+                            Some(conn.caller_id.to_string())
                         },
-                    );
-                    conn_id_map.insert(conn.id, channel_id);
-                }
+                    },
+                );
+                conn_id_map.insert(conn.id, channel_id);
             }
         }
 
@@ -111,31 +111,31 @@ impl SequentialBagReader {
                             format!("Failed to read message: {e}"),
                         )
                     })?;
-                    if let rosbag::MessageRecord::Connection(conn) = msg_result {
-                        if connections_seen.insert(conn.id) {
-                            let channel_id = next_channel_id;
-                            next_channel_id = next_channel_id.wrapping_add(1);
+                    if let rosbag::MessageRecord::Connection(conn) = msg_result
+                        && connections_seen.insert(conn.id)
+                    {
+                        let channel_id = next_channel_id;
+                        next_channel_id = next_channel_id.wrapping_add(1);
 
-                            channels.insert(
-                                channel_id,
-                                ChannelInfo {
-                                    id: channel_id,
-                                    topic: conn.topic.to_string(),
-                                    message_type: conn.tp.to_string(),
-                                    encoding: "ros1".to_string(), // ROS1 serialization format
-                                    schema: Some(conn.message_definition.to_string()),
-                                    schema_data: None,
-                                    schema_encoding: Some("ros1msg".to_string()),
-                                    message_count: 0,
-                                    callerid: if conn.caller_id.is_empty() {
-                                        None
-                                    } else {
-                                        Some(conn.caller_id.to_string())
-                                    },
+                        channels.insert(
+                            channel_id,
+                            ChannelInfo {
+                                id: channel_id,
+                                topic: conn.topic.to_string(),
+                                message_type: conn.tp.to_string(),
+                                encoding: "ros1".to_string(), // ROS1 serialization format
+                                schema: Some(conn.message_definition.to_string()),
+                                schema_data: None,
+                                schema_encoding: Some("ros1msg".to_string()),
+                                message_count: 0,
+                                callerid: if conn.caller_id.is_empty() {
+                                    None
+                                } else {
+                                    Some(conn.caller_id.to_string())
                                 },
-                            );
-                            conn_id_map.insert(conn.id, channel_id);
-                        }
+                            },
+                        );
+                        conn_id_map.insert(conn.id, channel_id);
                     }
                 }
             }

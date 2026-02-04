@@ -113,23 +113,23 @@ impl RoboWriter {
         let path_obj = std::path::Path::new(path);
 
         // Get parent directory and ensure it exists
-        if let Some(parent) = path_obj.parent() {
-            if !parent.as_os_str().is_empty() {
-                match parent.try_exists() {
-                    Ok(false) => {
-                        return Err(CodecError::parse(
-                            "RoboWriter",
-                            format!("Parent directory does not exist: {}", parent.display()),
-                        ));
-                    }
-                    Err(e) => {
-                        return Err(CodecError::parse(
-                            "RoboWriter",
-                            format!("Cannot access parent directory {}: {}", parent.display(), e),
-                        ));
-                    }
-                    Ok(true) => {}
+        if let Some(parent) = path_obj.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            match parent.try_exists() {
+                Ok(false) => {
+                    return Err(CodecError::parse(
+                        "RoboWriter",
+                        format!("Parent directory does not exist: {}", parent.display()),
+                    ));
                 }
+                Err(e) => {
+                    return Err(CodecError::parse(
+                        "RoboWriter",
+                        format!("Cannot access parent directory {}: {}", parent.display(), e),
+                    ));
+                }
+                Ok(true) => {}
             }
         }
 

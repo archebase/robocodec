@@ -158,10 +158,10 @@ fn is_rosbag_magic(header: &[u8]) -> bool {
     if header.len() >= 13 {
         // Check for version string like "1.2" or "2.0"
         let header_str = std::str::from_utf8(&header[..header.len().min(100)]);
-        if let Ok(s) = header_str {
-            if s.starts_with("#ROSBAG") || s.contains("VERSION") {
-                return true;
-            }
+        if let Ok(s) = header_str
+            && (s.starts_with("#ROSBAG") || s.contains("VERSION"))
+        {
+            return true;
         }
     }
 

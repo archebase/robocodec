@@ -439,16 +439,13 @@ impl ProtobufSchemaTransformer {
 
         // Update field type references
         for field in &mut message_type.field {
-            if let Some(type_name) = &field.type_name {
-                if type_name.starts_with(".") {
-                    // Fully qualified type name (e.g., ".old_pkg.Message")
-                    let new_type_name = type_name.replacen(
-                        &format!(".{old_package}"),
-                        &format!(".{new_package}"),
-                        1,
-                    );
-                    field.type_name = Some(new_type_name);
-                }
+            if let Some(type_name) = &field.type_name
+                && type_name.starts_with(".")
+            {
+                // Fully qualified type name (e.g., ".old_pkg.Message")
+                let new_type_name =
+                    type_name.replacen(&format!(".{old_package}"), &format!(".{new_package}"), 1);
+                field.type_name = Some(new_type_name);
             }
         }
     }
@@ -617,10 +614,10 @@ impl ProtobufSchemaTransformer {
     ) {
         // Update field type references
         for field in &mut message_type.field {
-            if let Some(type_name) = &field.type_name {
-                if type_name == old_fully_qualified {
-                    field.type_name = Some(new_fully_qualified.to_string());
-                }
+            if let Some(type_name) = &field.type_name
+                && type_name == old_fully_qualified
+            {
+                field.type_name = Some(new_fully_qualified.to_string());
             }
         }
 
@@ -653,15 +650,15 @@ impl ProtobufSchemaTransformer {
         new_fully_qualified: &str,
     ) {
         for method in &mut service.method {
-            if let Some(input_type) = &method.input_type {
-                if input_type == old_fully_qualified {
-                    method.input_type = Some(new_fully_qualified.to_string());
-                }
+            if let Some(input_type) = &method.input_type
+                && input_type == old_fully_qualified
+            {
+                method.input_type = Some(new_fully_qualified.to_string());
             }
-            if let Some(output_type) = &method.output_type {
-                if output_type == old_fully_qualified {
-                    method.output_type = Some(new_fully_qualified.to_string());
-                }
+            if let Some(output_type) = &method.output_type
+                && output_type == old_fully_qualified
+            {
+                method.output_type = Some(new_fully_qualified.to_string());
             }
         }
     }

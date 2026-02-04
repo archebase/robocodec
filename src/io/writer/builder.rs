@@ -163,23 +163,23 @@ impl WriterBuilder {
         }
 
         // Validate parent directory exists
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                match parent.try_exists() {
-                    Ok(false) => {
-                        return Err(CodecError::parse(
-                            "WriterBuilder",
-                            format!("Parent directory does not exist: {}", parent.display()),
-                        ));
-                    }
-                    Err(e) => {
-                        return Err(CodecError::parse(
-                            "WriterBuilder",
-                            format!("Cannot access parent directory {}: {}", parent.display(), e),
-                        ));
-                    }
-                    Ok(true) => {} // Parent exists, continue
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            match parent.try_exists() {
+                Ok(false) => {
+                    return Err(CodecError::parse(
+                        "WriterBuilder",
+                        format!("Parent directory does not exist: {}", parent.display()),
+                    ));
                 }
+                Err(e) => {
+                    return Err(CodecError::parse(
+                        "WriterBuilder",
+                        format!("Cannot access parent directory {}: {}", parent.display(), e),
+                    ));
+                }
+                Ok(true) => {} // Parent exists, continue
             }
         }
 

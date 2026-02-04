@@ -65,10 +65,10 @@ pub fn sign_request(
     headers.insert("x-amz-date", HeaderValue::from_str(&amz_date)?);
 
     // Add session token if present
-    if let Some(token) = session_token {
-        if !token.is_empty() {
-            headers.insert("x-amz-security-token", HeaderValue::from_str(token)?);
-        }
+    if let Some(token) = session_token
+        && !token.is_empty()
+    {
+        headers.insert("x-amz-security-token", HeaderValue::from_str(token)?);
     }
 
     // Create canonical query string (empty for our use case)
@@ -142,13 +142,13 @@ fn format_canonical_headers(headers: &HeaderMap) -> String {
     }
 
     for name in header_names {
-        if let Some(value) = headers.get(name) {
-            if let Ok(value_str) = value.to_str() {
-                canonical_headers.push_str(name);
-                canonical_headers.push(':');
-                canonical_headers.push_str(value_str.trim());
-                canonical_headers.push('\n');
-            }
+        if let Some(value) = headers.get(name)
+            && let Ok(value_str) = value.to_str()
+        {
+            canonical_headers.push_str(name);
+            canonical_headers.push(':');
+            canonical_headers.push_str(value_str.trim());
+            canonical_headers.push('\n');
         }
     }
 

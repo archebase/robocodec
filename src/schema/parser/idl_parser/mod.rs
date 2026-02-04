@@ -202,10 +202,10 @@ fn parse_struct(
 
     // Parse members
     for item in inner_items {
-        if item.as_rule() == Rule::member {
-            if let Some(field) = parse_member(item) {
-                msg_type.add_field(field);
-            }
+        if item.as_rule() == Rule::member
+            && let Some(field) = parse_member(item)
+        {
+            msg_type.add_field(field);
         }
     }
 

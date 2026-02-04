@@ -181,10 +181,10 @@ impl S3Reader {
         file_size: u64,
     ) -> Result<(HashMap<u16, ChannelInfo>, u64), FatalError> {
         // Tier 1: Try footer-first approach (preferred)
-        if let Ok(channels) = self.try_mcap_footer_first(file_size).await {
-            if !channels.is_empty() {
-                return Ok((channels, 0));
-            }
+        if let Ok(channels) = self.try_mcap_footer_first(file_size).await
+            && !channels.is_empty()
+        {
+            return Ok((channels, 0));
         }
 
         // Tier 2: Fallback to scanning from beginning
@@ -917,20 +917,20 @@ impl<'a> S3MessageStream<'a> {
                     // Parse the chunk based on format
                     match self.reader.format {
                         crate::io::metadata::FileFormat::Mcap => {
-                            if let Some(ref mut parser) = self.mcap_parser {
-                                if let Ok(msgs) = parser.parse_chunk(&chunk_data) {
-                                    for msg in msgs {
-                                        self.pending_messages.push(ParsedMessage::Mcap(msg));
-                                    }
+                            if let Some(ref mut parser) = self.mcap_parser
+                                && let Ok(msgs) = parser.parse_chunk(&chunk_data)
+                            {
+                                for msg in msgs {
+                                    self.pending_messages.push(ParsedMessage::Mcap(msg));
                                 }
                             }
                         }
                         crate::io::metadata::FileFormat::Bag => {
-                            if let Some(ref mut parser) = self.bag_parser {
-                                if let Ok(msgs) = parser.parse_chunk(&chunk_data) {
-                                    for msg in msgs {
-                                        self.pending_messages.push(ParsedMessage::Bag(msg));
-                                    }
+                            if let Some(ref mut parser) = self.bag_parser
+                                && let Ok(msgs) = parser.parse_chunk(&chunk_data)
+                            {
+                                for msg in msgs {
+                                    self.pending_messages.push(ParsedMessage::Bag(msg));
                                 }
                             }
                         }

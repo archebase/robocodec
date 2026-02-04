@@ -765,16 +765,16 @@ impl TypeRenameTransform {
     fn apply_wildcard_type(&self, type_name: &str) -> Option<String> {
         for (pattern, target) in &self.wildcard_patterns {
             // Both pattern and target should have the form "prefix/*"
-            if let Some(stripped_pattern) = pattern.strip_suffix('*') {
-                if let Some(suffix) = type_name.strip_prefix(stripped_pattern) {
-                    let new_target = if let Some(stripped_target) = target.strip_suffix('*') {
-                        format!("{stripped_target}{suffix}")
-                    } else {
-                        // Target doesn't end with *, just use it as-is
-                        target.clone()
-                    };
-                    return Some(new_target);
-                }
+            if let Some(stripped_pattern) = pattern.strip_suffix('*')
+                && let Some(suffix) = type_name.strip_prefix(stripped_pattern)
+            {
+                let new_target = if let Some(stripped_target) = target.strip_suffix('*') {
+                    format!("{stripped_target}{suffix}")
+                } else {
+                    // Target doesn't end with *, just use it as-is
+                    target.clone()
+                };
+                return Some(new_target);
             }
         }
         None

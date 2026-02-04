@@ -135,10 +135,11 @@ fn cmd_schema(input: PathBuf, topic_or_type: Option<String>) -> Result<()> {
     let mut found = false;
 
     for channel in reader.channels().values() {
-        if let Some(ref filter) = topic_or_type {
-            if !channel.topic.contains(filter) && !channel.message_type.contains(filter) {
-                continue;
-            }
+        if let Some(ref filter) = topic_or_type
+            && !channel.topic.contains(filter)
+            && !channel.message_type.contains(filter)
+        {
+            continue;
         }
 
         found = true;
@@ -158,10 +159,8 @@ fn cmd_schema(input: PathBuf, topic_or_type: Option<String>) -> Result<()> {
         println!();
     }
 
-    if !found {
-        if let Some(filter) = topic_or_type {
-            println!("No matching topic or type found: {}", filter);
-        }
+    if !found && let Some(filter) = topic_or_type {
+        println!("No matching topic or type found: {}", filter);
     }
 
     Ok(())

@@ -151,10 +151,10 @@ impl ProtobufCodec {
         for field in descriptor.fields() {
             let field_name = field.name().to_string();
 
-            if let Some(value) = dynamic_msg.get_field_by_name(&field_name) {
-                if let Some(codec_value) = self.reflect_value_to_codec(&value) {
-                    fields.insert(field_name, codec_value);
-                }
+            if let Some(value) = dynamic_msg.get_field_by_name(&field_name)
+                && let Some(codec_value) = self.reflect_value_to_codec(&value)
+            {
+                fields.insert(field_name, codec_value);
             }
         }
 
