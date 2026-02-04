@@ -687,6 +687,228 @@ mod wiremock_tests {
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
+
+    #[tokio::test]
+    async fn test_s3_client_403_access_denied() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(wiremock_path("/secure-bucket/restricted.mcap"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("secure-bucket", "restricted.mcap").with_endpoint(mock_server.uri());
+
+        let result = client.fetch_range(&location, 0, 100).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_500_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(wiremock_path("/test-bucket/error.mcap"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "error.mcap").with_endpoint(mock_server.uri());
+
+        let result = client.fetch_range(&location, 0, 100).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_s3_reader_state_queries() {
+        let constructor = S3ReaderConstructor::new_mcap();
+        let reader = constructor.build();
+
+        // Initial state should have more (not EOF or Error)
+        assert!(reader.has_more());
+
+        // Check basic properties
+        assert_eq!(reader.path(), "test.mcap");
+        assert_eq!(reader.format(), robocodec::io::metadata::FileFormat::Mcap);
+        assert_eq!(reader.file_size(), 0); // Not initialized yet
+
+        // Streaming reader doesn't pre-count messages
+        assert_eq!(reader.message_count(), 0);
+
+        // Streaming reader doesn't track time bounds during header scan
+        assert!(reader.start_time().is_none());
+        assert!(reader.end_time().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_s3_reader_location() {
+        let constructor = S3ReaderConstructor::new_mcap();
+        let reader = constructor.build();
+
+        assert_eq!(reader.location().bucket(), "test-bucket");
+        assert_eq!(reader.location().key(), "test.mcap");
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_head_missing_content_length() {
+        let mock_server = MockServer::start().await;
+
+        // Mock HEAD response without content-length
+        Mock::given(method("HEAD"))
+            .and(wiremock_path("/test-bucket/no-length.mcap"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "no-length.mcap").with_endpoint(mock_server.uri());
+
+        let result = client.object_size(&location).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Content-Length"));
+    }
+
+    #[tokio::test]
+    async fn test_s3_client_invalid_uri() {
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        // Create a location with an invalid URL character
+        let location = S3Location::new("test-bucket", "file with spaces.mcap");
+
+        // This should fail during URI parsing in fetch_range
+        let result = client.fetch_range(&location, 0, 100).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_s3_multipart_upload_create() {
+        use wiremock::matchers::method;
+
+        let mock_server = MockServer::start().await;
+
+        // Mock the InitiateMultipartUploadResponse
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/upload.mcap"))
+            .and(header("x-amz-content-sha256", "UNSIGNED-PAYLOAD"))
+            .and(wiremock_path("/test-bucket/upload.mcap"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("<?xml version=\"1.0\"?><InitiateMultipartUploadResult><UploadId>test-upload-id-123</UploadId></InitiateMultipartUploadResult>")
+            )
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "upload.mcap").with_endpoint(mock_server.uri());
+
+        let result = client.create_upload(&location).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "test-upload-id-123");
+    }
+
+    #[tokio::test]
+    async fn test_s3_multipart_upload_create_failure() {
+        use wiremock::matchers::method;
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/fail.mcap"))
+            .and(header("x-amz-content-sha256", "UNSIGNED-PAYLOAD"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location = S3Location::new("test-bucket", "fail.mcap").with_endpoint(mock_server.uri());
+
+        let result = client.create_upload(&location).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_s3_multipart_upload_part() {
+        use wiremock::matchers::method;
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/part.mcap"))
+            .respond_with(ResponseTemplate::new(200).insert_header("etag", "\"test-etag-123\""))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location = S3Location::new("test-bucket", "part.mcap").with_endpoint(mock_server.uri());
+
+        let data = bytes::Bytes::from(&b"test data"[..]);
+        let result = client.upload_part(&location, "upload-id", 1, data).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "test-etag-123");
+    }
+
+    #[tokio::test]
+    async fn test_s3_multipart_complete() {
+        use wiremock::matchers::method;
+
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(wiremock_path("/test-bucket/complete.mcap"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "complete.mcap").with_endpoint(mock_server.uri());
+
+        let parts = vec![(1, "etag1".to_string()), (2, "etag2".to_string())];
+        let result = client.complete_upload(&location, "upload-id", parts).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_s3_multipart_abort() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("DELETE"))
+            .and(wiremock_path("/test-bucket/abort.mcap"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock_server)
+            .await;
+
+        let config = S3ReaderConfig::default();
+        let client = S3Client::new(config).unwrap();
+
+        let location =
+            S3Location::new("test-bucket", "abort.mcap").with_endpoint(mock_server.uri());
+
+        let result = client.abort_upload(&location, "upload-id").await;
+        assert!(result.is_ok());
+    }
 }
 
 // ============================================================================
