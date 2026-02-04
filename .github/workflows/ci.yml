@@ -75,6 +75,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Build CLI binary (for CLI tests)
+        run: cargo build --bin robocodec --features cli
+
       - name: Run tests
         run: cargo test
 
@@ -100,6 +103,9 @@ jobs:
       - name: Install cargo-llvm-cov
         if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
         run: cargo install cargo-llvm-cov
+
+      - name: Build CLI binary (for CLI tests)
+        run: cargo build --bin robocodec --features cli
 
       - name: Generate Rust coverage
         run: cargo llvm-cov --workspace --lcov --output-path lcov-rust.info
