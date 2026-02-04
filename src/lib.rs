@@ -87,6 +87,10 @@ pub use io::reader::{DecodedMessageIter, ReaderConfig, ReaderConfigBuilder};
 pub use io::traits::{FormatReader, FormatWriter};
 pub use io::{MmapArena, MmapArenaRef, RoboReader, RoboWriter};
 
+// Re-export S3 types when `s3` feature is enabled
+#[cfg(feature = "s3")]
+pub use io::s3::{S3Client, S3Location, S3Reader, S3ReaderConfig, S3ReaderState};
+
 // Rewriter support (shared types and traits)
 pub mod rewriter;
 

@@ -37,7 +37,17 @@ use crate::io::formats::mcap::McapFormat;
 use crate::io::metadata::{ChannelInfo, DecodedMessageResult, FileFormat};
 use crate::io::traits::{FormatReader, ParallelReader};
 use crate::{CodecError, Result};
-use std::path::Path;
+
+/// Get or create a shared Tokio runtime for blocking async operations.
+///
+/// This reuses a single runtime across all S3 operations, avoiding
+/// the overhead of creating a new runtime for each open/write.
+#[cfg(feature = "s3")]
+fn shared_runtime() -> &'static tokio::runtime::Runtime {
+    use std::sync::OnceLock;
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RT.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
+}
 
 enum DecodedMessageIterInner<'a> {
     Mcap(McapTimestampedStream<'a>),
@@ -138,34 +148,36 @@ pub struct RoboReader {
 impl RoboReader {
     /// Open a file with automatic format detection and default configuration.
     ///
+    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    ///
     /// # Arguments
     ///
-    /// * `path` - Path to the file to open
+    /// * `path` - Path to the file to open, or S3 URL (s3://bucket/key)
     ///
     /// # Example
     ///
     /// ```rust,no_run
     /// use robocodec::io::RoboReader;
     ///
+    /// // Local file
     /// let reader = RoboReader::open("data.mcap")?;
+    ///
+    /// // S3 object (requires tokio runtime)
+    /// let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn open(path: &str) -> Result<Self> {
         Self::open_with_config(path, ReaderConfig::default())
     }
 
     /// Open a file with the specified configuration.
     ///
+    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    ///
     /// # Arguments
     ///
-    /// * `path` - Path to the file to open
-    /// * `config` - Reader configuration (currently reserved for future use)
-    ///
-    /// # Note
-    ///
-    /// The `config` parameter is currently accepted but not used.
-    /// The reader automatically selects the optimal reading strategy based on file characteristics.
-    /// This parameter is reserved for future use when explicit strategy control will be implemented.
+    /// * `path` - Path to the file to open, or S3 URL (s3://bucket/key)
+    /// * `config` - Reader configuration
     ///
     /// # Example
     ///
@@ -174,32 +186,46 @@ impl RoboReader {
     ///
     /// let reader = RoboReader::open_with_config(
     ///     "data.mcap",
-    ///     ReaderConfig::builder().prefer_parallel(true).build()
+    ///     ReaderConfig::default()
     /// )?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn open_with_config<P: AsRef<Path>>(path: P, config: ReaderConfig) -> Result<Self> {
-        // Note: config is currently reserved for future use
-        // The format readers auto-select optimal strategy based on file characteristics
-        let _ = config; // Suppress unused warning while preserving API
-        let path = path.as_ref();
+    pub fn open_with_config(path: &str, config: ReaderConfig) -> Result<Self> {
+        let _ = config; // Config reserved for future use
 
-        if !path.exists() {
+        // Check if this is an S3 URL
+        #[cfg(feature = "s3")]
+        {
+            if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
+                // Use S3Reader for s3:// URLs
+                let rt = shared_runtime();
+                let reader =
+                    rt.block_on(async { crate::io::s3::S3Reader::open(location).await })?;
+                return Ok(Self {
+                    inner: Box::new(reader),
+                });
+            }
+        }
+
+        // Fall back to local file path
+        let path_obj = std::path::Path::new(path);
+
+        if !path_obj.exists() {
             return Err(CodecError::parse(
                 "RoboReader",
-                format!("File not found: {}", path.display()),
+                format!("File not found: {}", path),
             ));
         }
 
-        let format = detect_format(path)?;
+        let format = detect_format(path_obj)?;
 
         let inner: Box<dyn FormatReader> = match format {
-            FileFormat::Mcap => Box::new(McapFormat::open(path)?),
-            FileFormat::Bag => Box::new(BagFormat::open(path)?),
+            FileFormat::Mcap => Box::new(McapFormat::open(path_obj)?),
+            FileFormat::Bag => Box::new(BagFormat::open(path_obj)?),
             FileFormat::Unknown => {
                 return Err(CodecError::parse(
                     "RoboReader",
-                    format!("Unknown file format: {}", path.display()),
+                    format!("Unknown file format: {}", path),
                 ))
             }
         };
@@ -538,7 +564,7 @@ mod tests {
         let temp_path = std::env::temp_dir().join("test_unknown.xyz123");
         std::fs::write(&temp_path, b"invalid content").unwrap();
 
-        let result = RoboReader::open(&temp_path);
+        let result = RoboReader::open(temp_path.to_str().unwrap());
         assert!(result.is_err());
         match result {
             Err(err) => {
@@ -559,7 +585,7 @@ mod tests {
 
         // Just verify it accepts the config parameter
         let config = ReaderConfig::default();
-        let result = RoboReader::open_with_config(&temp_path, config);
+        let result = RoboReader::open_with_config(temp_path.to_str().unwrap(), config);
         // Will fail to parse as valid MCAP but should accept the config param
         assert!(result.is_err());
 

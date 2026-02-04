@@ -7,7 +7,7 @@
 use std::io::IsTerminal as _;
 use std::path::Path;
 
-use robocodec::RoboReader;
+use robocodec::{CodecError, RoboReader};
 
 pub use anyhow::Result as CliResult;
 pub type Result<T = ()> = CliResult<T>;
@@ -199,7 +199,10 @@ impl Progress {
 
 /// Open a file with automatic format detection.
 pub fn open_reader(path: &Path) -> Result<RoboReader> {
-    Ok(RoboReader::open(path)?)
+    let path_str = path.to_str().ok_or_else(|| {
+        CodecError::parse("open_reader", format!("Invalid UTF-8 path: {:?}", path))
+    })?;
+    Ok(RoboReader::open(path_str)?)
 }
 
 #[cfg(test)]

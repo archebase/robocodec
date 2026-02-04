@@ -75,7 +75,7 @@ impl InspectCmd {
 
 /// Cmd: Show file info
 fn cmd_info(input: PathBuf) -> Result<()> {
-    let reader = RoboReader::open(&input)?;
+    let reader = RoboReader::open(input.to_str().unwrap())?;
 
     println!("=== {} ===", input.display());
     println!("Format: {:?}", reader.format());
@@ -102,7 +102,7 @@ fn cmd_info(input: PathBuf) -> Result<()> {
 
 /// Cmd: List topics
 fn cmd_topics(input: PathBuf, filter: Option<String>, show_counts: bool) -> Result<()> {
-    let reader = RoboReader::open(&input)?;
+    let reader = RoboReader::open(input.to_str().unwrap())?;
 
     println!("=== Topics in {} ===", input.display());
     println!();
@@ -130,7 +130,7 @@ fn cmd_topics(input: PathBuf, filter: Option<String>, show_counts: bool) -> Resu
 
 /// Cmd: Show schema
 fn cmd_schema(input: PathBuf, topic_or_type: Option<String>) -> Result<()> {
-    let reader = RoboReader::open(&input)?;
+    let reader = RoboReader::open(input.to_str().unwrap())?;
 
     let mut found = false;
 
@@ -169,7 +169,7 @@ fn cmd_schema(input: PathBuf, topic_or_type: Option<String>) -> Result<()> {
 
 /// Cmd: Show statistics
 fn cmd_stats(input: PathBuf) -> Result<()> {
-    let reader = RoboReader::open(&input)?;
+    let reader = RoboReader::open(input.to_str().unwrap())?;
 
     println!("=== Statistics for {} ===", input.display());
     println!("Total messages: {}", reader.message_count());

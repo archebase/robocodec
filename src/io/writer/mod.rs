@@ -17,7 +17,17 @@ use crate::io::formats::mcap::McapFormat;
 use crate::io::metadata::{FileFormat, RawMessage};
 use crate::io::traits::FormatWriter;
 use crate::{CodecError, Result};
-use std::path::Path;
+
+/// Get or create a shared Tokio runtime for blocking async operations.
+///
+/// This reuses a single runtime across all S3 operations, avoiding
+/// the overhead of creating a new runtime for each open/write.
+#[cfg(feature = "s3")]
+fn shared_runtime() -> &'static tokio::runtime::Runtime {
+    use std::sync::OnceLock;
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RT.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
+}
 
 /// Unified writer that delegates to format-specific implementations.
 pub struct RoboWriter {
@@ -28,29 +38,35 @@ pub struct RoboWriter {
 impl RoboWriter {
     /// Create a new writer with automatic format detection based on file extension.
     ///
+    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    ///
     /// # Arguments
     ///
-    /// * `path` - Path to the output file
+    /// * `path` - Path to the output file, or S3 URL (s3://bucket/key)
     ///
     /// # Example
     ///
     /// ```rust,no_run
     /// use robocodec::io::{FormatWriter, RoboWriter};
     ///
-    /// let mut writer = RoboWriter::create("output.mcap")?;
-    /// let channel_id = writer.add_channel("/topic", "type", "cdr", None)?;
-    /// writer.finish()?;
+    /// // Local file
+    /// let writer = RoboWriter::create("output.mcap")?;
+    ///
+    /// // S3 object (requires tokio runtime)
+    /// let writer = RoboWriter::create("s3://my-bucket/path/to/output.mcap")?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn create(path: &str) -> Result<Self> {
         Self::create_with_config(path, WriterConfig::default())
     }
 
     /// Create a writer with the specified configuration.
     ///
+    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    ///
     /// # Arguments
     ///
-    /// * `path` - Path to the output file
+    /// * `path` - Path to the output file, or S3 URL (s3://bucket/key)
     /// * `config` - Writer configuration
     ///
     /// # Example
@@ -58,17 +74,46 @@ impl RoboWriter {
     /// ```rust,no_run
     /// use robocodec::io::{RoboWriter, WriterConfig};
     ///
-    /// let mut writer = RoboWriter::create_with_config(
+    /// let writer = RoboWriter::create_with_config(
     ///     "output.mcap",
-    ///     WriterConfig::builder().chunk_size(1024 * 1024).build()
+    ///     WriterConfig::default()
     /// )?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn create_with_config<P: AsRef<Path>>(path: P, config: WriterConfig) -> Result<Self> {
-        let path = path.as_ref();
+    pub fn create_with_config(path: &str, config: WriterConfig) -> Result<Self> {
+        let _ = config; // Config reserved for future use
+
+        // Check if this is an S3 URL
+        #[cfg(feature = "s3")]
+        {
+            if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
+                // Use S3Writer for s3:// URLs
+                let rt = shared_runtime();
+                let writer = rt.block_on(async {
+                    let client = crate::io::s3::S3Client::default_client().map_err(|e| {
+                        CodecError::EncodeError {
+                            codec: "S3".to_string(),
+                            message: e.to_string(),
+                        }
+                    })?;
+                    crate::io::s3::S3Writer::new(location, client).map_err(|e| {
+                        CodecError::EncodeError {
+                            codec: "S3".to_string(),
+                            message: e.to_string(),
+                        }
+                    })
+                })?;
+                return Ok(Self {
+                    inner: Box::new(writer),
+                });
+            }
+        }
+
+        // Fall back to local file path
+        let path_obj = std::path::Path::new(path);
 
         // Get parent directory and ensure it exists
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = path_obj.parent() {
             if !parent.as_os_str().is_empty() {
                 match parent.try_exists() {
                     Ok(false) => {
@@ -83,30 +128,27 @@ impl RoboWriter {
                             format!("Cannot access parent directory {}: {}", parent.display(), e),
                         ));
                     }
-                    Ok(true) => {} // Parent exists, continue
+                    Ok(true) => {}
                 }
             }
         }
 
-        let format = detect_format(path)?;
+        let format = detect_format(path_obj)?;
 
         let inner: Box<dyn FormatWriter> = match format {
-            FileFormat::Mcap => McapFormat::create_writer(path, &config)?,
-            FileFormat::Bag => BagFormat::create_writer(path, &config)?,
+            FileFormat::Mcap => McapFormat::create_writer(path_obj, &config)?,
+            FileFormat::Bag => BagFormat::create_writer(path_obj, &config)?,
             FileFormat::Unknown => {
                 // Try to determine from extension
-                let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                let extension = path_obj.extension().and_then(|e| e.to_str()).unwrap_or("");
 
                 match extension {
-                    "mcap" => McapFormat::create_writer(path, &config)?,
-                    "bag" => BagFormat::create_writer(path, &config)?,
+                    "mcap" => McapFormat::create_writer(path_obj, &config)?,
+                    "bag" => BagFormat::create_writer(path_obj, &config)?,
                     _ => {
                         return Err(CodecError::parse(
                             "RoboWriter",
-                            format!(
-                                "Unknown file format. Use .mcap or .bag extension: {}",
-                                path.display()
-                            ),
+                            format!("Unknown file format. Use .mcap or .bag extension: {}", path),
                         ))
                     }
                 }
@@ -116,7 +158,7 @@ impl RoboWriter {
         Ok(Self { inner })
     }
 
-    /// Get the file information as a unified struct.
+    /// Get the file format being written.
     pub fn format(&self) -> FileFormat {
         // Determine from path extension
         match self.path().rsplit('.').next() {
@@ -124,6 +166,16 @@ impl RoboWriter {
             Some("bag") => FileFormat::Bag,
             _ => FileFormat::Unknown,
         }
+    }
+
+    /// Downcast to the inner writer for format-specific operations.
+    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+        self.inner.as_any().downcast_ref::<T>()
+    }
+
+    /// Downcast mutably to the inner writer.
+    pub fn downcast_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.inner.as_any_mut().downcast_mut::<T>()
     }
 }
 

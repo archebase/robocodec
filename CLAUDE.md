@@ -130,6 +130,54 @@ As a common library for other projects to use, these do NOT belong:
 - **Public API**: All public items require rustdoc comments
 - **License**: All source files must include SPDX license headers
 
+## Rust Best Practices
+
+As a staff Rust engineer, always follow these guidelines:
+
+### API Design
+- Follow [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/)
+- Use `&str` for stable public APIs that accept both paths and URLs
+- Handle URL detection (`s3://`) internally within `open()`/`create()` methods
+- Use builder patterns for complex configuration (`ReaderConfigBuilder`, `WriterConfigBuilder`)
+
+### Error Handling
+- Use `Result<T>` and `?` operator properly
+- Avoid `.unwrap()` in library code - use proper error propagation
+- Provide meaningful error messages with context
+- Use `CodecError` from `core/error.rs` for consistency
+
+### Ownership & Borrowing
+- Prefer borrowing over cloning when possible
+- Use `Cow<'_, str>` for conditional ownership
+- Accept `impl AsRef<Path>` for ergonomic APIs where appropriate
+- Minimize allocations in hot paths
+
+### Iterators & Functional Patterns
+- Use iterators (`map`, `filter`, `and_then`) over imperative loops
+- Leverage `Option` and `Result` combinators (`?`, `map`, `unwrap_or`)
+- Use `collect()` to build collections from iterators
+
+### Type System
+- Use the type system to prevent invalid states (newtypes, enums)
+- Leverage `#[must_use]` for important return values
+- Use `#[non_exhaustive]` for enums that may grow
+
+### Safety
+- Minimize `unsafe` code
+- Document why `unsafe` is necessary when used
+- Prefer safe abstractions over raw pointers
+
+### Documentation
+- All public items must have rustdoc with examples
+- Include `# Example` sections showing typical usage
+- Document panics and errors in doc comments
+
+### Testing
+- Write unit tests alongside code in `#[cfg(test)]` modules
+- Use integration tests in `tests/` for cross-module testing
+- Test both success and error paths
+- Use descriptive test names (`test_round_trip_preserves_topics`)
+
 ## Features
 
 - `python` - PyO3 Python bindings
