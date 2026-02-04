@@ -56,9 +56,19 @@ impl DynCodec for CdrCodec {
             SchemaMetadata::Cdr {
                 type_name,
                 schema_text,
+                schema_encoding,
             } => {
                 // Parse the schema text to get MessageSchema
-                let parsed_schema = crate::schema::parse_schema(type_name, schema_text)?;
+                // Use schema encoding if available to select the correct parser
+                let parsed_schema = if let Some(enc) = schema_encoding {
+                    crate::schema::parser::parse_schema_with_encoding_str(
+                        type_name,
+                        schema_text,
+                        enc,
+                    )?
+                } else {
+                    crate::schema::parse_schema(type_name, schema_text)?
+                };
 
                 // Decode using the existing CDR decoder
                 self.decoder.decode(&parsed_schema, data, Some(type_name))
@@ -79,9 +89,19 @@ impl DynCodec for CdrCodec {
             SchemaMetadata::Cdr {
                 type_name,
                 schema_text,
+                schema_encoding,
             } => {
                 // Parse the schema text to get MessageSchema
-                let parsed_schema = crate::schema::parse_schema(type_name, schema_text)?;
+                // Use schema encoding if available to select the correct parser
+                let parsed_schema = if let Some(enc) = schema_encoding {
+                    crate::schema::parser::parse_schema_with_encoding_str(
+                        type_name,
+                        schema_text,
+                        enc,
+                    )?
+                } else {
+                    crate::schema::parse_schema(type_name, schema_text)?
+                };
 
                 // Encode using the CDR encoder
                 let encoder = self.encoder();

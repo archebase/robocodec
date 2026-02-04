@@ -281,18 +281,24 @@ impl S3ReaderConfig {
     }
 
     /// Set the buffer size for S3 reads.
+    ///
+    /// Invalid values will be caught by [`validate()`](Self::validate).
     pub fn with_buffer_size(mut self, size: usize) -> Self {
         self.buffer_size = size;
         self
     }
 
     /// Set the maximum in-memory chunk size.
+    ///
+    /// Invalid values will be caught by [`validate()`](Self::validate).
     pub fn with_max_chunk_size(mut self, size: usize) -> Self {
         self.max_chunk_size = size;
         self
     }
 
     /// Set the header scan limit.
+    ///
+    /// Invalid values will be caught by [`validate()`](Self::validate).
     pub fn with_header_scan_limit(mut self, limit: usize) -> Self {
         self.header_scan_limit = limit;
         self
@@ -315,12 +321,16 @@ impl S3ReaderConfig {
     }
 
     /// Set the request timeout.
+    ///
+    /// Invalid values will be caught by [`validate()`](Self::validate).
     pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
         self
     }
 
     /// Set the connection pool max idle connections.
+    ///
+    /// Invalid values will be caught by [`validate()`](Self::validate).
     pub fn with_pool_max_idle(mut self, max_idle: usize) -> Self {
         self.pool_max_idle = max_idle;
         self

@@ -70,8 +70,13 @@ impl S3Client {
         offset: u64,
         length: u64,
     ) -> Result<Bytes, FatalError> {
+        // Handle zero-length request
+        if length == 0 {
+            return Ok(Bytes::new());
+        }
+
         let url = location.url();
-        let range_header = format!("bytes={}-{}", offset, offset + length.saturating_sub(1));
+        let range_header = format!("bytes={}-{}", offset, offset + length - 1);
 
         // Build the request with AWS SigV4 signing if credentials are provided
         let response = if let Some(credentials) = self.config.credentials() {

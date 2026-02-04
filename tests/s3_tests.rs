@@ -757,11 +757,21 @@ mod minio_tests {
     #[tokio::test]
     async fn test_minio_docker_instructions() {
         println!("\n==== MinIO Docker Setup Instructions ====");
-        println!("docker run -d --name minio-test -p 9000:9000 -p 9001:9001 \\");
-        println!("  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \\");
-        println!("  quay.io/minio/minio server /data --console-address ':9001'");
+        println!("Using docker-compose (recommended):");
+        println!("  docker compose up -d");
         println!();
-        println!("Set MINIO_ENDPOINT=http://localhost:9000 to run integration tests");
+        println!("Or manually:");
+        println!("  docker run -d --name robocodec-minio -p 9000:9000 -p 9001:9001 \\");
+        println!("    -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \\");
+        println!("    minio/minio server /data --console-address ':9001'");
+        println!();
+        println!("Upload fixtures:");
+        println!("  ./scripts/upload-fixtures-to-minio.sh");
+        println!();
+        println!("Run tests:");
+        println!("  cargo test --features s3 minio_tests");
+        println!();
+        println!("Web console: http://localhost:9001 (minioadmin/minioadmin)");
         println!("=========================================\n");
     }
 
@@ -814,5 +824,203 @@ mod minio_tests {
         let reader = result.unwrap();
         assert_eq!(reader.format(), robocodec::io::metadata::FileFormat::Mcap);
         assert!(FormatReader::file_size(&reader) > 0);
+    }
+
+    /// Test full message streaming from MinIO.
+    /// This verifies the complete S3 streaming read pipeline.
+    #[tokio::test]
+    async fn test_minio_stream_messages() {
+        if !minio_available().await {
+            return;
+        }
+
+        let config = MinIOConfig::default();
+        let fixture_path = fixture_path("robocodec_test_0.mcap");
+
+        if !fixture_path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(&fixture_path).unwrap();
+        let key = "test/robocodec_test_0.mcap";
+
+        // Skip test if bucket doesn't exist
+        if upload_to_minio(&config, key, &data).await.is_err() {
+            eprintln!(
+                "Skipping MinIO test: bucket '{}' does not exist. Create with: docker compose up -d",
+                config.bucket
+            );
+            return;
+        }
+
+        // Clean up after test
+        let key_cleanup = key.to_string();
+        let endpoint = config.endpoint.clone();
+        let bucket = config.bucket.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
+            let _ = client.delete(&url).send().await;
+        });
+
+        // Open and stream messages
+        let location = S3Location::new(&config.bucket, key)
+            .with_endpoint(&config.endpoint)
+            .with_region(&config.region);
+
+        let reader = S3Reader::open(location).await.unwrap();
+        eprintln!(
+            "Opened S3 reader, file size: {}",
+            FormatReader::file_size(&reader)
+        );
+        eprintln!("Discovered {} channels", reader.channels().len());
+
+        // Stream all messages
+        let mut stream = reader.iter_messages();
+        let mut message_count = 0;
+        let mut total_bytes = 0;
+
+        while let Some(result) = stream.next_message().await {
+            let (channel, data) = result.unwrap();
+            message_count += 1;
+            total_bytes += data.len();
+
+            if message_count <= 3 {
+                eprintln!(
+                    "Message {}: channel={}, topic={}, data_len={}",
+                    message_count,
+                    channel.id,
+                    channel.topic,
+                    data.len()
+                );
+            }
+        }
+
+        eprintln!(
+            "Streamed {} messages, {} bytes total",
+            message_count, total_bytes
+        );
+
+        assert!(message_count > 0, "Should stream at least one message");
+        assert!(
+            reader.channels().len() > 0,
+            "Should have discovered channels"
+        );
+    }
+
+    /// Test streaming a BAG file from MinIO.
+    #[tokio::test]
+    async fn test_minio_stream_bag() {
+        if !minio_available().await {
+            return;
+        }
+
+        let config = MinIOConfig::default();
+        let fixture_path = fixture_path("robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(&fixture_path).unwrap();
+        let key = "test/robocodec_test_15.bag";
+
+        // Skip test if bucket doesn't exist
+        if upload_to_minio(&config, key, &data).await.is_err() {
+            eprintln!("Skipping MinIO BAG test: bucket does not exist");
+            return;
+        }
+
+        // Clean up
+        let key_cleanup = key.to_string();
+        let endpoint = config.endpoint.clone();
+        let bucket = config.bucket.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
+            let _ = client.delete(&url).send().await;
+        });
+
+        let location = S3Location::new(&config.bucket, key)
+            .with_endpoint(&config.endpoint)
+            .with_region(&config.region);
+
+        let reader = S3Reader::open(location).await.unwrap();
+        assert_eq!(reader.format(), robocodec::io::metadata::FileFormat::Bag);
+        eprintln!("BAG file size: {}", FormatReader::file_size(&reader));
+
+        // Stream some messages to verify it works
+        let mut stream = reader.iter_messages();
+        let mut message_count = 0;
+
+        while let Some(result) = stream.next_message().await {
+            result.unwrap();
+            message_count += 1;
+            // Limit iterations for test speed
+            if message_count >= 10 {
+                break;
+            }
+        }
+
+        eprintln!("Streamed {} messages from BAG file", message_count);
+    }
+
+    /// Test chunk boundary handling by using a small max_chunk_size.
+    #[tokio::test]
+    async fn test_minio_chunk_boundaries() {
+        if !minio_available().await {
+            return;
+        }
+
+        let config = MinIOConfig::default();
+        let fixture_path = fixture_path("robocodec_test_0.mcap");
+
+        if !fixture_path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(&fixture_path).unwrap();
+        let key = "test/robocodec_test_0_chunked.mcap";
+
+        if upload_to_minio(&config, key, &data).await.is_err() {
+            eprintln!("Skipping MinIO chunk test: bucket does not exist");
+            return;
+        }
+
+        // Clean up
+        let key_cleanup = key.to_string();
+        let endpoint = config.endpoint.clone();
+        let bucket = config.bucket.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
+            let _ = client.delete(&url).send().await;
+        });
+
+        // Use a very small chunk size to force multiple S3 requests
+        let mut reader_config = S3ReaderConfig::default();
+        reader_config = reader_config.with_max_chunk_size(4096); // 4KB chunks
+
+        let location = S3Location::new(&config.bucket, key)
+            .with_endpoint(&config.endpoint)
+            .with_region(&config.region);
+
+        let reader = S3Reader::open_with_config(location, reader_config)
+            .await
+            .unwrap();
+
+        let mut stream = reader.iter_messages();
+        let mut message_count = 0;
+
+        while let Some(result) = stream.next_message().await {
+            result.unwrap();
+            message_count += 1;
+        }
+
+        assert!(
+            message_count > 0,
+            "Should stream messages even with small chunk size"
+        );
+        eprintln!("Streamed {} messages with 4KB chunks", message_count);
     }
 }

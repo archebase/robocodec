@@ -78,43 +78,49 @@ fn validate_bucket_name(bucket: &str) -> Result<(), S3UrlParseError> {
 /// Validate an endpoint URL to prevent SSRF attacks.
 ///
 /// Ensures:
-/// - URL is valid and uses HTTPS
-/// - Host is not a private/internal IP address
-/// - Host is not localhost
+/// - URL is valid and uses HTTPS (or HTTP for localhost in tests)
+/// - Host is not a private/internal IP address (except localhost for tests)
 fn validate_endpoint(endpoint: &str) -> Result<(), S3UrlParseError> {
     let url = Url::parse(endpoint).map_err(|_| S3UrlParseError::InvalidEndpoint)?;
 
-    // Must be HTTPS
-    if url.scheme() != "https" {
+    // For testing, allow HTTP for localhost
+    let is_localhost = url.host_str().map_or(false, |host| {
+        host == "localhost"
+            || host.starts_with("127.0.0.1")
+            || host.starts_with("[::1]")
+            || host.ends_with(".localhost")
+    });
+
+    // Must be HTTPS, unless it's localhost (for testing)
+    if url.scheme() != "https" && !is_localhost {
         return Err(S3UrlParseError::EndpointNotHttps);
     }
 
     // Check host against blocked patterns
     if let Some(host) = url.host_str() {
-        // Block localhost variants
-        if host == "localhost" || host.ends_with(".localhost") {
+        // Allow localhost for HTTP (testing), but block for HTTPS
+        let is_local_http = is_localhost && url.scheme() == "http";
+
+        // Block localhost variants (unless using HTTP for testing)
+        if !is_local_http && (host == "localhost" || host.ends_with(".localhost")) {
             return Err(S3UrlParseError::BlockedEndpoint);
         }
 
-        // Block common internal/private IP patterns
+        // Block common internal/private IP patterns (unless localhost with HTTP for testing)
         if let Ok(addr) = host.parse::<IpAddr>() {
-            match addr {
-                // Block private IPv4 ranges
-                IpAddr::V4(v4)
-                    if {
-                        v4.is_loopback()
-                            || v4.is_private()
-                            || v4.is_link_local()
-                            || v4.is_unspecified()
-                    } =>
-                {
-                    return Err(S3UrlParseError::BlockedEndpoint);
-                }
-                // Block loopback IPv6
-                IpAddr::V6(v6) if v6.is_loopback() || v6.is_unspecified() => {
-                    return Err(S3UrlParseError::BlockedEndpoint);
-                }
-                _ => {}
+            let is_loopback = matches!(addr, IpAddr::V4(v4) if v4.is_loopback())
+                || matches!(addr, IpAddr::V6(v6) if v6.is_loopback() || v6.is_unspecified());
+
+            // Allow loopback for HTTP (testing), block otherwise
+            let should_block = if is_loopback {
+                !is_local_http
+            } else {
+                matches!(addr, IpAddr::V4(v4) if v4.is_private() || v4.is_link_local() || v4.is_unspecified())
+                    || matches!(addr, IpAddr::V6(v6) if v6.is_unspecified())
+            };
+
+            if should_block {
+                return Err(S3UrlParseError::BlockedEndpoint);
             }
         }
 

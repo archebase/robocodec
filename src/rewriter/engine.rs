@@ -263,9 +263,11 @@ impl McapRewriteEngine {
                         )
                     })?
                     .clone();
-                Ok(SchemaMetadata::cdr(
+                let schema_encoding = channel.schema_encoding.clone();
+                Ok(SchemaMetadata::cdr_with_encoding(
                     channel.message_type.clone(),
                     schema_text,
+                    schema_encoding,
                 ))
             }
             crate::Encoding::Protobuf => {
@@ -314,6 +316,14 @@ impl McapRewriteEngine {
         topic: &str,
         pipeline: &MultiTransform,
     ) -> Result<SchemaMetadata> {
+        // Extract schema encoding before any borrows
+        let schema_encoding = match &schema {
+            SchemaMetadata::Cdr {
+                schema_encoding, ..
+            } => schema_encoding.clone(),
+            _ => None,
+        };
+
         // Get the original schema text based on the variant type
         let original_schema_text = match &schema {
             SchemaMetadata::Cdr { schema_text, .. } => Some(schema_text.as_str()),
@@ -337,7 +347,11 @@ impl McapRewriteEngine {
                 let text = new_schema_text
                     .or_else(|| original_schema_text.map(|s| s.to_string()))
                     .unwrap_or_default();
-                Ok(SchemaMetadata::cdr(new_type_name, text))
+                Ok(SchemaMetadata::cdr_with_encoding(
+                    new_type_name,
+                    text,
+                    schema_encoding,
+                ))
             }
             SchemaMetadata::Protobuf {
                 type_name: _,

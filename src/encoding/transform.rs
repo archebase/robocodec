@@ -27,6 +27,9 @@ pub enum SchemaMetadata {
         type_name: String,
         /// Schema text (IDL/MSG format)
         schema_text: String,
+        /// Schema encoding format (e.g., "ros2msg", "ros2idl")
+        /// This determines which parser to use for the schema text.
+        schema_encoding: Option<String>,
     },
     /// Protobuf FileDescriptorSet
     Protobuf {
@@ -70,6 +73,30 @@ impl SchemaMetadata {
         SchemaMetadata::Cdr {
             type_name,
             schema_text,
+            schema_encoding: None,
+        }
+    }
+
+    /// Create CDR schema metadata with explicit schema encoding.
+    pub fn cdr_with_encoding(
+        type_name: String,
+        schema_text: String,
+        schema_encoding: Option<String>,
+    ) -> Self {
+        SchemaMetadata::Cdr {
+            type_name,
+            schema_text,
+            schema_encoding,
+        }
+    }
+
+    /// Get the schema encoding for CDR schemas.
+    pub fn schema_encoding(&self) -> Option<&str> {
+        match self {
+            SchemaMetadata::Cdr {
+                schema_encoding, ..
+            } => schema_encoding.as_deref(),
+            _ => None,
         }
     }
 
@@ -272,6 +299,7 @@ impl SchemaTransformer for CdrSchemaTransformer {
             SchemaMetadata::Cdr {
                 type_name,
                 schema_text,
+                schema_encoding,
             } => {
                 // Check if this type needs transformation
                 let new_type_name = type_mappings
@@ -299,6 +327,7 @@ impl SchemaTransformer for CdrSchemaTransformer {
                 Ok(SchemaMetadata::Cdr {
                     type_name: new_type_name,
                     schema_text: new_schema_text,
+                    schema_encoding: schema_encoding.clone(),
                 })
             }
             _ => Err(CodecError::invalid_schema(
@@ -777,6 +806,7 @@ mod tests {
             SchemaMetadata::Cdr {
                 type_name,
                 schema_text,
+                ..
             } => {
                 assert_eq!(type_name, "foo/Msg");
                 assert_eq!(schema_text, "int32 value");
