@@ -561,4 +561,226 @@ mod tests {
 
         std::fs::remove_file(&temp_path).ok();
     }
+
+    #[test]
+    fn test_reader_format() {
+        let temp_path = std::env::temp_dir().join("test_format.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        assert_eq!(reader.format(), crate::io::metadata::FileFormat::Rrd);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_reader_file_size() {
+        let temp_path = std::env::temp_dir().join("test_size.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        assert!(reader.file_size() > 0);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_reader_path() {
+        let temp_path = std::env::temp_dir().join("test_path.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        assert!(reader.path().contains("test_path.rrd"));
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_reader_chunk_count() {
+        let temp_path = std::env::temp_dir().join("test_chunk_count.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        assert_eq!(reader.chunk_count(), 0);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_reader_channels() {
+        let temp_path = std::env::temp_dir().join("test_channels.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        assert!(!reader.channels().is_empty());
+        assert!(reader.channel_by_topic(DEFAULT_TOPIC).is_some());
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_reader_time_bounds() {
+        let temp_path = std::env::temp_dir().join("test_time.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        // Empty file should have no time bounds
+        assert_eq!(reader.start_time(), None);
+        assert_eq!(reader.end_time(), None);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_decode_messages() {
+        let temp_path = std::env::temp_dir().join("test_decode.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages().unwrap();
+        // Iterator should be created but return no messages for empty file
+        assert_eq!(iter.count(), 0);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_decode_messages_with_timestamp() {
+        let temp_path = std::env::temp_dir().join("test_timestamp.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        // Iterator should be created but return no messages for empty file
+        assert_eq!(iter.count(), 0);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_reader_header() {
+        let temp_path = std::env::temp_dir().join("test_header.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        let header = reader.header();
+        assert_eq!(header.version, 1);
+        assert_eq!(header.compression, COMPRESSION_LZ4);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_all_compression_names() {
+        let header = RrdHeader {
+            magic: *RRD_MAGIC,
+            version: 1,
+            flags: 0,
+            compression: COMPRESSION_LZ4,
+            schema_encoding: SCHEMA_ENCODING_PROTOBUF,
+            chunk_size: DEFAULT_CHUNK_SIZE as u32,
+            chunk_count: 0,
+        };
+        assert_eq!(header.compression_name(), "lz4");
+
+        let header_zstd = RrdHeader {
+            compression: COMPRESSION_ZSTD,
+            ..header
+        };
+        assert_eq!(header_zstd.compression_name(), "zstd");
+
+        let header_none = RrdHeader {
+            compression: COMPRESSION_NONE,
+            ..header
+        };
+        assert_eq!(header_none.compression_name(), "none");
+
+        let header_unknown = RrdHeader {
+            compression: 255,
+            ..header
+        };
+        assert_eq!(header_unknown.compression_name(), "unknown");
+    }
+
+    #[test]
+    fn test_all_schema_encoding_names() {
+        let header = RrdHeader {
+            magic: *RRD_MAGIC,
+            version: 1,
+            flags: 0,
+            compression: COMPRESSION_NONE,
+            schema_encoding: SCHEMA_ENCODING_PROTOBUF,
+            chunk_size: DEFAULT_CHUNK_SIZE as u32,
+            chunk_count: 0,
+        };
+        assert_eq!(header.schema_encoding_name(), "protobuf");
+
+        let header_flatbuffers = RrdHeader {
+            schema_encoding: SCHEMA_ENCODING_FLATBUFFERS,
+            ..header
+        };
+        assert_eq!(header_flatbuffers.schema_encoding_name(), "flatbuffers");
+
+        let header_json = RrdHeader {
+            schema_encoding: SCHEMA_ENCODING_JSON,
+            ..header
+        };
+        assert_eq!(header_json.schema_encoding_name(), "json");
+
+        let header_unknown = RrdHeader {
+            schema_encoding: 255,
+            ..header
+        };
+        assert_eq!(header_unknown.schema_encoding_name(), "unknown");
+    }
+
+    #[test]
+    fn test_unsupported_version() {
+        let temp_path = std::env::temp_dir().join("test_version.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&255u16.to_le_bytes()).unwrap(); // unsupported version
+            file.write_all(&0u32.to_le_bytes()).unwrap();
+            file.write_all(&[COMPRESSION_NONE]).unwrap();
+            file.write_all(&[SCHEMA_ENCODING_PROTOBUF]).unwrap();
+            file.write_all(&[0u8, 0u8]).unwrap();
+            file.write_all(&(DEFAULT_CHUNK_SIZE as u32).to_le_bytes())
+                .unwrap();
+            file.write_all(&[0u8; 4]).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let result = RrdReader::open(&temp_path);
+        assert!(result.is_err());
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_channel_by_topic_not_found() {
+        let temp_path = std::env::temp_dir().join("test_not_found.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        assert!(reader.channel_by_topic("/nonexistent/topic").is_none());
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_as_any() {
+        let temp_path = std::env::temp_dir().join("test_any.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        // Test as_any
+        let _any: &dyn std::any::Any = reader.as_any();
+        // Test as_any_mut
+        let mut reader_mut = RrdReader::open(&temp_path).unwrap();
+        let _any_mut: &mut dyn std::any::Any = reader_mut.as_any_mut();
+
+        std::fs::remove_file(&temp_path).ok();
+    }
 }

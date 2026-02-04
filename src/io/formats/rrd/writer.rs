@@ -554,4 +554,178 @@ mod tests {
         assert_eq!(writer.chunk_size, MAX_CHUNK_SIZE);
         std::fs::remove_file(&temp_path).ok();
     }
+
+    #[test]
+    fn test_add_channel_with_schema() {
+        let mut writer = {
+            let (w, _temp) = create_temp_writer();
+            w
+        };
+
+        let schema = Some("string data");
+        let id = writer
+            .add_channel("/test", "std_msgs/String", "json", schema)
+            .unwrap();
+        assert_eq!(id, 0);
+        assert_eq!(writer.channel_count(), 1);
+
+        // Verify schema was stored
+        let channel = &writer.channels[&0];
+        assert_eq!(channel.schema.as_deref(), Some("string data"));
+    }
+
+    #[test]
+    fn test_write_to_unknown_channel() {
+        let mut writer = {
+            let (w, _temp) = create_temp_writer();
+            w
+        };
+
+        let message = RawMessage {
+            channel_id: 999, // unknown channel
+            log_time: 1000,
+            publish_time: 1000,
+            data: b"test".to_vec(),
+            sequence: None,
+        };
+
+        // Write succeeds even for unknown channel (message is stored)
+        // but channel count won't be updated
+        let result = writer.write(&message);
+        assert!(result.is_ok());
+        assert_eq!(writer.message_count(), 1);
+    }
+
+    #[test]
+    fn test_write_batch_mixed_channels() {
+        let mut writer = {
+            let (w, _temp) = create_temp_writer();
+            w
+        };
+
+        let id1 = writer
+            .add_channel("/ch1", "std_msgs/String", "json", None)
+            .unwrap();
+        let id2 = writer
+            .add_channel("/ch2", "std_msgs/Int32", "cdr", None)
+            .unwrap();
+
+        let messages = vec![
+            RawMessage {
+                channel_id: id1,
+                log_time: 1000,
+                publish_time: 1000,
+                data: b"data1".to_vec(),
+                sequence: None,
+            },
+            RawMessage {
+                channel_id: id2,
+                log_time: 2000,
+                publish_time: 2000,
+                data: b"data2".to_vec(),
+                sequence: None,
+            },
+        ];
+
+        writer.write_batch(&messages).unwrap();
+        assert_eq!(writer.message_count(), 2);
+    }
+
+    #[test]
+    fn test_writer_path() {
+        let writer = {
+            let (w, _temp) = create_temp_writer();
+            w
+        };
+
+        // Path should contain "tmp" (tempfile path)
+        assert!(writer.path().len() > 0);
+    }
+
+    #[test]
+    fn test_as_any() {
+        let writer = {
+            let (w, _temp) = create_temp_writer();
+            w
+        };
+
+        // Test as_any
+        let _any: &dyn std::any::Any = writer.as_any();
+    }
+
+    #[test]
+    fn test_as_any_mut() {
+        let mut writer = {
+            let (w, _temp) = create_temp_writer();
+            w
+        };
+
+        // Test as_any_mut
+        let _any_mut: &mut dyn std::any::Any = writer.as_any_mut();
+    }
+
+    #[test]
+    fn test_empty_write_batch() {
+        let mut writer = {
+            let (w, _temp) = create_temp_writer();
+            w
+        };
+
+        let messages: Vec<RawMessage> = vec![];
+        writer.write_batch(&messages).unwrap();
+        assert_eq!(writer.message_count(), 0);
+    }
+
+    #[test]
+    fn test_compression_chunk() {
+        let mut writer = {
+            let (w, _temp) = create_temp_writer();
+            w
+        };
+
+        let id = writer
+            .add_channel("/test", "std_msgs/String", "json", None)
+            .unwrap();
+
+        // Write enough data to trigger chunk flush
+        let large_data = vec![b'x'; 10000];
+        for i in 0..10 {
+            let message = RawMessage {
+                channel_id: id,
+                log_time: i as u64 * 1000,
+                publish_time: i as u64 * 1000,
+                data: large_data.clone(),
+                sequence: None,
+            };
+            writer.write(&message).unwrap();
+        }
+
+        assert_eq!(writer.message_count(), 10);
+    }
+
+    #[test]
+    fn test_write_after_finish() {
+        let mut writer = {
+            let (w, _temp) = create_temp_writer();
+            w
+        };
+
+        let id = writer
+            .add_channel("/test", "std_msgs/String", "json", None)
+            .unwrap();
+        let message = RawMessage {
+            channel_id: id,
+            log_time: 1000,
+            publish_time: 1000,
+            data: b"test".to_vec(),
+            sequence: None,
+        };
+
+        writer.write(&message).unwrap();
+        writer.finish().unwrap();
+
+        // Writing after finish should fail
+        let result = writer.write(&message);
+        assert!(result.is_err());
+    }
 }
