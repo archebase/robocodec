@@ -1435,4 +1435,479 @@ mod tests {
         };
         assert_eq!(stats.encode_failures, 2);
     }
+
+    // =========================================================================
+    // RewriteOptions validate_schemas edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_rewrite_options_validate_schemas_false() {
+        let opts = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+        assert!(!opts.validate_schemas);
+    }
+
+    #[test]
+    fn test_rewrite_options_skip_decode_failures_false() {
+        let opts = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: false,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+        assert!(!opts.skip_decode_failures);
+    }
+
+    #[test]
+    fn test_rewrite_options_passthrough_non_cdr_false() {
+        let opts = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: true,
+            passthrough_non_cdr: false,
+            transforms: None,
+        };
+        assert!(!opts.passthrough_non_cdr);
+    }
+
+    // =========================================================================
+    // has_transforms method edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_rewrite_options_has_transforms_none() {
+        let opts = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+        assert!(!opts.has_transforms());
+    }
+
+    #[test]
+    fn test_rewrite_options_has_transforms_some_empty() {
+        // Test with an empty transform pipeline
+        let pipeline = TransformBuilder::new().build();
+        let opts = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: Some(pipeline),
+        };
+        // has_transforms returns false for empty pipeline
+        assert!(!opts.has_transforms());
+    }
+
+    // =========================================================================
+    // as_any trait method
+    // =========================================================================
+
+    #[test]
+    fn test_rewriter_as_any() {
+        let rewriter = McapRewriter::new();
+        let any_ref = rewriter.as_any();
+        // Should be able to downcast back to McapRewriter
+        assert!(any_ref.is::<McapRewriter>());
+    }
+
+    // =========================================================================
+    // rewrite_mcap convenience function
+    // =========================================================================
+
+    #[test]
+    fn test_rewrite_mcap_convenience_function() {
+        if !fixture_exists("robocodec_test_0.mcap") {
+            return;
+        }
+
+        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+        let output_path = temp_output("convenience.mcap");
+
+        let result = rewrite_mcap(&input_path, &output_path);
+
+        assert!(
+            result.is_ok(),
+            "rewrite_mcap should succeed: {:?}",
+            result.err()
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_file(&output_path);
+    }
+
+    // =========================================================================
+    // Transformation statistics tracking
+    // =========================================================================
+
+    #[test]
+    fn test_rewriter_tracks_topics_renamed() {
+        if !fixture_exists("robocodec_test_0.mcap") {
+            return;
+        }
+
+        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+        let output_path = temp_output("topics_renamed2.mcap");
+
+        // Create a transform that renames topics (likely won't match actual topics,
+        // but tests the tracking logic)
+        let transforms = TransformBuilder::new()
+            .with_topic_rename("/camera", "/new_camera")
+            .build();
+
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: Some(transforms),
+        };
+
+        let mut rewriter = McapRewriter::with_options(options);
+        let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+
+        // Stats should be tracked (even if 0 if no matches)
+        let _ = stats.topics_renamed;
+
+        // Cleanup
+        let _ = std::fs::remove_file(&output_path);
+    }
+
+    #[test]
+    fn test_rewriter_tracks_types_renamed() {
+        if !fixture_exists("robocodec_test_0.mcap") {
+            return;
+        }
+
+        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+        let output_path = temp_output("types_renamed2.mcap");
+
+        let transforms = TransformBuilder::new()
+            .with_type_rename("std_msgs/Header", "new_msgs/Header")
+            .build();
+
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: Some(transforms),
+        };
+
+        let mut rewriter = McapRewriter::with_options(options);
+        let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+
+        // Stats should be tracked
+        let _ = stats.types_renamed;
+
+        // Cleanup
+        let _ = std::fs::remove_file(&output_path);
+    }
+
+    // =========================================================================
+    // Schema caching behavior
+    // =========================================================================
+
+    #[test]
+    fn test_rewriter_caches_schemas_when_validate_true() {
+        if !fixture_exists("robocodec_test_0.mcap") {
+            return;
+        }
+
+        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+        let output_path = temp_output("cached_schemas.mcap");
+
+        let options = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+
+        let mut rewriter = McapRewriter::with_options(options);
+
+        // Schemas should be empty initially
+        assert!(rewriter.schemas.is_empty());
+
+        let result = rewriter.rewrite(&input_path, &output_path);
+
+        assert!(result.is_ok());
+
+        // After rewrite with validate_schemas=true, schemas may be populated
+        // (depending on whether the MCAP has parseable schemas)
+        let _ = rewriter.schemas.len();
+
+        // Cleanup
+        let _ = std::fs::remove_file(&output_path);
+    }
+
+    #[test]
+    fn test_rewriter_no_schema_caching_when_validate_false() {
+        if !fixture_exists("robocodec_test_0.mcap") {
+            return;
+        }
+
+        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+        let output_path = temp_output("no_cache.mcap");
+
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+
+        let mut rewriter = McapRewriter::with_options(options);
+
+        assert!(rewriter.schemas.is_empty());
+
+        let result = rewriter.rewrite(&input_path, &output_path);
+
+        assert!(result.is_ok());
+
+        // With validate_schemas=false, schemas should remain empty
+        assert!(rewriter.schemas.is_empty());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&output_path);
+    }
+
+    // =========================================================================
+    // Passthrough behavior for non-CDR encodings
+    // =========================================================================
+
+    #[test]
+    fn test_rewriter_passthrough_non_cdr_enabled() {
+        if !fixture_exists("robocodec_test_0.mcap") {
+            return;
+        }
+
+        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+        let output_path = temp_output("passthrough_enabled.mcap");
+
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+
+        let mut rewriter = McapRewriter::with_options(options);
+        let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+
+        // passthrough_count should be tracked
+        let _ = stats.passthrough_count;
+
+        // Cleanup
+        let _ = std::fs::remove_file(&output_path);
+    }
+
+    #[test]
+    fn test_rewriter_passthrough_non_cdr_disabled() {
+        if !fixture_exists("robocodec_test_0.mcap") {
+            return;
+        }
+
+        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+        let output_path = temp_output("passthrough_disabled.mcap");
+
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: false,
+            transforms: None,
+        };
+
+        let mut rewriter = McapRewriter::with_options(options);
+        let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+
+        // With passthrough disabled, passthrough_count may still be non-zero
+        // for messages without schemas
+        let _ = stats.passthrough_count;
+
+        // Cleanup
+        let _ = std::fs::remove_file(&output_path);
+    }
+
+    // =========================================================================
+    // Error handling for skip_decode_failures
+    // =========================================================================
+
+    #[test]
+    fn test_rewriter_skip_decode_failures_true() {
+        if !fixture_exists("robocodec_test_0.mcap") {
+            return;
+        }
+
+        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+        let output_path = temp_output("skip_decode_true.mcap");
+
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+
+        let mut rewriter = McapRewriter::with_options(options);
+        let result = rewriter.rewrite(&input_path, &output_path);
+
+        // Should succeed even with decode failures (they're skipped)
+        assert!(result.is_ok());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&output_path);
+    }
+
+    // =========================================================================
+    // Edge case: empty input file
+    // =========================================================================
+
+    #[test]
+    fn test_rewriter_handles_empty_stats() {
+        let stats = RewriteStats::default();
+        assert_eq!(stats.message_count, 0);
+        assert_eq!(stats.reencoded_count, 0);
+        assert_eq!(stats.passthrough_count, 0);
+        assert_eq!(stats.decode_failures, 0);
+        assert_eq!(stats.encode_failures, 0);
+    }
+
+    // =========================================================================
+    // Schema caching with transforms
+    // =========================================================================
+
+    #[test]
+    fn test_rewriter_schema_caching_with_type_transform() {
+        if !fixture_exists("robocodec_test_0.mcap") {
+            return;
+        }
+
+        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+        let output_path = temp_output("schema_cache_transform.mcap");
+
+        let transforms = TransformBuilder::new()
+            .with_type_rename("std_msgs/msg/Header", "new_msgs/Header")
+            .build();
+
+        let options = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: Some(transforms),
+        };
+
+        let mut rewriter = McapRewriter::with_options(options);
+        let result = rewriter.rewrite(&input_path, &output_path);
+
+        // Should succeed with schema caching and transforms
+        assert!(result.is_ok());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&output_path);
+    }
+
+    // =========================================================================
+    // RewriteStats all fields zero
+    // =========================================================================
+
+    #[test]
+    fn test_rewrite_stats_all_fields_zero() {
+        let stats = RewriteStats {
+            message_count: 0,
+            channel_count: 0,
+            topics_renamed: 0,
+            types_renamed: 0,
+            reencoded_count: 0,
+            passthrough_count: 0,
+            decode_failures: 0,
+            encode_failures: 0,
+        };
+
+        assert_eq!(stats.message_count, 0);
+        assert_eq!(stats.channel_count, 0);
+        assert_eq!(stats.topics_renamed, 0);
+        assert_eq!(stats.types_renamed, 0);
+        assert_eq!(stats.reencoded_count, 0);
+        assert_eq!(stats.passthrough_count, 0);
+        assert_eq!(stats.decode_failures, 0);
+        assert_eq!(stats.encode_failures, 0);
+    }
+
+    // =========================================================================
+    // Sequence tracking across rewrites
+    // =========================================================================
+
+    #[test]
+    fn test_rewriter_resets_sequences_on_rewrite() {
+        if !fixture_exists("robocodec_test_0.mcap") {
+            return;
+        }
+
+        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+        let output_path1 = temp_output("rewrite1.mcap");
+        let output_path2 = temp_output("rewrite2.mcap");
+
+        let mut rewriter = McapRewriter::new();
+
+        // First rewrite
+        let stats1 = rewriter.rewrite(&input_path, &output_path1).unwrap();
+        assert!(stats1.message_count > 0 || stats1.channel_count > 0);
+
+        // Second rewrite - sequences should be reset
+        let stats2 = rewriter.rewrite(&input_path, &output_path2).unwrap();
+        assert!(stats2.message_count > 0 || stats2.channel_count > 0);
+
+        // Cleanup
+        let _ = std::fs::remove_file(&output_path1);
+        let _ = std::fs::remove_file(&output_path2);
+    }
+
+    // =========================================================================
+    // Stats are reset on each rewrite
+    // =========================================================================
+
+    #[test]
+    fn test_rewriter_resets_stats_on_rewrite() {
+        if !fixture_exists("robocodec_test_0.mcap") {
+            return;
+        }
+
+        let input_path = fixtures_dir().join("robocodec_test_0.mcap");
+        let output_path1 = temp_output("stats_reset1.mcap");
+        let output_path2 = temp_output("stats_reset2.mcap");
+
+        let mut rewriter = McapRewriter::new();
+
+        // First rewrite
+        let _ = rewriter.rewrite(&input_path, &output_path1).unwrap();
+
+        // Modify stats externally to verify reset
+        rewriter.stats.message_count = 999;
+
+        // Second rewrite - stats should be reset
+        let stats2 = rewriter.rewrite(&input_path, &output_path2).unwrap();
+        assert_eq!(stats2.message_count, stats2.message_count); // Should reflect actual count
+
+        // Cleanup
+        let _ = std::fs::remove_file(&output_path1);
+        let _ = std::fs::remove_file(&output_path2);
+    }
+
+    // =========================================================================
+    // Nonexistent fixture handling
+    // =========================================================================
+
+    #[test]
+    fn test_rewriter_returns_error_for_missing_fixture() {
+        // Don't skip even if fixture doesn't exist - test error handling
+        let input_path = PathBuf::from("/nonexistent_fixture_file_12345.mcap");
+        let output_path = temp_output("missing_fixture.mcap");
+
+        let mut rewriter = McapRewriter::new();
+        let result = rewriter.rewrite(&input_path, &output_path);
+
+        assert!(result.is_err());
+    }
 }

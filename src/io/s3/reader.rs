@@ -1216,4 +1216,1112 @@ mod tests {
         let parsed = ParsedMessage::Rrd(rrd_msg);
         assert_eq!(parsed.log_time(), 42); // Uses index as timestamp
     }
+
+    // =========================================================================
+    // parse_mcap_footer tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_mcap_footer_valid() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Valid MCAP footer data (summary_offset + summary_section_start + summary_crc)
+        // summary_offset = 1000 (8 bytes)
+        // summary_section_start = 500 (8 bytes)
+        // summary_crc = 0x12345678 (4 bytes)
+        let mut data = vec![0u8; 20];
+        data[0..8].copy_from_slice(&1000u64.to_le_bytes());
+        data[8..16].copy_from_slice(&500u64.to_le_bytes());
+        data[16..20].copy_from_slice(&0x78563412u32.to_le_bytes());
+
+        let result = reader.parse_mcap_footer(&data);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1000);
+    }
+
+    #[test]
+    fn test_parse_mcap_footer_too_short() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Too short - less than 8 bytes
+        let data = b"short";
+
+        let result = reader.parse_mcap_footer(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_mcap_footer_edge_cases() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // 8 bytes - value 42 in little endian
+        let data = b"\x2a\x00\x00\x00\x00\x00\x00\x00";
+        let result = reader.parse_mcap_footer(data);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 42);
+
+        // 7 bytes - too short
+        let data = b"short7";
+        let result = reader.parse_mcap_footer(data);
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // parse_schema_record tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_schema_record_valid() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Valid schema record: id (2) + name_len (2) + "Msg" (3) +
+        //                     encoding_len (2) + "x2" (2) + data
+        // Note: Everything after encoding is data
+        let mut body = vec![0u8; 2]; // id = 0
+        body.extend_from_slice(&(3u16).to_le_bytes()); // name_len = 3
+        body.extend_from_slice(b"Msg"); // name (3 bytes)
+        body.extend_from_slice(&(2u16).to_le_bytes()); // encoding_len = 2
+        body.extend_from_slice(b"x2"); // encoding (2 bytes)
+        body.extend_from_slice(b"data"); // data (4 bytes)
+
+        let result = reader.parse_schema_record(&body);
+        assert!(result.is_ok());
+        let schema = result.unwrap();
+        assert_eq!(schema.id, 0);
+        assert_eq!(schema.name, "Msg");
+        assert_eq!(schema.encoding, "x2");
+        assert_eq!(schema.data, b"data");
+    }
+
+    #[test]
+    fn test_parse_schema_record_too_short() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Too short - less than 4 bytes
+        let body = b"abc";
+
+        let result = reader.parse_schema_record(&body[..]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_schema_record_incomplete_name() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Claims name_len = 10 but only provides 4 bytes
+        let mut body = vec![0u8; 2];
+        body.extend_from_slice(&(10u16).to_le_bytes());
+        body.extend_from_slice(b"short");
+
+        let result = reader.parse_schema_record(&body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_schema_record_invalid_utf8() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Invalid UTF-8 in name
+        let mut body = vec![0u8; 2];
+        body.extend_from_slice(&(4u16).to_le_bytes());
+        body.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]); // Invalid UTF-8
+
+        let result = reader.parse_schema_record(&body);
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // parse_channel_record tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_channel_record_valid() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Valid channel record: id (2) + topic_len (2) + "/topic" (6) +
+        //                       encoding_len (2) + "cdr" (3) + schema_id (4)
+        let schemas = HashMap::new();
+        let mut channels = HashMap::new();
+
+        let mut body = vec![1u8, 0u8]; // id = 1
+        body.extend_from_slice(&(6u16).to_le_bytes()); // topic_len
+        body.extend_from_slice(b"/topic"); // topic
+        body.extend_from_slice(&(3u16).to_le_bytes()); // encoding_len
+        body.extend_from_slice(b"cdr"); // encoding
+        body.extend_from_slice(&(0u32).to_le_bytes()); // schema_id = 0
+
+        let result = reader.parse_channel_record(&body, &schemas, &mut channels);
+        assert!(result.is_ok());
+        assert_eq!(channels.len(), 1);
+        let channel = channels.get(&1).unwrap();
+        assert_eq!(channel.topic, "/topic");
+        assert_eq!(channel.encoding, "cdr");
+    }
+
+    #[test]
+    fn test_parse_channel_record_too_short() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        let schemas = HashMap::new();
+        let mut channels = HashMap::new();
+
+        // Too short - less than 4 bytes
+        let body = b"abc";
+
+        let result = reader.parse_channel_record(&body[..], &schemas, &mut channels);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_channel_record_incomplete_topic() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        let schemas = HashMap::new();
+        let mut channels = HashMap::new();
+
+        // Claims topic_len = 10 but only provides 4 bytes
+        let mut body = vec![1u8, 0u8]; // id = 1
+        body.extend_from_slice(&(10u16).to_le_bytes()); // topic_len
+        body.extend_from_slice(b"shrt"); // Not enough bytes
+
+        let result = reader.parse_channel_record(&body, &schemas, &mut channels);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_channel_record_invalid_topic_utf8() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        let schemas = HashMap::new();
+        let mut channels = HashMap::new();
+
+        // Invalid UTF-8 in topic
+        let mut body = vec![1u8, 0u8]; // id = 1
+        body.extend_from_slice(&(4u16).to_le_bytes()); // topic_len
+        body.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]); // Invalid UTF-8
+
+        let result = reader.parse_channel_record(&body, &schemas, &mut channels);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_channel_record_incomplete_encoding() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        let schemas = HashMap::new();
+        let mut channels = HashMap::new();
+
+        // Valid topic but incomplete encoding
+        let mut body = vec![1u8, 0u8]; // id = 1
+        body.extend_from_slice(&(6u16).to_le_bytes()); // topic_len
+        body.extend_from_slice(b"/topic"); // topic
+        body.extend_from_slice(&(10u16).to_le_bytes()); // encoding_len
+        body.extend_from_slice(b"shrt"); // Not enough bytes
+
+        let result = reader.parse_channel_record(&body, &schemas, &mut channels);
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // RRD format detection and parsing tests
+    // =========================================================================
+
+    #[test]
+    fn test_reader_rrd_format_detection() {
+        let location = S3Location::new("bucket", "file.rrd");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location: location.clone(),
+            config,
+            client: S3Client::default_client().unwrap(),
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Rrd,
+        };
+
+        assert_eq!(reader.format(), crate::io::metadata::FileFormat::Rrd);
+        assert!(location.is_rrd());
+    }
+
+    #[test]
+    fn test_parse_bag_header_too_short() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.bag");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Bag,
+        };
+
+        // Too short - less than length of "#ROSBAG V"
+        let data = b"#ROS";
+
+        let result = reader.parse_bag_header(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_bag_header_wrong_version() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.bag");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Bag,
+        };
+
+        // Wrong prefix entirely (not "#ROSBAG V")
+        let data = b"#ROSDBAG V2.0\n";
+
+        let result = reader.parse_bag_header(data);
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // parse_mcap_summary_data tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_mcap_summary_data_empty() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        let data = b"";
+        let result = reader.parse_mcap_summary_data(data);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_mcap_summary_data_too_short_for_header() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Less than 9 bytes (opcode + length)
+        let data = b"short";
+
+        let result = reader.parse_mcap_summary_data(data);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_mcap_summary_data_unknown_opcode() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Unknown opcode (0xFF) with valid length should stop parsing
+        let data = vec![0xFFu8, 10, 0, 0, 0, 0, 0, 0, 0]; // opcode + length
+        // No body data needed for unknown opcode test
+
+        let result = reader.parse_mcap_summary_data(&data);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_parse_mcap_summary_data_incomplete_record() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // OP_SCHEMA (0x03) with length that exceeds data
+        let mut data = vec![0x03u8]; // opcode
+        data.extend_from_slice(&100u64.to_le_bytes()); // length = 100
+        data.extend_from_slice(b"short"); // only 5 bytes of data
+
+        let result = reader.parse_mcap_summary_data(&data);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    // =========================================================================
+    // parse_rrd_header tests
+    // =========================================================================
+
+    #[test]
+    fn test_parse_rrd_header_valid() {
+        use crate::io::formats::rrd::constants::RRD_MAGIC;
+        use crate::io::formats::rrd::constants::STREAM_HEADER_SIZE;
+
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.rrd");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Rrd,
+        };
+
+        // Valid RRD header
+        let mut data = vec![0u8; STREAM_HEADER_SIZE];
+        data[0..4].copy_from_slice(RRD_MAGIC);
+
+        let result = reader.parse_rrd_header(&data);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_rrd_header_too_short() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.rrd");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Rrd,
+        };
+
+        // Too short
+        let data = b"short";
+
+        let result = reader.parse_rrd_header(data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_rrd_header_invalid_magic() {
+        use crate::io::formats::rrd::constants::STREAM_HEADER_SIZE;
+
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.rrd");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Rrd,
+        };
+
+        // Invalid magic
+        let mut data = vec![0u8; STREAM_HEADER_SIZE];
+        data[0..4].copy_from_slice(b"BAD!");
+
+        let result = reader.parse_rrd_header(&data);
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // ParsedMessage::channel_id tests
+    // =========================================================================
+
+    #[test]
+    fn test_parsed_message_channel_id() {
+        use crate::io::s3::bag_stream::BagMessageRecord;
+        use crate::io::s3::mcap_stream::MessageRecord;
+        use crate::io::s3::rrd_stream::{MessageKind, RrdMessageRecord};
+
+        let mcap_msg = ParsedMessage::Mcap(MessageRecord {
+            channel_id: 42,
+            log_time: 0,
+            publish_time: 0,
+            data: vec![],
+            sequence: 0,
+        });
+        assert_eq!(mcap_msg.channel_id(), 42);
+
+        let bag_msg = ParsedMessage::Bag(BagMessageRecord {
+            conn_id: 99,
+            log_time: 0,
+            data: vec![],
+        });
+        assert_eq!(bag_msg.channel_id(), 99);
+
+        let rrd_msg = ParsedMessage::Rrd(RrdMessageRecord {
+            kind: MessageKind::ArrowMsg,
+            topic: "/test".to_string(),
+            data: vec![],
+            index: 5,
+        });
+        assert_eq!(rrd_msg.channel_id(), 5);
+    }
+
+    #[test]
+    fn test_parsed_message_data() {
+        use crate::io::s3::bag_stream::BagMessageRecord;
+        use crate::io::s3::mcap_stream::MessageRecord;
+        use crate::io::s3::rrd_stream::{MessageKind, RrdMessageRecord};
+
+        let mcap_msg = ParsedMessage::Mcap(MessageRecord {
+            channel_id: 1,
+            log_time: 0,
+            publish_time: 0,
+            data: vec![1, 2, 3],
+            sequence: 0,
+        });
+        assert_eq!(mcap_msg.data(), vec![1, 2, 3]);
+
+        let bag_msg = ParsedMessage::Bag(BagMessageRecord {
+            conn_id: 2,
+            log_time: 0,
+            data: vec![4, 5, 6],
+        });
+        assert_eq!(bag_msg.data(), vec![4, 5, 6]);
+
+        let rrd_msg = ParsedMessage::Rrd(RrdMessageRecord {
+            kind: MessageKind::ArrowMsg,
+            topic: "/test".to_string(),
+            data: vec![7, 8, 9],
+            index: 0,
+        });
+        assert_eq!(rrd_msg.data(), vec![7, 8, 9]);
+    }
+
+    // =========================================================================
+    // S3Reader has_more tests
+    // =========================================================================
+
+    #[test]
+    fn test_reader_has_more_initial_state() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Initial state should have more
+        assert!(reader.has_more());
+    }
+
+    #[test]
+    fn test_reader_has_more_eof_state() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Eof,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        assert!(!reader.has_more());
+    }
+
+    #[test]
+    fn test_reader_has_more_error_state() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Error("test error".to_string()),
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        assert!(!reader.has_more());
+    }
+
+    #[test]
+    fn test_reader_has_more_ready_state() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Ready {
+                channels: HashMap::new(),
+                stream_position: 100,
+                file_size: 1000,
+            },
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Ready state should have more
+        assert!(reader.has_more());
+    }
+
+    // =========================================================================
+    // S3Reader channels method with different states
+    // =========================================================================
+
+    #[test]
+    fn test_reader_channels_initial_state() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Initial state returns empty channels
+        assert!(reader.channels().is_empty());
+    }
+
+    #[test]
+    fn test_reader_channels_eof_state() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Eof,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        assert!(reader.channels().is_empty());
+    }
+
+    #[test]
+    fn test_reader_channels_error_state() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Error("error".to_string()),
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        assert!(reader.channels().is_empty());
+    }
+
+    #[test]
+    fn test_reader_channels_ready_state() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let mut channels = HashMap::new();
+        channels.insert(1, ChannelInfo::new(1, "/test", "test/Msg"));
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Ready {
+                channels,
+                stream_position: 0,
+                file_size: 1000,
+            },
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        assert_eq!(reader.channels().len(), 1);
+        assert!(reader.channels().contains_key(&1));
+    }
+
+    // =========================================================================
+    // S3ReaderConstructor tests
+    // =========================================================================
+
+    #[test]
+    fn test_s3_reader_constructor_new_mcap() {
+        let constructor = S3ReaderConstructor::new_mcap();
+        assert_eq!(constructor.location.bucket(), "test-bucket");
+        assert_eq!(constructor.location.key(), "test.mcap");
+    }
+
+    #[test]
+    fn test_s3_reader_constructor_build() {
+        let constructor = S3ReaderConstructor::new_mcap();
+        let reader = constructor.build();
+
+        assert_eq!(reader.location().bucket(), "test-bucket");
+        assert_eq!(reader.format(), crate::io::metadata::FileFormat::Mcap);
+        assert!(matches!(reader.state(), S3ReaderState::Initial));
+    }
+
+    #[test]
+    fn test_s3_reader_constructor_build_bag() {
+        let constructor = S3ReaderConstructor::new_mcap();
+        let reader = constructor.build_bag();
+
+        assert_eq!(reader.location.key(), "test.bag");
+        assert_eq!(reader.format(), crate::io::metadata::FileFormat::Bag);
+    }
+
+    // =========================================================================
+    // S3ReaderState Ready Display
+    // =========================================================================
+
+    #[test]
+    fn test_s3_reader_state_ready_display() {
+        let state = S3ReaderState::Ready {
+            channels: HashMap::new(),
+            stream_position: 100,
+            file_size: 1000,
+        };
+        assert_eq!(format!("{}", state), "Ready");
+    }
+
+    // =========================================================================
+    // FormatReader trait implementation tests
+    // =========================================================================
+
+    #[test]
+    fn test_s3_reader_format_reader_channels_empty() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Initial state returns empty channels through FormatReader trait
+        assert!(crate::io::traits::FormatReader::channels(&reader).is_empty());
+    }
+
+    #[test]
+    fn test_s3_reader_format_reader_message_count() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Streaming reader doesn't pre-count messages
+        assert_eq!(crate::io::traits::FormatReader::message_count(&reader), 0);
+    }
+
+    #[test]
+    fn test_s3_reader_format_reader_time_bounds() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Streaming reader doesn't track time bounds
+        assert!(crate::io::traits::FormatReader::start_time(&reader).is_none());
+        assert!(crate::io::traits::FormatReader::end_time(&reader).is_none());
+    }
+
+    #[test]
+    fn test_s3_reader_format_reader_path() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "test/path/file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        assert_eq!(
+            crate::io::traits::FormatReader::path(&reader),
+            "test/path/file.mcap"
+        );
+    }
+
+    #[test]
+    fn test_s3_reader_format_reader_file_size() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Ready {
+                channels: HashMap::new(),
+                stream_position: 0,
+                file_size: 5000,
+            },
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        assert_eq!(crate::io::traits::FormatReader::file_size(&reader), 5000);
+    }
+
+    #[test]
+    fn test_s3_reader_format_reader_file_size_initial() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Initial state returns 0
+        assert_eq!(crate::io::traits::FormatReader::file_size(&reader), 0);
+    }
+
+    #[test]
+    fn test_s3_reader_format_reader_as_any() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Should be able to downcast
+        assert!(crate::io::traits::FormatReader::as_any(&reader).is::<S3Reader>());
+    }
+
+    #[test]
+    fn test_s3_reader_format_reader_as_any_mut() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let mut reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Should be able to downcast mutably
+        assert!(crate::io::traits::FormatReader::as_any_mut(&mut reader).is::<S3Reader>());
+    }
+
+    // =========================================================================
+    // iter_messages tests
+    // =========================================================================
+
+    #[test]
+    fn test_iter_messages_creates_stream() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Ready {
+                channels: HashMap::new(),
+                stream_position: 0,
+                file_size: 1000,
+            },
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        let stream = reader.iter_messages();
+        // Just verify it creates a stream with the right position
+        assert_eq!(stream.stream_position, 0);
+    }
+
+    // =========================================================================
+    // parse_channel_record with schema
+    // =========================================================================
+
+    #[test]
+    fn test_parse_channel_record_with_schema() {
+        use crate::io::s3::reader::SummarySchemaInfo;
+
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Create a schema
+        let mut schemas = HashMap::new();
+        schemas.insert(
+            1,
+            SummarySchemaInfo {
+                id: 1,
+                name: "test_msgs/Msg".to_string(),
+                encoding: "ros2msg".to_string(),
+                data: b"int32 data".to_vec(),
+            },
+        );
+
+        let mut channels = HashMap::new();
+
+        // Channel record with schema_id = 1
+        let mut body = vec![2u8, 0u8]; // id = 2
+        body.extend_from_slice(&(6u16).to_le_bytes()); // topic_len
+        body.extend_from_slice(b"/topic"); // topic
+        body.extend_from_slice(&(3u16).to_le_bytes()); // encoding_len
+        body.extend_from_slice(b"cdr"); // encoding
+        body.extend_from_slice(&(1u16).to_le_bytes()); // schema_id = 1
+
+        let result = reader.parse_channel_record(&body, &schemas, &mut channels);
+        assert!(result.is_ok());
+        let channel = channels.get(&2).unwrap();
+        assert_eq!(channel.message_type, "test_msgs/Msg");
+        assert_eq!(channel.topic, "/topic");
+    }
+
+    // =========================================================================
+    // parse_schema_record edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_parse_schema_record_incomplete_encoding() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Valid name but incomplete encoding
+        let mut body = vec![0u8; 2]; // id = 0
+        body.extend_from_slice(&(4u16).to_le_bytes()); // name_len = 4
+        body.extend_from_slice(b"Test"); // name
+        body.extend_from_slice(&(10u16).to_le_bytes()); // encoding_len = 10
+        body.extend_from_slice(b"short"); // only 5 bytes
+
+        let result = reader.parse_schema_record(&body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_schema_record_invalid_encoding_utf8() {
+        let client = S3Client::default_client().unwrap();
+        let location = S3Location::new("bucket", "file.mcap");
+        let config = S3ReaderConfig::default();
+
+        let reader = S3Reader {
+            location,
+            config,
+            client,
+            state: S3ReaderState::Initial,
+            format: crate::io::metadata::FileFormat::Mcap,
+        };
+
+        // Valid name but invalid UTF-8 in encoding
+        let mut body = vec![0u8; 2]; // id = 0
+        body.extend_from_slice(&(4u16).to_le_bytes()); // name_len = 4
+        body.extend_from_slice(b"Test"); // name
+        body.extend_from_slice(&(4u16).to_le_bytes()); // encoding_len = 4
+        body.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]); // Invalid UTF-8
+
+        let result = reader.parse_schema_record(&body);
+        assert!(result.is_err());
+    }
 }

@@ -86,14 +86,23 @@ mod tests {
         initialized: bool,
     }
 
-    #[derive(Debug, Clone)]
-    struct MockMessage {}
+    #[derive(Debug, Clone, PartialEq)]
+    struct MockMessage {
+        data: Vec<u8>,
+    }
 
     impl StreamingParser for MockParser {
         type Message = MockMessage;
 
-        fn parse_chunk(&mut self, _data: &[u8]) -> Result<Vec<Self::Message>, FatalError> {
-            Ok(vec![])
+        fn parse_chunk(&mut self, data: &[u8]) -> Result<Vec<Self::Message>, FatalError> {
+            // Simple mock: return messages based on data length
+            if data.is_empty() {
+                return Ok(vec![]);
+            }
+            // Return a message with the data
+            Ok(vec![MockMessage {
+                data: data.to_vec(),
+            }])
         }
 
         fn channels(&self) -> &HashMap<u16, ChannelInfo> {
@@ -115,8 +124,12 @@ mod tests {
         }
     }
 
+    // =========================================================================
+    // StreamingParser::has_channels tests
+    // =========================================================================
+
     #[test]
-    fn test_streaming_parser_has_channels() {
+    fn test_streaming_parser_has_channels_empty() {
         let parser = MockParser {
             channels: HashMap::new(),
             message_count: 0,
@@ -124,6 +137,36 @@ mod tests {
         };
         assert!(!parser.has_channels());
     }
+
+    #[test]
+    fn test_streaming_parser_has_channels_with_channels() {
+        let mut channels = HashMap::new();
+        channels.insert(
+            0,
+            ChannelInfo {
+                id: 0,
+                topic: "/test".to_string(),
+                message_type: "test_msgs/Test".to_string(),
+                encoding: "json".to_string(),
+                schema: None,
+                schema_data: None,
+                schema_encoding: None,
+                message_count: 0,
+                callerid: None,
+            },
+        );
+
+        let parser = MockParser {
+            channels,
+            message_count: 0,
+            initialized: false,
+        };
+        assert!(parser.has_channels());
+    }
+
+    // =========================================================================
+    // StreamingParser::reset tests
+    // =========================================================================
 
     #[test]
     fn test_streaming_parser_reset() {
@@ -154,5 +197,221 @@ mod tests {
         assert!(!parser.has_channels());
         assert_eq!(parser.message_count(), 0);
         assert!(!parser.is_initialized());
+    }
+
+    #[test]
+    fn test_streaming_parser_reset_when_empty() {
+        let mut parser = MockParser {
+            channels: HashMap::new(),
+            message_count: 0,
+            initialized: false,
+        };
+
+        parser.reset();
+        assert!(!parser.has_channels());
+        assert_eq!(parser.message_count(), 0);
+        assert!(!parser.is_initialized());
+    }
+
+    // =========================================================================
+    // StreamingParser::parse_chunk tests
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_parser_parse_chunk_empty() {
+        let mut parser = MockParser {
+            channels: HashMap::new(),
+            message_count: 0,
+            initialized: false,
+        };
+
+        let result = parser.parse_chunk(&[]);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_streaming_parser_parse_chunk_with_data() {
+        let mut parser = MockParser {
+            channels: HashMap::new(),
+            message_count: 0,
+            initialized: false,
+        };
+
+        let result = parser.parse_chunk(&[1, 2, 3, 4]);
+        assert!(result.is_ok());
+        let messages = result.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].data, vec![1, 2, 3, 4]);
+    }
+
+    // =========================================================================
+    // StreamingParser::channels tests
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_parser_channels_empty() {
+        let parser = MockParser {
+            channels: HashMap::new(),
+            message_count: 0,
+            initialized: false,
+        };
+
+        assert!(parser.channels().is_empty());
+        assert_eq!(parser.channels().len(), 0);
+    }
+
+    #[test]
+    fn test_streaming_parser_channels_multiple() {
+        let mut channels = HashMap::new();
+        channels.insert(
+            0,
+            ChannelInfo {
+                id: 0,
+                topic: "/topic1".to_string(),
+                message_type: "test/Msg1".to_string(),
+                encoding: "cdr".to_string(),
+                schema: None,
+                schema_data: None,
+                schema_encoding: None,
+                message_count: 0,
+                callerid: None,
+            },
+        );
+        channels.insert(
+            1,
+            ChannelInfo {
+                id: 1,
+                topic: "/topic2".to_string(),
+                message_type: "test/Msg2".to_string(),
+                encoding: "cdr".to_string(),
+                schema: None,
+                schema_data: None,
+                schema_encoding: None,
+                message_count: 0,
+                callerid: None,
+            },
+        );
+
+        let parser = MockParser {
+            channels,
+            message_count: 0,
+            initialized: false,
+        };
+
+        assert_eq!(parser.channels().len(), 2);
+        assert!(parser.channels().contains_key(&0));
+        assert!(parser.channels().contains_key(&1));
+    }
+
+    // =========================================================================
+    // StreamingParser::message_count tests
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_parser_message_count_zero() {
+        let parser = MockParser {
+            channels: HashMap::new(),
+            message_count: 0,
+            initialized: false,
+        };
+
+        assert_eq!(parser.message_count(), 0);
+    }
+
+    #[test]
+    fn test_streaming_parser_message_count_nonzero() {
+        let parser = MockParser {
+            channels: HashMap::new(),
+            message_count: 42,
+            initialized: false,
+        };
+
+        assert_eq!(parser.message_count(), 42);
+    }
+
+    #[test]
+    fn test_streaming_parser_message_count_large() {
+        let parser = MockParser {
+            channels: HashMap::new(),
+            message_count: 999_999,
+            initialized: false,
+        };
+
+        assert_eq!(parser.message_count(), 999_999);
+    }
+
+    // =========================================================================
+    // StreamingParser::is_initialized tests
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_parser_is_initialized_false() {
+        let parser = MockParser {
+            channels: HashMap::new(),
+            message_count: 0,
+            initialized: false,
+        };
+
+        assert!(!parser.is_initialized());
+    }
+
+    #[test]
+    fn test_streaming_parser_is_initialized_true() {
+        let parser = MockParser {
+            channels: HashMap::new(),
+            message_count: 0,
+            initialized: true,
+        };
+
+        assert!(parser.is_initialized());
+    }
+
+    // =========================================================================
+    // AsStreamingParser trait tests (trait object compatibility)
+    // =========================================================================
+
+    #[test]
+    fn test_streaming_parser_dyn_compatible() {
+        // Verify StreamingParser can be used as a trait object
+        fn use_parser(_parser: &dyn StreamingParser<Message = MockMessage>) {
+            // This function exists to verify trait object compatibility
+        }
+
+        let parser = MockParser {
+            channels: HashMap::new(),
+            message_count: 0,
+            initialized: false,
+        };
+
+        use_parser(&parser);
+    }
+
+    // =========================================================================
+    // MockMessage tests
+    // =========================================================================
+
+    #[test]
+    fn test_mock_message_clone() {
+        let msg = MockMessage {
+            data: vec![1, 2, 3],
+        };
+        let cloned = msg.clone();
+        assert_eq!(msg, cloned);
+    }
+
+    #[test]
+    fn test_mock_message_partial_eq() {
+        let msg1 = MockMessage {
+            data: vec![1, 2, 3],
+        };
+        let msg2 = MockMessage {
+            data: vec![1, 2, 3],
+        };
+        let msg3 = MockMessage {
+            data: vec![4, 5, 6],
+        };
+        assert_eq!(msg1, msg2);
+        assert_ne!(msg1, msg3);
     }
 }

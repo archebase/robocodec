@@ -698,4 +698,112 @@ mod tests {
             S3ReaderConfig::default().with_request_timeout(std::time::Duration::from_secs(0));
         assert!(S3Client::new(config).is_err());
     }
+
+    // =========================================================================
+    // check_range_status error path tests
+    // =========================================================================
+
+    #[test]
+    fn test_check_range_status_206_success() {
+        let client = S3Client::default_client().unwrap();
+        let status = reqwest::StatusCode::from_u16(206).unwrap();
+        let result = client.check_range_status(status);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_check_range_status_200_success() {
+        let client = S3Client::default_client().unwrap();
+        let status = reqwest::StatusCode::from_u16(200).unwrap();
+        let result = client.check_range_status(status);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_check_range_status_error() {
+        let client = S3Client::default_client().unwrap();
+        let status = reqwest::StatusCode::from_u16(404).unwrap();
+        let result = client.check_range_status(status);
+        assert!(result.is_err());
+        if let Err(FatalError::HttpError { status: s, .. }) = result {
+            assert_eq!(s, Some(404));
+        } else {
+            panic!("Expected HttpError with status 404");
+        }
+    }
+
+    #[test]
+    fn test_check_range_status_500_error() {
+        let client = S3Client::default_client().unwrap();
+        let status = reqwest::StatusCode::from_u16(500).unwrap();
+        let result = client.check_range_status(status);
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // insert_header edge case tests
+    // =========================================================================
+
+    #[test]
+    fn test_insert_header_empty_value() {
+        let mut headers = HeaderMap::new();
+        // Empty header value should be valid
+        assert!(S3Client::insert_header(&mut headers, http::header::RANGE, "").is_ok());
+        assert!(headers.get("Range").is_some());
+    }
+
+    #[test]
+    fn test_insert_header_unicode_value() {
+        let mut headers = HeaderMap::new();
+        // Unicode value should be valid
+        assert!(S3Client::insert_header(&mut headers, http::header::USER_AGENT, "测试").is_ok());
+    }
+
+    #[test]
+    fn test_insert_header_multiple_values() {
+        let mut headers = HeaderMap::new();
+        assert!(
+            S3Client::insert_header(
+                &mut headers,
+                http::header::HeaderName::from_static("x-amz-meta-test"),
+                "value1"
+            )
+            .is_ok()
+        );
+        // Second insert should overwrite
+        assert!(
+            S3Client::insert_header(
+                &mut headers,
+                http::header::HeaderName::from_static("x-amz-meta-test"),
+                "value2"
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            headers.get("x-amz-meta-test").unwrap().to_str().unwrap(),
+            "value2"
+        );
+    }
+
+    // =========================================================================
+    // S3Client creation edge cases
+    // =========================================================================
+
+    #[test]
+    fn test_s3_client_with_credentials_and_retry() {
+        let creds = AwsCredentials::new("key", "secret").unwrap();
+        let retry = crate::io::s3::RetryConfig::default().with_max_retries(3);
+        let config = S3ReaderConfig::default()
+            .with_credentials(Some(creds))
+            .with_retry(retry);
+        let client = S3Client::new(config);
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_s3_client_clone() {
+        let client = S3Client::default_client().unwrap();
+        let cloned = client.clone();
+        assert_eq!(client.config().buffer_size(), cloned.config().buffer_size());
+    }
 }

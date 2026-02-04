@@ -336,6 +336,10 @@ impl From<FatalError> for crate::CodecError {
 mod tests {
     use super::*;
 
+    // =========================================================================
+    // S3Error tests
+    // =========================================================================
+
     #[test]
     fn test_s3_error_recoverable() {
         let err = S3Error::Recoverable(RecoverableError::UnknownChannel { channel_id: 5 });
@@ -353,6 +357,39 @@ mod tests {
     }
 
     #[test]
+    fn test_s3_error_display_recoverable() {
+        let err = S3Error::Recoverable(RecoverableError::UnknownChannel { channel_id: 42 });
+        let display = format!("{}", err);
+        assert!(display.contains("Unknown channel"));
+        assert!(display.contains("42"));
+    }
+
+    #[test]
+    fn test_s3_error_display_fatal() {
+        let err = S3Error::Fatal(FatalError::object_not_found("my-bucket", "my-key"));
+        let display = format!("{}", err);
+        assert!(display.contains("Object not found"));
+        assert!(display.contains("s3://my-bucket/my-key"));
+    }
+
+    #[test]
+    fn test_s3_error_clone() {
+        let err = S3Error::Fatal(FatalError::config_error("test"));
+        let cloned = err.clone();
+        assert_eq!(format!("{}", err), format!("{}", cloned));
+    }
+
+    #[test]
+    fn test_s3_error_as_error() {
+        let err = S3Error::Fatal(FatalError::io_error("test"));
+        let _err: &dyn std::error::Error = &err;
+    }
+
+    // =========================================================================
+    // RecoverableError tests
+    // =========================================================================
+
+    #[test]
     fn test_recoverable_error_constructors() {
         let err = RecoverableError::message_corruption(1000, "data corrupted");
         assert!(matches!(err, RecoverableError::MessageCorruption { .. }));
@@ -363,6 +400,65 @@ mod tests {
         let err = RecoverableError::parse_error("Message", "invalid format");
         assert!(matches!(err, RecoverableError::ParseError { .. }));
     }
+
+    #[test]
+    fn test_recoverable_error_context_message_corruption() {
+        let err = RecoverableError::message_corruption(500, "bad checksum");
+        assert_eq!(err.context(), "message corruption");
+    }
+
+    #[test]
+    fn test_recoverable_error_context_unknown_channel() {
+        let err = RecoverableError::unknown_channel(99);
+        assert_eq!(err.context(), "unknown channel");
+    }
+
+    #[test]
+    fn test_recoverable_error_context_parse_error() {
+        let err = RecoverableError::parse_error("Chunk", "invalid length");
+        assert_eq!(err.context(), "parse error");
+    }
+
+    #[test]
+    fn test_recoverable_error_display_message_corruption() {
+        let err = RecoverableError::MessageCorruption {
+            offset: 1024,
+            error: "checksum failed".to_string(),
+        };
+        let display = format!("{}", err);
+        assert!(display.contains("Message corruption"));
+        assert!(display.contains("1024"));
+        assert!(display.contains("checksum failed"));
+    }
+
+    #[test]
+    fn test_recoverable_error_display_unknown_channel() {
+        let err = RecoverableError::UnknownChannel { channel_id: 123 };
+        assert_eq!(format!("{}", err), "Unknown channel: 123");
+    }
+
+    #[test]
+    fn test_recoverable_error_display_parse_error() {
+        let err = RecoverableError::ParseError {
+            record_type: "Message".to_string(),
+            error: "invalid header".to_string(),
+        };
+        let display = format!("{}", err);
+        assert!(display.contains("Parse error"));
+        assert!(display.contains("Message"));
+        assert!(display.contains("invalid header"));
+    }
+
+    #[test]
+    fn test_recoverable_error_clone() {
+        let err = RecoverableError::parse_error("Test", "test error");
+        let cloned = err.clone();
+        assert_eq!(format!("{}", err), format!("{}", cloned));
+    }
+
+    // =========================================================================
+    // FatalError tests
+    // =========================================================================
 
     #[test]
     fn test_fatal_error_constructors() {
@@ -389,6 +485,36 @@ mod tests {
 
         let err = FatalError::credentials_error("no credentials found");
         assert!(matches!(err, FatalError::CredentialsError { .. }));
+    }
+
+    #[test]
+    fn test_fatal_error_context() {
+        assert_eq!(
+            FatalError::access_denied("b", "k").context(),
+            "access denied"
+        );
+        assert_eq!(
+            FatalError::object_not_found("b", "k").context(),
+            "object not found"
+        );
+        assert_eq!(
+            FatalError::invalid_format("", vec![]).context(),
+            "invalid format"
+        );
+        assert_eq!(
+            FatalError::memory_limit_exceeded(100, 50).context(),
+            "memory limit exceeded"
+        );
+        assert_eq!(FatalError::http_error(None, "test").context(), "HTTP error");
+        assert_eq!(FatalError::io_error("test").context(), "IO error");
+        assert_eq!(
+            FatalError::config_error("test").context(),
+            "configuration error"
+        );
+        assert_eq!(
+            FatalError::credentials_error("test").context(),
+            "credentials error"
+        );
     }
 
     #[test]
@@ -441,5 +567,93 @@ mod tests {
             message: "connection failed".to_string(),
         };
         assert_eq!(format!("{}", err), "HTTP error: connection failed");
+    }
+
+    #[test]
+    fn test_fatal_error_display_access_denied_no_details() {
+        let err = FatalError::AccessDenied {
+            bucket: "bucket".to_string(),
+            key: "key".to_string(),
+            details: String::new(),
+        };
+        assert_eq!(format!("{}", err), "Access denied to s3://bucket/key");
+    }
+
+    #[test]
+    fn test_fatal_error_display_io_error() {
+        let err = FatalError::IoError {
+            message: "failed to read".to_string(),
+        };
+        assert_eq!(format!("{}", err), "IO error: failed to read");
+    }
+
+    #[test]
+    fn test_fatal_error_display_config_error() {
+        let err = FatalError::ConfigError {
+            message: "invalid endpoint".to_string(),
+        };
+        assert_eq!(format!("{}", err), "Configuration error: invalid endpoint");
+    }
+
+    #[test]
+    fn test_fatal_error_display_credentials_error() {
+        let err = FatalError::CredentialsError {
+            message: "no credentials".to_string(),
+        };
+        assert_eq!(format!("{}", err), "AWS credentials error: no credentials");
+    }
+
+    #[test]
+    fn test_fatal_error_display_invalid_format_long() {
+        let err = FatalError::InvalidFormat {
+            expected: "MCAP0",
+            found: vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09],
+        };
+        let display = format!("{}", err);
+        // Should truncate to 8 elements with "..." suffix
+        assert!(display.contains("..."));
+        assert!(display.contains("Invalid format"));
+    }
+
+    #[test]
+    fn test_fatal_error_clone() {
+        let err = FatalError::io_error("test");
+        let cloned = err.clone();
+        assert_eq!(format!("{}", err), format!("{}", cloned));
+    }
+
+    #[test]
+    fn test_fatal_error_as_error() {
+        let err = FatalError::io_error("test");
+        let _err: &dyn std::error::Error = &err;
+    }
+
+    #[test]
+    fn test_fatal_error_into_codec_error() {
+        let err = FatalError::object_not_found("bucket", "key");
+        let codec_err: crate::CodecError = err.into();
+        assert!(codec_err.to_string().contains("Object not found"));
+        assert!(codec_err.to_string().contains("S3"));
+    }
+
+    #[test]
+    fn test_fatal_error_debug() {
+        let err = FatalError::io_error("test");
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("IoError"));
+    }
+
+    #[test]
+    fn test_s3_error_debug() {
+        let err = S3Error::Fatal(FatalError::io_error("test"));
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("Fatal"));
+    }
+
+    #[test]
+    fn test_recoverable_error_debug() {
+        let err = RecoverableError::unknown_channel(42);
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("UnknownChannel"));
     }
 }

@@ -1,4 +1,4 @@
-.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python test-examples examples examples-verify coverage coverage-rust coverage-python fmt fmt-python lint lint-python check check-license clean help
+.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python test-examples examples examples-verify coverage coverage-rust coverage-python fmt fmt-python lint lint-python check check-license clean dev-up dev-down help
 
 # Default target
 all: build
@@ -218,6 +218,31 @@ check-license: ## Check REUSE license compliance
 		echo "⚠ reuse tool not found. Install with: pip install reuse"; \
 		exit 1; \
 	fi
+
+# ============================================================================
+# Development
+# ============================================================================
+
+dev-up: ## Start MinIO S3 server for local development (ports 9000, 9001)
+	@echo "Starting MinIO S3 server..."
+	@docker compose -f docker-compose.dev.yml up -d
+	@echo ""
+	@echo "✓ MinIO is running:"
+	@echo "  S3 API:   http://localhost:9000"
+	@echo "  Web UI:   http://localhost:9001 (minioadmin/minioadmin)"
+	@echo ""
+	@echo "Stop with: make dev-down"
+
+dev-down: ## Stop MinIO S3 server
+	@echo "Stopping MinIO S3 server..."
+	@docker compose -f docker-compose.dev.yml down
+	@echo "✓ MinIO stopped"
+
+dev-logs: ## Show MinIO logs
+	@docker compose -f docker-compose.dev.yml logs -f
+
+dev-status: ## Show MinIO container status
+	@docker compose -f docker-compose.dev.yml ps
 
 # ============================================================================
 # Utilities
