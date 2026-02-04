@@ -42,13 +42,13 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-//! Constants for RRD file format
+//! Constants for RRD file format.
 pub mod constants;
 
-/// Reader implementation
+/// Reader implementation.
 pub mod reader;
 
-/// Writer implementation
+/// Writer implementation.
 pub mod writer;
 
 // Re-exports

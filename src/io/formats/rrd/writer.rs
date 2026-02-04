@@ -421,9 +421,10 @@ impl FormatWriter for RrdWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::NamedTempFile;
 
-    fn create_temp_writer() -> (RrdWriter, tempfile::NamedTempFile) {
-        let temp_file = tempfile::NamedTempFile::new().unwrap();
+    fn create_temp_writer() -> (RrdWriter, NamedTempFile) {
+        let temp_file = NamedTempFile::new().unwrap();
         let writer = RrdWriter::create(temp_file.path()).expect("Failed to create writer");
         (writer, temp_file)
     }

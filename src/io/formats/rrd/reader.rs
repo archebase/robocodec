@@ -496,9 +496,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<RrdFormat>(), 0);
     }
 
-    fn create_test_rrd_file(path: &str) -> Result<()> {
-        use std::io::Write;
-
+    fn create_test_rrd_file(path: &str) -> std::io::Result<()> {
         let mut file = std::fs::File::create(path)?;
 
         // Write header
