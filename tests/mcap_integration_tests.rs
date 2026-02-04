@@ -13,9 +13,9 @@ use common::*;
 use std::collections::HashMap;
 use std::path::Path;
 
-use robocodec::io::RoboReader;
 use robocodec::CodecValue;
 use robocodec::FormatReader;
+use robocodec::io::RoboReader;
 
 /// Path to the fixtures directory.
 const FIXTURES_DIR: &str = "tests/fixtures";

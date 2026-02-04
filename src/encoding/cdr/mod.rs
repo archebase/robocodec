@@ -18,7 +18,7 @@ pub mod plan;
 
 pub use calculator::CdrCalculator;
 pub use codec::CdrCodec;
-pub use cursor::{CdrCursor, CDR_HEADER_SIZE};
+pub use cursor::{CDR_HEADER_SIZE, CdrCursor};
 pub use decoder::CdrDecoder;
 pub use encoder::{CdrEncoder, EncapsulationKind};
 pub use plan::{DecodeOp, DecodePlan};

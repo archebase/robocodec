@@ -6,9 +6,9 @@
 
 use pyo3::prelude::*;
 
+use crate::io::RoboReader as IoRoboReader;
 use crate::io::metadata::FileFormat;
 use crate::io::traits::FormatReader;
-use crate::io::RoboReader as IoRoboReader;
 
 use super::error::to_py_result;
 use super::metadata::PyChannelInfo;

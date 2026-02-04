@@ -16,7 +16,7 @@ pub mod facade;
 pub mod mcap;
 
 // Re-export unified facade types
-pub use facade::{detect_format, FormatRewriter, RewriteOptions, RewriteStats, RoboRewriter};
+pub use facade::{FormatRewriter, RewriteOptions, RewriteStats, RoboRewriter, detect_format};
 
 // Re-export shared types
 pub use engine::{McapRewriteEngine, McapRewriteStats};

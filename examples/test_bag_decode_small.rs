@@ -1,5 +1,5 @@
-use robocodec::io::formats::bag::BagFormat;
 use robocodec::FormatReader;
+use robocodec::io::formats::bag::BagFormat;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = "/Users/zhexuany/Downloads/leju_bag/Rubbish_sorting_P4-278_20250830101814.bag";

@@ -291,7 +291,7 @@ impl<'a> Iterator for SequentialRawIter<'a> {
                     return Some(Err(CodecError::encode(
                         "SequentialRawIter",
                         format!("Read error: {e}"),
-                    )))
+                    )));
                 }
             };
 

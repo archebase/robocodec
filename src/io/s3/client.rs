@@ -210,10 +210,10 @@ impl S3Client {
 
         // Extract UploadId from XML response
         // Format: <InitiateMultipartUploadResult...><UploadId>...</UploadId>...
-        if let Some(start) = body.find("<UploadId>") {
-            if let Some(end) = body.find("</UploadId>") {
-                return Ok(body[start + 10..end].to_string());
-            }
+        if let Some(start) = body.find("<UploadId>")
+            && let Some(end) = body.find("</UploadId>")
+        {
+            return Ok(body[start + 10..end].to_string());
         }
 
         Err(FatalError::IoError {
@@ -416,15 +416,16 @@ impl S3Client {
         header_builder(&mut headers)?;
 
         // Sign the request if credentials are available
-        if let Some(credentials) = self.config.credentials() {
-            if signer::should_sign(credentials) {
-                let region = location.region().unwrap_or(DEFAULT_AWS_REGION);
-                signer::sign_request(credentials, region, "s3", method, &uri, &mut headers)
-                    .map_err(|e| FatalError::HttpError {
-                        status: None,
-                        message: format!("Failed to sign request: {}", e),
-                    })?;
-            }
+        if let Some(credentials) = self.config.credentials()
+            && signer::should_sign(credentials)
+        {
+            let region = location.region().unwrap_or(DEFAULT_AWS_REGION);
+            signer::sign_request(credentials, region, "s3", method, &uri, &mut headers).map_err(
+                |e| FatalError::HttpError {
+                    status: None,
+                    message: format!("Failed to sign request: {}", e),
+                },
+            )?;
         }
 
         // Build the request with signed headers
@@ -435,17 +436,17 @@ impl S3Client {
                 return Err(FatalError::HttpError {
                     status: None,
                     message: format!("Unsupported HTTP method: {:?}", method),
-                })
+                });
             }
         };
 
         // Add headers (excluding 'host' which reqwest handles automatically)
         let mut request_builder = request_builder;
         for (name, value) in headers.iter() {
-            if let Ok(value_str) = value.to_str() {
-                if name.as_str() != "host" {
-                    request_builder = request_builder.header(name.as_str(), value_str);
-                }
+            if let Ok(value_str) = value.to_str()
+                && name.as_str() != "host"
+            {
+                request_builder = request_builder.header(name.as_str(), value_str);
             }
         }
 
@@ -512,15 +513,16 @@ impl S3Client {
         header_builder(&mut headers)?;
 
         // Sign the request if credentials are available
-        if let Some(credentials) = self.config.credentials() {
-            if signer::should_sign(credentials) {
-                let region = location.region().unwrap_or(DEFAULT_AWS_REGION);
-                signer::sign_request(credentials, region, "s3", method, &uri, &mut headers)
-                    .map_err(|e| FatalError::HttpError {
-                        status: None,
-                        message: format!("Failed to sign request: {}", e),
-                    })?;
-            }
+        if let Some(credentials) = self.config.credentials()
+            && signer::should_sign(credentials)
+        {
+            let region = location.region().unwrap_or(DEFAULT_AWS_REGION);
+            signer::sign_request(credentials, region, "s3", method, &uri, &mut headers).map_err(
+                |e| FatalError::HttpError {
+                    status: None,
+                    message: format!("Failed to sign request: {}", e),
+                },
+            )?;
         }
 
         // Build the request with signed headers
@@ -532,17 +534,17 @@ impl S3Client {
                 return Err(FatalError::HttpError {
                     status: None,
                     message: format!("Unsupported HTTP method: {:?}", method),
-                })
+                });
             }
         };
 
         // Add headers (excluding 'host' which reqwest handles automatically)
         let mut result_builder = request_builder;
         for (name, value) in headers.iter() {
-            if let Ok(value_str) = value.to_str() {
-                if name.as_str() != "host" {
-                    result_builder = result_builder.header(name.as_str(), value_str);
-                }
+            if let Ok(value_str) = value.to_str()
+                && name.as_str() != "host"
+            {
+                result_builder = result_builder.header(name.as_str(), value_str);
             }
         }
 

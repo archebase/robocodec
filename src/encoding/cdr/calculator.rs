@@ -236,7 +236,7 @@ mod tests {
     fn test_calculator_string() {
         let mut calc = CdrCalculator::new();
         calc.string(5); // "hello" + null
-                        // 4 (header) + 4 (length) + 5 + 1 (null) = 14
+        // 4 (header) + 4 (length) + 5 + 1 (null) = 14
         assert_eq!(calc.size(), 14);
     }
 
@@ -284,7 +284,7 @@ mod tests {
     fn test_calculator_array() {
         let mut calc = CdrCalculator::new();
         calc.array(3, 4, 4); // 3 int32s
-                             // 4 (header) + 4 (length) + 3*4 (elements) = 20
+        // 4 (header) + 4 (length) + 3*4 (elements) = 20
         assert_eq!(calc.size(), 20);
     }
 
@@ -404,10 +404,10 @@ mod tests {
         let mut calc = CdrCalculator::new();
         calc.int8(); // offset = 5, origin = 4
         calc.array(2, 8, 8); // 2 int64s
-                             // After int8: offset = 5, origin = 4
-                             // sequence_length (align to 4): (5-4)%4=1, +3 pad -> offset = 8, +4 = 12
-                             // First int64: align to 8, (12-4)%8=0, no pad, +8 = 20
-                             // Second int64: align to 8, (20-4)%8=0, +8 = 28
+        // After int8: offset = 5, origin = 4
+        // sequence_length (align to 4): (5-4)%4=1, +3 pad -> offset = 8, +4 = 12
+        // First int64: align to 8, (12-4)%8=0, no pad, +8 = 20
+        // Second int64: align to 8, (20-4)%8=0, +8 = 28
         assert_eq!(calc.size(), 28);
     }
 

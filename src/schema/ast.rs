@@ -398,10 +398,12 @@ mod tests {
     fn test_field_type_is_complex() {
         assert!(!FieldType::Primitive(PrimitiveType::Int32).is_complex());
         assert!(FieldType::Primitive(PrimitiveType::String).is_complex());
-        assert!(FieldType::Array {
-            base_type: Box::new(FieldType::Primitive(PrimitiveType::Int32)),
-            size: None,
-        }
-        .is_complex());
+        assert!(
+            FieldType::Array {
+                base_type: Box::new(FieldType::Primitive(PrimitiveType::Int32)),
+                size: None,
+            }
+            .is_complex()
+        );
     }
 }

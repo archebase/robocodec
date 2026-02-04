@@ -672,7 +672,7 @@ impl<'a> Iterator for DecodedMessageStream<'a> {
                         return Some(Err(CodecError::parse(
                             "JSON",
                             format!("Invalid UTF-8: {e}"),
-                        )))
+                        )));
                     }
                 };
                 json_decoder
@@ -687,7 +687,7 @@ impl<'a> Iterator for DecodedMessageStream<'a> {
                         return Some(Err(CodecError::parse(
                             channel_info.message_type.as_str(),
                             "No schema available",
-                        )))
+                        )));
                     }
                 };
                 let parsed_schema =
@@ -697,7 +697,7 @@ impl<'a> Iterator for DecodedMessageStream<'a> {
                             return Some(Err(CodecError::parse(
                                 channel_info.message_type.as_str(),
                                 format!("Failed to parse schema: {e}"),
-                            )))
+                            )));
                         }
                     };
                 cdr_decoder
@@ -812,7 +812,7 @@ impl<'a> Iterator for DecodedMessageWithTimestampStream<'a> {
                         return Some(Err(CodecError::parse(
                             "JSON",
                             format!("Invalid UTF-8: {e}"),
-                        )))
+                        )));
                     }
                 };
                 json_decoder
@@ -827,7 +827,7 @@ impl<'a> Iterator for DecodedMessageWithTimestampStream<'a> {
                         return Some(Err(CodecError::parse(
                             "CDR",
                             format!("No schema available for {}", channel_info.message_type),
-                        )))
+                        )));
                     }
                 };
                 let parsed_schema =
@@ -837,7 +837,7 @@ impl<'a> Iterator for DecodedMessageWithTimestampStream<'a> {
                             return Some(Err(CodecError::parse(
                                 "Schema",
                                 format!("{}: {}", channel_info.message_type, e),
-                            )))
+                            )));
                         }
                     };
                 cdr_decoder

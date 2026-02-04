@@ -253,13 +253,12 @@ impl BagWriter {
         message_definition: &str,
     ) -> Result<()> {
         // Check for duplicate topic with empty callerid (idempotent behavior)
-        if let Some(&existing_conn_id) = self.topic_connection_ids.get(topic) {
-            if let Some(existing_conn) = self.connections.get(&existing_conn_id) {
-                if existing_conn.callerid.as_ref().is_none_or(|s| s.is_empty()) {
-                    // Same topic with empty callerid already exists - skip duplicate
-                    return Ok(());
-                }
-            }
+        if let Some(&existing_conn_id) = self.topic_connection_ids.get(topic)
+            && let Some(existing_conn) = self.connections.get(&existing_conn_id)
+            && existing_conn.callerid.as_ref().is_none_or(|s| s.is_empty())
+        {
+            // Same topic with empty callerid already exists - skip duplicate
+            return Ok(());
         }
         self.add_connection_with_callerid(_channel_id, topic, message_type, message_definition, "")
     }
@@ -349,11 +348,11 @@ impl BagWriter {
         }
 
         // Write connection record to chunk if not already written
-        if !self.connections_written_to_chunk.contains(&conn_id) {
-            if let Some(conn_info) = self.connections.get(&conn_id) {
-                Self::write_connection_record_to_buffer(&mut self.chunk_buffer, conn_info);
-                self.connections_written_to_chunk.insert(conn_id);
-            }
+        if !self.connections_written_to_chunk.contains(&conn_id)
+            && let Some(conn_info) = self.connections.get(&conn_id)
+        {
+            Self::write_connection_record_to_buffer(&mut self.chunk_buffer, conn_info);
+            self.connections_written_to_chunk.insert(conn_id);
         }
 
         // Calculate message offset within the chunk data (for index lookups)
@@ -804,11 +803,7 @@ fn ns_to_time(ns: u64) -> (u32, u32) {
 
 /// Compare two times.
 fn time_less_than(a: (u32, u32), b: (u32, u32)) -> bool {
-    if a.0 != b.0 {
-        a.0 < b.0
-    } else {
-        a.1 < b.1
-    }
+    if a.0 != b.0 { a.0 < b.0 } else { a.1 < b.1 }
 }
 
 impl FormatWriter for BagWriter {

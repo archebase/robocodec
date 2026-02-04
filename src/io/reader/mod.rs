@@ -32,8 +32,8 @@ pub use config::{ReaderConfig, ReaderConfigBuilder};
 
 use crate::io::detection::detect_format;
 use crate::io::formats::bag::BagFormat;
-use crate::io::formats::mcap::reader::DecodedMessageWithTimestampStream as McapTimestampedStream;
 use crate::io::formats::mcap::McapFormat;
+use crate::io::formats::mcap::reader::DecodedMessageWithTimestampStream as McapTimestampedStream;
 use crate::io::metadata::{ChannelInfo, DecodedMessageResult, FileFormat};
 use crate::io::traits::{FormatReader, ParallelReader};
 use crate::{CodecError, Result};
@@ -226,7 +226,7 @@ impl RoboReader {
                 return Err(CodecError::parse(
                     "RoboReader",
                     format!("Unknown file format: {}", path),
-                ))
+                ));
             }
         };
 

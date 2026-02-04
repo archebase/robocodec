@@ -410,8 +410,10 @@ mod tests {
         }
 
         // Verify the referenced type exists
-        assert!(schema
-            .get_type_variants("builtin_interfaces/Time")
-            .is_some());
+        assert!(
+            schema
+                .get_type_variants("builtin_interfaces/Time")
+                .is_some()
+        );
     }
 }

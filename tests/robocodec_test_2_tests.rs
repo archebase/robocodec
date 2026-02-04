@@ -8,8 +8,8 @@
 
 use std::path::Path;
 
-use robocodec::io::RoboReader;
 use robocodec::FormatReader;
+use robocodec::io::RoboReader;
 
 /// Path to the fixtures directory.
 const FIXTURES_DIR: &str = "tests/fixtures";

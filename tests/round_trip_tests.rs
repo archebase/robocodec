@@ -13,10 +13,10 @@
 use std::fs;
 use std::path::PathBuf;
 
-use robocodec::io::traits::{FormatReader, FormatWriter};
 use robocodec::io::ReaderConfig;
 use robocodec::io::RoboReader;
 use robocodec::io::RoboWriter;
+use robocodec::io::traits::{FormatReader, FormatWriter};
 
 // ============================================================================
 // Test Fixtures

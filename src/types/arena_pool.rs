@@ -11,7 +11,7 @@
 //!
 //! This optimization eliminates ~22% of CPU time spent on memory operations.
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 
 use super::arena::MessageArena;
 

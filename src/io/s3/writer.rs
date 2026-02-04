@@ -505,10 +505,12 @@ mod tests {
 
         let result = writer.write(&msg);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Buffer size limit"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Buffer size limit")
+        );
     }
 
     #[test]

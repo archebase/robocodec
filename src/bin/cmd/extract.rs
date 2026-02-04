@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
-use crate::common::{open_reader, parse_time_range, Progress, Result};
+use crate::common::{Progress, Result, open_reader, parse_time_range};
 use robocodec::{FormatReader, RoboRewriter};
 
 /// Extract subsets of data from files.
@@ -486,10 +486,12 @@ mod tests {
         // Partial extraction (count < total) should error
         let result = cmd_extract_messages(path.clone(), temp_output(), Some(1), false);
         assert!(result.is_err(), "partial extraction should fail");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Partial message extraction"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Partial message extraction")
+        );
     }
 
     #[test]
@@ -529,10 +531,12 @@ mod tests {
             false,
         );
         assert!(result.is_err(), "should fail when no topics match");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("No matching topics"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No matching topics")
+        );
     }
 
     #[test]
@@ -558,10 +562,12 @@ mod tests {
 
         let result = cmd_extract_topics(path, temp_output(), topic, false);
         assert!(result.is_err(), "topic extraction not yet implemented");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 
     #[test]
@@ -620,10 +626,12 @@ mod tests {
         // Even with count=1, should return not implemented
         let result = cmd_extract_per_topic(path, temp_output(), 1, false);
         assert!(result.is_err(), "per-topic extraction not yet implemented");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 
     // ========================================================================
@@ -657,10 +665,12 @@ mod tests {
         // Valid range that's not "0,MAX" should fail with not implemented
         let result = cmd_extract_time_range(path, temp_output(), "1000,2000".to_string(), false);
         assert!(result.is_err(), "time range filtering not yet implemented");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 
     #[test]
@@ -693,10 +703,12 @@ mod tests {
 
         let result = cmd_create_fixture(path, None, None);
         assert!(result.is_err(), "fixture creation not yet implemented");
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 
     #[test]

@@ -27,7 +27,7 @@ use crate::encoding::{CdrDecoder, CdrEncoder};
 use crate::io::formats::mcap::reader::McapReader;
 use crate::io::formats::mcap::writer::ParallelMcapWriter;
 use crate::rewriter::{FormatRewriter, RewriteOptions, RewriteStats};
-use crate::schema::{parse_schema, MessageSchema};
+use crate::schema::{MessageSchema, parse_schema};
 use crate::transform::ChannelInfo as TransformChannelInfo;
 
 /// MCAP file rewriter.

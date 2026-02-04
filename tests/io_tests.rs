@@ -10,10 +10,10 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
+use robocodec::io::ReaderConfig;
 use robocodec::io::detection::detect_format;
 use robocodec::io::formats::mcap::McapFormat;
 use robocodec::io::metadata::{ChannelInfo, FileFormat, RawMessage};
-use robocodec::io::ReaderConfig;
 
 #[test]
 fn test_detect_format_mcap_extension() {

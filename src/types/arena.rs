@@ -15,10 +15,10 @@
 //! is returned to a global lock-free recycle pool. When a new block is needed,
 //! the pool is checked first before allocating fresh memory.
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Default arena block size (64MB for optimal cache locality and reduced fragmentation)
 pub const DEFAULT_ARENA_BLOCK_SIZE: usize = 64 * 1024 * 1024;
@@ -180,7 +180,7 @@ impl ArenaBlock {
     /// Get a pointer to the data at the given offset.
     #[inline]
     unsafe fn data_at(&self, offset: usize) -> *mut u8 {
-        self.data.as_ptr().add(offset)
+        unsafe { self.data.as_ptr().add(offset) }
     }
 }
 

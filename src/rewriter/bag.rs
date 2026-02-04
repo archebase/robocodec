@@ -14,11 +14,11 @@ use tracing::warn;
 
 use crate::core::{CodecError, Result};
 use crate::encoding::{CdrDecoder, CdrEncoder};
-use crate::io::formats::bag::writer::BagWriter;
 use crate::io::formats::bag::BagFormat;
+use crate::io::formats::bag::writer::BagWriter;
 use crate::io::traits::FormatReader;
 use crate::rewriter::{FormatRewriter, RewriteOptions, RewriteStats};
-use crate::schema::{parse_schema, MessageSchema};
+use crate::schema::{MessageSchema, parse_schema};
 
 /// ROS1 bag file rewriter.
 ///

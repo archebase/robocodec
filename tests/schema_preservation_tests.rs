@@ -188,10 +188,10 @@ fn test_bag_to_mcap_preserves_schemas() {
     // Collect schemas
     let mut schemas = std::collections::HashMap::new();
     for channel in bag_channels.values() {
-        if let Some(schema) = &channel.schema {
-            if !schema.is_empty() {
-                schemas.insert(channel.message_type.clone(), schema.clone());
-            }
+        if let Some(schema) = &channel.schema
+            && !schema.is_empty()
+        {
+            schemas.insert(channel.message_type.clone(), schema.clone());
         }
     }
 
@@ -214,12 +214,12 @@ fn test_mcap_to_bag_preserves_schemas() {
 
     // Verify we can access schema information for each channel
     for channel in mcap_channels.values() {
-        if let Some(schema) = &channel.schema {
-            if !schema.is_empty() {
-                // Schema is present - just verify it's accessible
-                let schema_len = schema.len();
-                assert!(schema_len > 0, "Schema should have content");
-            }
+        if let Some(schema) = &channel.schema
+            && !schema.is_empty()
+        {
+            // Schema is present - just verify it's accessible
+            let schema_len = schema.len();
+            assert!(schema_len > 0, "Schema should have content");
         }
     }
 }

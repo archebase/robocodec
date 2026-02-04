@@ -6,9 +6,9 @@
 
 use pyo3::prelude::*;
 
+use crate::io::RoboWriter as IoRoboWriter;
 use crate::io::metadata::FileFormat;
 use crate::io::traits::FormatWriter;
-use crate::io::RoboWriter as IoRoboWriter;
 
 use super::error::to_py_result;
 

@@ -340,14 +340,14 @@ impl StreamingBagParser {
             match op {
                 OP_MSG_DATA => {
                     // Message data record
-                    if let Some(conn_id) = fields.conn {
-                        if let Some(time) = fields.time {
-                            messages.push(BagMessageRecord {
-                                conn_id,
-                                log_time: time,
-                                data,
-                            });
-                        }
+                    if let Some(conn_id) = fields.conn
+                        && let Some(time) = fields.time
+                    {
+                        messages.push(BagMessageRecord {
+                            conn_id,
+                            log_time: time,
+                            data,
+                        });
                     }
                 }
                 OP_CONNECTION => {

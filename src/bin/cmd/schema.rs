@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use clap::Subcommand;
 use serde::Serialize;
 
-use crate::common::{open_reader, Result};
+use crate::common::{Result, open_reader};
 use robocodec::FormatReader;
 
 /// Schema operations.
@@ -747,10 +747,12 @@ mod tests {
             result.is_err(),
             "json output should fail with not implemented"
         );
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not yet implemented"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not yet implemented")
+        );
     }
 
     #[test]

@@ -6,8 +6,8 @@
 
 #[cfg(feature = "s3")]
 use robocodec::io::s3::{
-    BagMessageRecord, BagRecordFields, BagRecordHeader, FatalError, StreamingBagParser,
-    BAG_MAGIC_PREFIX,
+    BAG_MAGIC_PREFIX, BagMessageRecord, BagRecordFields, BagRecordHeader, FatalError,
+    StreamingBagParser,
 };
 
 #[cfg(feature = "s3")]

@@ -11,7 +11,7 @@ pub mod ros2_idl_parser;
 // Include the unified parser (has format detection and ROS2 IDL handling)
 pub mod unified;
 
-pub use msg_parser::{parse_with_encoding, parse_with_version, RosVersion};
+pub use msg_parser::{RosVersion, parse_with_encoding, parse_with_version};
 pub use ros2_idl_parser::{normalize_ros2_idl, parse as parse_ros2_idl};
 
 // Main parser interface

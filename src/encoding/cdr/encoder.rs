@@ -7,7 +7,7 @@
 //! Based on the TypeScript implementation at:
 //! <https://github.com/emulated-devices/rtps-cdr/blob/main/src/CdrWriter.ts>
 
-use super::{calculator::CdrCalculator, CDR_HEADER_SIZE};
+use super::{CDR_HEADER_SIZE, calculator::CdrCalculator};
 use crate::core::Result as CoreResult;
 use crate::core::{CodecValue, DecodedMessage};
 use crate::schema::{FieldType, MessageSchema, PrimitiveType as IdlPrimitiveType};
@@ -75,11 +75,7 @@ impl EncapsulationKind {
     /// CDR1 uses 8-byte alignment for 64-bit values, CDR2 uses 4-byte alignment.
     #[must_use]
     pub const fn eight_byte_alignment(self) -> usize {
-        if self.is_cdr2() {
-            4
-        } else {
-            8
-        }
+        if self.is_cdr2() { 4 } else { 8 }
     }
 }
 
@@ -1237,7 +1233,7 @@ mod tests {
         let data = encoder.data();
         // With origin = 4, position 4 is already 8-byte aligned: (4 - 4) % 8 = 0
         assert_eq!(data.len(), 12); // header + value
-                                    // i64::MIN in little-endian (starts at position 4)
+        // i64::MIN in little-endian (starts at position 4)
         assert_eq!(
             &data[4..12],
             &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80]

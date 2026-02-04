@@ -14,10 +14,10 @@
 use std::fs;
 use std::path::PathBuf;
 
+use robocodec::io::RoboWriter;
 use robocodec::io::formats::bag::{BagFormat, BagWriter};
 use robocodec::io::traits::FormatReader;
 use robocodec::io::traits::FormatWriter;
-use robocodec::io::RoboWriter;
 use robocodec::io::{WriterBuilder, WriterConfig};
 
 // ============================================================================
