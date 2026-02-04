@@ -259,11 +259,12 @@ impl S3Location {
     ///
     /// Supports formats:
     /// - `s3://{bucket}/{key}`
-    /// - `s3://{region}/{bucket}/{key}` (explicit region)
+    /// - `s3://{bucket}/{key}?endpoint={custom_endpoint}` (for MinIO, Alibaba OSS, etc.)
+    /// - `s3://{bucket}/{key}?region={region}` (explicit region)
     ///
-    /// Note: For URLs with 3+ path segments, the first segment is treated as
-    /// region only if it matches known AWS region patterns (starts with specific
-    /// geographic prefixes). Otherwise, it's treated as the bucket name.
+    /// The endpoint query parameter is useful for S3-compatible services:
+    /// - MinIO: `s3://bucket/key?endpoint=http://localhost:9000`
+    /// - Alibaba OSS: `s3://bucket/key?endpoint=https://oss-cn-hangzhou.aliyuncs.com`
     ///
     /// # Example
     ///
@@ -273,6 +274,11 @@ impl S3Location {
     /// let location = S3Location::from_s3_url("s3://my-bucket/path/to/file.mcap").unwrap();
     /// assert_eq!(location.bucket(), "my-bucket");
     /// assert_eq!(location.key(), "path/to/file.mcap");
+    ///
+    /// let location = S3Location::from_s3_url(
+    ///     "s3://my-bucket/file.mcap?endpoint=http://localhost:9000"
+    /// ).unwrap();
+    /// assert_eq!(location.endpoint(), Some("http://localhost:9000"));
     /// ```
     pub fn from_s3_url(url: &str) -> Result<Self, S3UrlParseError> {
         let url = url.trim();
@@ -283,12 +289,19 @@ impl S3Location {
 
         let path = &url[5..]; // Skip "s3://"
 
-        // For simplicity, we only support bucket/key format
-        // The region/bucket/key format is ambiguous and not commonly used
-        let slash_idx = path.find('/').ok_or(S3UrlParseError::InvalidFormat)?;
+        // Split query string if present
+        let (path_without_query, query) = match path.find('?') {
+            Some(q) => (&path[..q], Some(&path[q + 1..])),
+            None => (path, None),
+        };
 
-        let bucket = &path[..slash_idx];
-        let key = &path[slash_idx + 1..];
+        // For simplicity, we only support bucket/key format
+        let slash_idx = path_without_query
+            .find('/')
+            .ok_or(S3UrlParseError::InvalidFormat)?;
+
+        let bucket = &path_without_query[..slash_idx];
+        let key = &path_without_query[slash_idx + 1..];
 
         if bucket.is_empty() {
             return Err(S3UrlParseError::InvalidFormat);
@@ -297,11 +310,31 @@ impl S3Location {
         // Validate bucket name for security
         validate_bucket_name(bucket)?;
 
+        // Parse query parameters
+        let mut endpoint = None;
+        let mut region = None;
+
+        if let Some(query_str) = query {
+            for pair in query_str.split('&') {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                match key {
+                    "endpoint" => endpoint = Some(value.to_string()),
+                    "region" => region = Some(value.to_string()),
+                    _ => {} // Ignore unknown query parameters
+                }
+            }
+        }
+
+        // If no endpoint specified, check S3_ENDPOINT environment variable
+        if endpoint.is_none() {
+            endpoint = std::env::var("S3_ENDPOINT").ok();
+        }
+
         Ok(Self {
             bucket: bucket.to_string(),
             key: key.to_string(),
-            region: None,
-            endpoint: None,
+            region,
+            endpoint,
         })
     }
 
@@ -533,5 +566,80 @@ mod tests {
         let location = S3Location::from_s3_url("s3://bucket/path/to/file.mcap").unwrap();
         assert_eq!(location.bucket(), "bucket");
         assert_eq!(location.key(), "path/to/file.mcap");
+    }
+
+    #[test]
+    fn test_from_url_with_endpoint_query() {
+        let location =
+            S3Location::from_s3_url("s3://bucket/file.mcap?endpoint=http://localhost:9000")
+                .unwrap();
+        assert_eq!(location.bucket(), "bucket");
+        assert_eq!(location.key(), "file.mcap");
+        assert_eq!(location.endpoint(), Some("http://localhost:9000"));
+    }
+
+    #[test]
+    fn test_from_url_with_region_query() {
+        let location = S3Location::from_s3_url("s3://bucket/file.mcap?region=eu-west-1").unwrap();
+        assert_eq!(location.bucket(), "bucket");
+        assert_eq!(location.key(), "file.mcap");
+        assert_eq!(location.region(), Some("eu-west-1"));
+    }
+
+    #[test]
+    fn test_from_url_with_endpoint_and_region_query() {
+        let location = S3Location::from_s3_url(
+            "s3://bucket/file.mcap?endpoint=https://oss-cn-hangzhou.aliyuncs.com&region=cn-hangzhou",
+        )
+        .unwrap();
+        assert_eq!(location.bucket(), "bucket");
+        assert_eq!(location.key(), "file.mcap");
+        assert_eq!(
+            location.endpoint(),
+            Some("https://oss-cn-hangzhou.aliyuncs.com")
+        );
+        assert_eq!(location.region(), Some("cn-hangzhou"));
+    }
+
+    #[test]
+    fn test_from_url_with_endpoint_minio() {
+        let location =
+            S3Location::from_s3_url("s3://my-bucket/data.bag?endpoint=http://localhost:9000")
+                .unwrap();
+        assert_eq!(location.bucket(), "my-bucket");
+        assert_eq!(location.key(), "data.bag");
+        assert_eq!(location.endpoint(), Some("http://localhost:9000"));
+    }
+
+    #[test]
+    fn test_from_url_empty_query_value() {
+        // Empty endpoint query parameter should be ignored (env var will be used instead)
+        let location = S3Location::from_s3_url("s3://bucket/file.mcap?endpoint=").unwrap();
+        assert_eq!(location.bucket(), "bucket");
+        assert_eq!(location.key(), "file.mcap");
+        // Empty string is still Some(""), which is a valid (though unusual) value
+        assert_eq!(location.endpoint(), Some(""));
+    }
+
+    #[test]
+    fn test_from_url_with_unknown_query_param() {
+        // Unknown query parameters should be ignored
+        let location = S3Location::from_s3_url("s3://bucket/file.mcap?unknown=value").unwrap();
+        assert_eq!(location.bucket(), "bucket");
+        assert_eq!(location.key(), "file.mcap");
+        assert!(location.endpoint().is_none());
+        assert!(location.region().is_none());
+    }
+
+    #[test]
+    fn test_from_url_with_multiple_query_params() {
+        let location = S3Location::from_s3_url(
+            "s3://bucket/file.mcap?endpoint=http://minio:9000&region=us-west-1&unknown=value",
+        )
+        .unwrap();
+        assert_eq!(location.bucket(), "bucket");
+        assert_eq!(location.key(), "file.mcap");
+        assert_eq!(location.endpoint(), Some("http://minio:9000"));
+        assert_eq!(location.region(), Some("us-west-1"));
     }
 }
