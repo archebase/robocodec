@@ -130,41 +130,204 @@ impl DynCodec for CdrCodec {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// =========================================================================
+// CdrCodec construction tests
+// =========================================================================
 
-    #[test]
-    fn test_cdr_codec_creation() {
-        let codec = CdrCodec::new();
-        assert_eq!(codec.encoding_type(), Encoding::Cdr);
+#[test]
+fn test_cdr_codec_new() {
+    let codec = CdrCodec::new();
+    assert_eq!(codec.encoding_type(), Encoding::Cdr);
+    assert!(codec.encoder.is_none());
+}
+
+#[test]
+fn test_cdr_codec_default() {
+    let codec = CdrCodec::default();
+    assert_eq!(codec.encoding_type(), Encoding::Cdr);
+    assert!(codec.encoder.is_none());
+}
+
+// =========================================================================
+// decoder() method tests
+// =========================================================================
+
+#[test]
+fn test_cdr_codec_decoder_returns_ref() {
+    let codec = CdrCodec::new();
+    let _decoder = codec.decoder();
+    // Just verify we can get a reference to the decoder
+    assert_eq!(codec.encoding_type(), Encoding::Cdr);
+}
+
+// =========================================================================
+// encoder() method tests
+// =========================================================================
+
+#[test]
+fn test_cdr_codec_encoder_initializes_on_first_call() {
+    let mut codec = CdrCodec::new();
+    assert!(codec.encoder.is_none());
+
+    let _encoder = codec.encoder();
+    assert!(codec.encoder.is_some());
+}
+
+#[test]
+fn test_cdr_codec_encoder_reuses_existing() {
+    let mut codec = CdrCodec::new();
+
+    let enc1 = codec.encoder() as *const CdrEncoder;
+    let enc2 = codec.encoder() as *const CdrEncoder;
+
+    // Should return the same encoder (not create a new one)
+    assert_eq!(enc1, enc2);
+}
+
+// =========================================================================
+// reset() method tests
+// =========================================================================
+
+#[test]
+fn test_cdr_codec_reset_clears_encoder() {
+    let mut codec = CdrCodec::new();
+
+    // Get encoder to initialize it
+    let _enc = codec.encoder();
+    assert!(codec.encoder.is_some());
+
+    // Reset should clear the encoder
+    codec.reset();
+    assert!(codec.encoder.is_none());
+}
+
+#[test]
+fn test_cdr_codec_reset_when_no_encoder() {
+    let mut codec = CdrCodec::new();
+    assert!(codec.encoder.is_none());
+
+    // Reset when encoder is None should not panic
+    codec.reset();
+    assert!(codec.encoder.is_none());
+}
+
+// =========================================================================
+// encoding_type() method tests
+// =========================================================================
+
+#[test]
+fn test_cdr_codec_encoding_type() {
+    let codec = CdrCodec::new();
+    assert_eq!(codec.encoding_type(), Encoding::Cdr);
+    assert!(codec.encoding_type().is_cdr());
+    assert!(!codec.encoding_type().is_protobuf());
+    assert!(!codec.encoding_type().is_json());
+}
+
+// =========================================================================
+// as_any() method tests
+// =========================================================================
+
+#[test]
+fn test_cdr_codec_as_any() {
+    let codec = CdrCodec::new();
+    let any = codec.as_any();
+
+    // Should be able to downcast back to CdrCodec
+    assert!(any.is::<CdrCodec>());
+}
+
+#[test]
+fn test_cdr_codec_as_any_downcast() {
+    let codec = CdrCodec::new();
+    let any = codec.as_any();
+
+    let downcast = any.downcast_ref::<CdrCodec>();
+    assert!(downcast.is_some());
+    assert_eq!(downcast.unwrap().encoding_type(), Encoding::Cdr);
+}
+
+// =========================================================================
+// decode_dynamic with invalid schema tests
+// =========================================================================
+
+#[test]
+fn test_cdr_codec_decode_dynamic_protobuf_schema() {
+    let codec = CdrCodec::new();
+    let schema = SchemaMetadata::protobuf("test.Type".to_string(), vec![1, 2, 3]);
+
+    let result = codec.decode_dynamic(&[0x00, 0x00, 0x00, 0x00], &schema);
+    assert!(result.is_err());
+
+    if let Err(e) = result {
+        let msg = e.to_string();
+        assert!(msg.contains("Schema is not a CDR schema") || msg.contains("invalid schema"));
     }
+}
 
-    #[test]
-    fn test_cdr_codec_default() {
-        let codec = CdrCodec::default();
-        assert_eq!(codec.encoding_type(), Encoding::Cdr);
+#[test]
+fn test_cdr_codec_decode_dynamic_json_schema() {
+    let codec = CdrCodec::new();
+    let schema = SchemaMetadata::json("test.Type".to_string(), "{}".to_string());
+
+    let result = codec.decode_dynamic(&[0x00, 0x00, 0x00, 0x00], &schema);
+    assert!(result.is_err());
+}
+
+// =========================================================================
+// encode_dynamic with invalid schema tests
+// =========================================================================
+
+#[test]
+fn test_cdr_codec_encode_dynamic_protobuf_schema() {
+    let mut codec = CdrCodec::new();
+    let schema = SchemaMetadata::protobuf("test.Type".to_string(), vec![1, 2, 3]);
+
+    // Create a simple message (HashMap)
+    let message: DecodedMessage = std::collections::HashMap::new();
+
+    let result = codec.encode_dynamic(&message, &schema);
+    assert!(result.is_err());
+
+    if let Err(e) = result {
+        let msg = e.to_string();
+        assert!(msg.contains("Schema is not a CDR schema") || msg.contains("invalid schema"));
     }
+}
 
-    #[test]
-    fn test_cdr_codec_reset() {
-        let mut codec = CdrCodec::new();
+#[test]
+fn test_cdr_codec_encode_dynamic_json_schema() {
+    let mut codec = CdrCodec::new();
+    let schema = SchemaMetadata::json("test.Type".to_string(), "{}".to_string());
 
-        // Get encoder to initialize it
+    let message: DecodedMessage = std::collections::HashMap::new();
+
+    let result = codec.encode_dynamic(&message, &schema);
+    assert!(result.is_err());
+}
+
+// =========================================================================
+// DynCodec trait integration tests
+// =========================================================================
+
+#[test]
+fn test_cdr_codec_dyn_codec_object_safe() {
+    // Test that CdrCodec can be used as a DynCodec trait object
+    let codec: CdrCodec = CdrCodec::new();
+
+    // Can call methods through DynCodec trait
+    let encoding = codec.encoding_type();
+    assert_eq!(encoding, Encoding::Cdr);
+}
+
+#[test]
+fn test_cdr_codec_multiple_reset_cycles() {
+    let mut codec = CdrCodec::new();
+
+    for _ in 0..3 {
         let _enc = codec.encoder();
         assert!(codec.encoder.is_some());
-
-        // Reset
         codec.reset();
         assert!(codec.encoder.is_none());
-    }
-
-    #[test]
-    fn test_cdr_codec_decode_invalid_schema() {
-        let codec = CdrCodec::new();
-        let schema = SchemaMetadata::protobuf("test.Type".to_string(), vec![1, 2, 3]);
-
-        let result = codec.decode_dynamic(&[0x00, 0x00, 0x00, 0x00], &schema);
-        assert!(result.is_err());
     }
 }

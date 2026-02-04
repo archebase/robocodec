@@ -349,4 +349,281 @@ mod tests {
         // Test finish delegation
         writer.finish().unwrap();
     }
+
+    // =========================================================================
+    // RoboWriter::format Tests
+    // =========================================================================
+
+    #[test]
+    fn test_robowriter_format_mcap() {
+        let writer = RoboWriter {
+            inner: Box::new(MockWriter::new("test.mcap")),
+        };
+        assert_eq!(writer.format(), FileFormat::Mcap);
+    }
+
+    #[test]
+    fn test_robowriter_format_bag() {
+        let writer = RoboWriter {
+            inner: Box::new(MockWriter::new("test.bag")),
+        };
+        assert_eq!(writer.format(), FileFormat::Bag);
+    }
+
+    #[test]
+    fn test_robowriter_format_rrd() {
+        let writer = RoboWriter {
+            inner: Box::new(MockWriter::new("test.rrd")),
+        };
+        assert_eq!(writer.format(), FileFormat::Rrd);
+    }
+
+    #[test]
+    fn test_robowriter_format_unknown() {
+        let writer = RoboWriter {
+            inner: Box::new(MockWriter::new("test.unknown")),
+        };
+        assert_eq!(writer.format(), FileFormat::Unknown);
+    }
+
+    #[test]
+    fn test_robowriter_format_no_extension() {
+        let writer = RoboWriter {
+            inner: Box::new(MockWriter::new("testfile")),
+        };
+        assert_eq!(writer.format(), FileFormat::Unknown);
+    }
+
+    // =========================================================================
+    // RoboWriter::downcast Tests
+    // =========================================================================
+
+    #[test]
+    fn test_robowriter_downcast_ref_success() {
+        let writer = RoboWriter {
+            inner: Box::new(MockWriter::new("test.bag")),
+        };
+        let mock_ref = writer.downcast_ref::<MockWriter>();
+        assert!(mock_ref.is_some());
+    }
+
+    #[test]
+    fn test_robowriter_downcast_ref_wrong_type() {
+        let writer = RoboWriter {
+            inner: Box::new(MockWriter::new("test.bag")),
+        };
+        let wrong_ref = writer.downcast_ref::<String>();
+        assert!(wrong_ref.is_none());
+    }
+
+    #[test]
+    fn test_robowriter_downcast_mut_success() {
+        let mut writer = RoboWriter {
+            inner: Box::new(MockWriter::new("test.bag")),
+        };
+        let mock_mut = writer.downcast_mut::<MockWriter>();
+        assert!(mock_mut.is_some());
+    }
+
+    #[test]
+    fn test_robowriter_downcast_mut_wrong_type() {
+        let mut writer = RoboWriter {
+            inner: Box::new(MockWriter::new("test.bag")),
+        };
+        let wrong_mut = writer.downcast_mut::<String>();
+        assert!(wrong_mut.is_none());
+    }
+
+    // =========================================================================
+    // FormatWriter Trait Implementation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_format_writer_path() {
+        let writer = RoboWriter {
+            inner: Box::new(MockWriter::new("output.bag")),
+        };
+        assert_eq!(writer.path(), "output.bag");
+    }
+
+    #[test]
+    fn test_format_writer_add_channel() {
+        let mut writer = RoboWriter {
+            inner: Box::new(MockWriter::new("output.bag")),
+        };
+        let result = writer.add_channel("/test", "test/Msg", "cdr", None);
+        assert!(result.is_ok());
+        assert_eq!(writer.channel_count(), 1);
+    }
+
+    #[test]
+    fn test_format_writer_message_count_initially_zero() {
+        let writer = RoboWriter {
+            inner: Box::new(MockWriter::new("output.bag")),
+        };
+        assert_eq!(writer.message_count(), 0);
+    }
+
+    #[test]
+    fn test_format_writer_channel_count_initially_zero() {
+        let writer = RoboWriter {
+            inner: Box::new(MockWriter::new("output.bag")),
+        };
+        assert_eq!(writer.channel_count(), 0);
+    }
+
+    #[test]
+    fn test_format_writer_finish_empty() {
+        let mut writer = RoboWriter {
+            inner: Box::new(MockWriter::new("output.bag")),
+        };
+        assert!(writer.finish().is_ok());
+    }
+
+    #[test]
+    fn test_format_writer_as_any() {
+        let writer = RoboWriter {
+            inner: Box::new(MockWriter::new("output.bag")),
+        };
+        let any = writer.as_any();
+        assert!(any.is::<MockWriter>());
+    }
+
+    #[test]
+    fn test_format_writer_as_any_mut() {
+        let mut writer = RoboWriter {
+            inner: Box::new(MockWriter::new("output.bag")),
+        };
+        let any_mut = writer.as_any_mut();
+        assert!(any_mut.is::<MockWriter>());
+    }
+
+    // =========================================================================
+    // RoboWriter::create Error Paths
+    // =========================================================================
+
+    #[test]
+    fn test_robowriter_create_unknown_extension_error() {
+        // This would create a file, so we just verify the function exists
+        // The actual error handling is tested by integration tests
+        let path = "/tmp/nonexistent_test.xyz123";
+        let result = RoboWriter::create(path);
+        // Should fail because of unknown extension
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_robowriter_create_with_empty_extension_error() {
+        let path = "/tmp/test_no_ext";
+        let result = RoboWriter::create(path);
+        // Should fail because of no extension
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // WriterConfig Tests
+    // =========================================================================
+
+    #[test]
+    fn test_writer_config_default() {
+        let config = WriterConfig::default();
+        let _ = config; // Just verify it can be created
+    }
+
+    #[test]
+    fn test_writer_config_builder() {
+        let builder = WriterConfigBuilder::new();
+        let config = builder.build();
+        let _ = config; // Verify build works
+    }
+
+    // =========================================================================
+    // MockWriter Helper Tests
+    // =========================================================================
+
+    #[test]
+    fn test_mock_writer_new() {
+        let mock = MockWriter::new("test.bag");
+        assert_eq!(mock.path, "test.bag");
+        assert!(mock.channels.is_empty());
+        assert!(mock.messages.is_empty());
+    }
+
+    #[test]
+    fn test_mock_writer_add_channel() {
+        let mut mock = MockWriter::new("test.bag");
+        let id = mock.add_channel("/test", "test/Msg", "cdr", None).unwrap();
+        assert_eq!(id, 0);
+        assert_eq!(mock.channels.len(), 1);
+        assert_eq!(mock.channels[0].topic, "/test");
+        assert_eq!(mock.channels[0].message_type, "test/Msg");
+    }
+
+    #[test]
+    fn test_mock_writer_write() {
+        let mut mock = MockWriter::new("test.bag");
+        let msg = RawMessage {
+            channel_id: 0,
+            log_time: 1000,
+            publish_time: 1000,
+            data: vec![1, 2, 3],
+            sequence: None,
+        };
+        mock.write(&msg).unwrap();
+        assert_eq!(mock.messages.len(), 1);
+        assert_eq!(mock.messages[0].data, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_mock_writer_write_batch() {
+        let mut mock = MockWriter::new("test.bag");
+        let msg1 = RawMessage {
+            channel_id: 0,
+            log_time: 1000,
+            publish_time: 1000,
+            data: vec![1],
+            sequence: None,
+        };
+        let msg2 = RawMessage {
+            channel_id: 0,
+            log_time: 2000,
+            publish_time: 2000,
+            data: vec![2],
+            sequence: None,
+        };
+        mock.write_batch(&[msg1, msg2]).unwrap();
+        assert_eq!(mock.messages.len(), 2);
+    }
+
+    #[test]
+    fn test_mock_writer_finish() {
+        let mut mock = MockWriter::new("test.bag");
+        assert!(mock.finish().is_ok());
+    }
+
+    #[test]
+    fn test_mock_writer_message_count() {
+        let mock = MockWriter::new("test.bag");
+        assert_eq!(mock.message_count(), 0);
+    }
+
+    #[test]
+    fn test_mock_writer_channel_count() {
+        let mock = MockWriter::new("test.bag");
+        assert_eq!(mock.channel_count(), 0);
+    }
+
+    #[test]
+    fn test_mock_writer_as_any() {
+        let mock = MockWriter::new("test.bag");
+        let any = mock.as_any();
+        assert!(any.is::<MockWriter>());
+    }
+
+    #[test]
+    fn test_mock_writer_as_any_mut() {
+        let mut mock = MockWriter::new("test.bag");
+        let any_mut = mock.as_any_mut();
+        assert!(any_mut.is::<MockWriter>());
+    }
 }

@@ -282,3 +282,251 @@ mod tests {
         assert!(!Encoding::Json.is_cdr());
     }
 }
+
+// =========================================================================
+// CodecFactory::new() and Default tests
+// =========================================================================
+
+#[test]
+fn test_codec_factory_default() {
+    let factory = CodecFactory::default();
+    // Should have codecs registered
+    assert!(factory.get_codec(Encoding::Cdr).is_ok());
+    assert!(factory.get_codec(Encoding::Protobuf).is_ok());
+}
+
+// =========================================================================
+// CodecFactory::get_codec tests
+// =========================================================================
+
+#[test]
+fn test_codec_factory_get_codec_cdr() {
+    let factory = CodecFactory::new();
+    let codec = factory.get_codec(Encoding::Cdr);
+    assert!(codec.is_ok());
+    assert_eq!(codec.unwrap().encoding_type(), Encoding::Cdr);
+}
+
+#[test]
+fn test_codec_factory_get_codec_protobuf() {
+    let factory = CodecFactory::new();
+    let codec = factory.get_codec(Encoding::Protobuf);
+    assert!(codec.is_ok());
+    assert_eq!(codec.unwrap().encoding_type(), Encoding::Protobuf);
+}
+
+#[test]
+fn test_codec_factory_get_codec_json_not_supported() {
+    let factory = CodecFactory::new();
+    // JSON codec may not be implemented
+    let result = factory.get_codec(Encoding::Json);
+    // Result depends on implementation - just check it doesn't panic
+    let _ = result;
+}
+
+// =========================================================================
+// CodecFactory::get_codec_mut tests
+// =========================================================================
+
+#[test]
+fn test_codec_factory_get_codec_mut_cdr() {
+    let mut factory = CodecFactory::new();
+    let codec = factory.get_codec_mut(Encoding::Cdr);
+    assert!(codec.is_ok());
+    assert_eq!(codec.unwrap().encoding_type(), Encoding::Cdr);
+}
+
+#[test]
+fn test_codec_factory_get_codec_mut_protobuf() {
+    let mut factory = CodecFactory::new();
+    let codec = factory.get_codec_mut(Encoding::Protobuf);
+    assert!(codec.is_ok());
+    assert_eq!(codec.unwrap().encoding_type(), Encoding::Protobuf);
+}
+
+#[test]
+fn test_codec_factory_get_codec_mut_allows_encode() {
+    let mut factory = CodecFactory::new();
+    if let Ok(codec) = factory.get_codec_mut(Encoding::Cdr) {
+        // Just verify we can get a mutable reference and call methods
+        codec.reset();
+        assert_eq!(codec.encoding_type(), Encoding::Cdr);
+    }
+}
+
+// =========================================================================
+// detect_encoding case variations
+// =========================================================================
+
+#[test]
+fn test_detect_encoding_case_variants_cdr() {
+    let factory = CodecFactory::new();
+
+    assert_eq!(factory.detect_encoding("CDR", None), Encoding::Cdr);
+    assert_eq!(factory.detect_encoding("Cdr", None), Encoding::Cdr);
+    assert_eq!(factory.detect_encoding("CDR;ros2msg", None), Encoding::Cdr);
+}
+
+#[test]
+fn test_detect_encoding_case_variants_protobuf() {
+    let factory = CodecFactory::new();
+
+    assert_eq!(
+        factory.detect_encoding("PROTOBUF", None),
+        Encoding::Protobuf
+    );
+    assert_eq!(
+        factory.detect_encoding("Protobuf", None),
+        Encoding::Protobuf
+    );
+    assert_eq!(
+        factory.detect_encoding("PROTObuf", None),
+        Encoding::Protobuf
+    );
+}
+
+#[test]
+fn test_detect_encoding_case_variants_json() {
+    let factory = CodecFactory::new();
+
+    assert_eq!(factory.detect_encoding("JSON", None), Encoding::Json);
+    assert_eq!(factory.detect_encoding("Json", None), Encoding::Json);
+}
+
+#[test]
+fn test_detect_encoding_ros2_variants() {
+    let factory = CodecFactory::new();
+
+    assert_eq!(factory.detect_encoding("ros2idl", None), Encoding::Cdr);
+    assert_eq!(factory.detect_encoding("ROS2IDL", None), Encoding::Cdr);
+    assert_eq!(factory.detect_encoding("ros2idl;cdr", None), Encoding::Cdr);
+}
+
+// =========================================================================
+// detect_encoding with schema encoding fallback
+// =========================================================================
+
+#[test]
+fn test_detect_encoding_schema_fallback_protobuf() {
+    let factory = CodecFactory::new();
+    assert_eq!(
+        factory.detect_encoding("unknown", Some("protobuf")),
+        Encoding::Protobuf
+    );
+    assert_eq!(
+        factory.detect_encoding("unknown", Some("PROTOBUF")),
+        Encoding::Protobuf
+    );
+}
+
+#[test]
+fn test_detect_encoding_schema_fallback_ros2msg() {
+    let factory = CodecFactory::new();
+    assert_eq!(
+        factory.detect_encoding("unknown", Some("ros2msg")),
+        Encoding::Cdr
+    );
+    assert_eq!(
+        factory.detect_encoding("unknown", Some("ROS2MSG")),
+        Encoding::Cdr
+    );
+}
+
+#[test]
+fn test_detect_encoding_schema_fallback_rosidl() {
+    let factory = CodecFactory::new();
+    assert_eq!(
+        factory.detect_encoding("unknown", Some("rosidl")),
+        Encoding::Cdr
+    );
+    assert_eq!(
+        factory.detect_encoding("unknown", Some("ROSIDL")),
+        Encoding::Cdr
+    );
+}
+
+#[test]
+fn test_detect_encoding_schema_fallback_json() {
+    let factory = CodecFactory::new();
+    assert_eq!(
+        factory.detect_encoding("unknown", Some("json")),
+        Encoding::Json
+    );
+    assert_eq!(
+        factory.detect_encoding("unknown", Some("JSON")),
+        Encoding::Json
+    );
+}
+
+#[test]
+fn test_detect_encoding_schema_fallback_default() {
+    let factory = CodecFactory::new();
+    // Unknown encoding and no schema encoding should default to CDR
+    assert_eq!(factory.detect_encoding("unknown", None), Encoding::Cdr);
+    assert_eq!(
+        factory.detect_encoding("unknown", Some("unknown_schema")),
+        Encoding::Cdr
+    );
+}
+
+// =========================================================================
+// detect_encoding with combined encoding strings
+// =========================================================================
+
+#[test]
+fn test_detect_encoding_combined_strings() {
+    let factory = CodecFactory::new();
+
+    // CDR variants - CDR is checked first in implementation
+    assert_eq!(factory.detect_encoding("cdr;ros2msg", None), Encoding::Cdr);
+    assert_eq!(
+        factory.detect_encoding("ros2;protobuf", None),
+        Encoding::Cdr
+    );
+
+    // "protobuf;cdr" matches CDR first because CDR check comes before protobuf
+    // and "cdr" substring is found
+    assert_eq!(factory.detect_encoding("protobuf;cdr", None), Encoding::Cdr);
+}
+
+// =========================================================================
+// DynCodec trait tests
+// =========================================================================
+
+#[test]
+fn test_dyn_codec_is_send_sync() {
+    // Verify DynCodec trait has appropriate bounds
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Box<dyn DynCodec>>();
+}
+
+// =========================================================================
+// CodecFactory stores codecs correctly
+// =========================================================================
+
+#[test]
+fn test_codec_factory_stores_multiple_codecs() {
+    let factory = CodecFactory::new();
+
+    // Should be able to get different encodings
+    let cdr = factory.get_codec(Encoding::Cdr);
+    let proto = factory.get_codec(Encoding::Protobuf);
+
+    assert!(cdr.is_ok());
+    assert!(proto.is_ok());
+}
+
+#[test]
+fn test_codec_factory_returns_different_codecs() {
+    let factory = CodecFactory::new();
+
+    let cdr_encoding = factory.get_codec(Encoding::Cdr).unwrap().encoding_type();
+    let proto_encoding = factory
+        .get_codec(Encoding::Protobuf)
+        .unwrap()
+        .encoding_type();
+
+    assert_eq!(cdr_encoding, Encoding::Cdr);
+    assert_eq!(proto_encoding, Encoding::Protobuf);
+    assert_ne!(cdr_encoding, proto_encoding);
+}

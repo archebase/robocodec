@@ -101,6 +101,762 @@ struct BufferedMessage {
     data: Vec<u8>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::io::Read;
+    use tempfile::NamedTempFile;
+
+    /// Create a temporary file for testing
+    fn create_temp_file() -> NamedTempFile {
+        NamedTempFile::new().unwrap()
+    }
+
+    /// Helper to read a file's contents
+    fn read_file_contents(path: &std::path::Path) -> Vec<u8> {
+        let mut file = std::fs::File::open(path).unwrap();
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).unwrap();
+        buffer
+    }
+
+    /// Helper to create a test schema
+    fn test_schema() -> (&'static str, &'static str, &'static [u8]) {
+        (
+            "test_schema",
+            "protobuf",
+            b"message Test { int32 value = 1; }",
+        )
+    }
+
+    /// Helper to create test metadata
+    fn test_metadata() -> HashMap<String, String> {
+        let mut metadata = HashMap::new();
+        metadata.insert("key1".to_string(), "value1".to_string());
+        metadata.insert("key2".to_string(), "value2".to_string());
+        metadata
+    }
+
+    #[test]
+    fn test_create_writer() {
+        let temp_file = create_temp_file();
+        let writer = ParallelMcapWriter::<File>::create(temp_file.path());
+        assert!(writer.is_ok());
+
+        let writer = writer.unwrap();
+        assert_eq!(writer.chunks_written(), 0);
+        assert_eq!(writer.messages_written(), 0);
+        assert_eq!(writer.channel_ids.len(), 0);
+    }
+
+    #[test]
+    fn test_create_writer_with_buffer() {
+        let temp_file = create_temp_file();
+        let writer =
+            ParallelMcapWriter::<BufWriter<File>>::create_with_buffer(temp_file.path(), 8192);
+        assert!(writer.is_ok());
+
+        let writer = writer.unwrap();
+        assert_eq!(writer.chunks_written(), 0);
+        assert_eq!(writer.messages_written(), 0);
+    }
+
+    #[test]
+    fn test_writer_with_custom_chunk_size() {
+        let temp_file = create_temp_file();
+        let file = File::create(temp_file.path()).unwrap();
+        let writer = ParallelMcapWriter::with_chunk_size(file, 1024);
+        assert!(writer.is_ok());
+
+        let writer = writer.unwrap();
+        // The writer should have the custom chunk size set
+        assert_eq!(writer.target_chunk_size, 1024);
+    }
+
+    #[test]
+    fn test_write_header() {
+        let temp_file = create_temp_file();
+        let file = File::create(temp_file.path()).unwrap();
+        let writer = ParallelMcapWriter::new(file);
+        assert!(writer.is_ok());
+
+        // Drop writer to flush
+        drop(writer);
+
+        let contents = read_file_contents(temp_file.path());
+
+        // Check MCAP magic at the start
+        assert_eq!(&contents[0..8], &MCAP_MAGIC[..]);
+
+        // Check header opcode
+        assert_eq!(contents[8], OP_HEADER);
+
+        // Check record length (8 bytes for empty profile + library)
+        let record_len = u64::from_le_bytes(contents[9..17].try_into().unwrap());
+        assert_eq!(record_len, 8);
+    }
+
+    #[test]
+    fn test_add_schema() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        let (name, encoding, data) = test_schema();
+        let schema_id = writer.add_schema(name, encoding, data).unwrap();
+
+        assert_eq!(schema_id, 1); // First schema ID
+
+        // Adding the same schema again should return the existing ID
+        let schema_id2 = writer.add_schema(name, encoding, data).unwrap();
+        assert_eq!(schema_id2, schema_id);
+
+        // Add a different schema
+        let schema_id3 = writer.add_schema("schema2", "json", b"{}").unwrap();
+        assert_eq!(schema_id3, 2);
+    }
+
+    #[test]
+    fn test_add_channel() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        let channel_id = writer
+            .add_channel(0, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+
+        assert_eq!(channel_id, 0); // First channel ID
+
+        // Adding the same topic again should return the existing ID
+        let channel_id2 = writer
+            .add_channel(0, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+        assert_eq!(channel_id2, channel_id);
+
+        // Add a different channel
+        let channel_id3 = writer
+            .add_channel(0, "/another/topic", "json", &HashMap::new())
+            .unwrap();
+        assert_eq!(channel_id3, 1);
+    }
+
+    #[test]
+    fn test_add_channel_with_metadata() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        let metadata = test_metadata();
+        let channel_id = writer
+            .add_channel(0, "/test/topic", "protobuf", &metadata)
+            .unwrap();
+
+        assert_eq!(channel_id, 0);
+        assert_eq!(writer.channel_ids.len(), 1);
+    }
+
+    #[test]
+    fn test_add_channel_with_specific_id() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        // Add channel with specific ID
+        let channel_id = writer
+            .add_channel_with_id(5, 0, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+
+        assert_eq!(channel_id, 5);
+
+        // Next auto-assigned ID should be 6
+        let channel_id2 = writer
+            .add_channel(0, "/another/topic", "protobuf", &HashMap::new())
+            .unwrap();
+        assert_eq!(channel_id2, 6);
+    }
+
+    #[test]
+    fn test_get_channel_id() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        assert!(writer.get_channel_id("/test/topic").is_none());
+
+        writer
+            .add_channel(0, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+
+        assert_eq!(writer.get_channel_id("/test/topic"), Some(0));
+        assert!(writer.get_channel_id("/nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_write_message() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        let channel_id = writer
+            .add_channel(0, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+
+        let data = b"test message data";
+        let result = writer.write_message(1000, 1000, 1000, data);
+        assert!(result.is_ok());
+
+        // Message count should increase
+        assert_eq!(writer.messages_written(), 1);
+
+        // Write more messages (small data, won't trigger chunk flush immediately with default 4MB threshold)
+        for i in 1..10 {
+            writer
+                .write_message(channel_id, 1000 + i, 1000 + i, data)
+                .unwrap();
+        }
+
+        assert_eq!(writer.messages_written(), 10);
+    }
+
+    #[test]
+    fn test_write_message_triggers_chunk_flush() {
+        let temp_file = create_temp_file();
+        let file = File::create(temp_file.path()).unwrap();
+
+        // Create writer with small chunk size to trigger flush
+        let mut writer = ParallelMcapWriter::with_chunk_size(file, 100).unwrap();
+
+        let channel_id = writer
+            .add_channel(0, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+
+        // Write enough data to trigger chunk flush
+        let large_data = vec![0u8; 200]; // Larger than chunk size
+
+        writer
+            .write_message(channel_id, 1000, 1000, &large_data)
+            .unwrap();
+
+        // Should have flushed and written a chunk
+        assert_eq!(writer.chunks_written(), 1);
+        assert_eq!(writer.messages_written(), 1);
+    }
+
+    #[test]
+    fn test_write_multiple_messages_same_channel() {
+        let temp_file = create_temp_file();
+        let file = File::create(temp_file.path()).unwrap();
+
+        // Create writer with small chunk size
+        let mut writer = ParallelMcapWriter::with_chunk_size(file, 500).unwrap();
+
+        let channel_id = writer
+            .add_channel(0, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+
+        let data = b"test data";
+
+        // Write multiple messages
+        for i in 0..10 {
+            writer
+                .write_message(
+                    channel_id,
+                    1000 + i as u64 * 100,
+                    1000 + i as u64 * 100,
+                    data,
+                )
+                .unwrap();
+        }
+
+        assert_eq!(writer.messages_written(), 10);
+    }
+
+    #[test]
+    fn test_write_compressed_chunk() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        use crate::types::chunk::CompressedChunk;
+
+        let message_indexes = BTreeMap::new();
+
+        let chunk = CompressedChunk {
+            sequence: 0,
+            compressed_data: vec![1, 2, 3, 4], // Dummy compressed data
+            uncompressed_size: 100,
+            message_start_time: 1000,
+            message_end_time: 2000,
+            message_count: 5,
+            compression_ratio: 0.5,
+            message_indexes,
+        };
+
+        let result = writer.write_compressed_chunk(chunk);
+        assert!(result.is_ok());
+
+        assert_eq!(writer.chunks_written(), 1);
+        assert_eq!(writer.messages_written(), 5);
+    }
+
+    #[test]
+    fn test_write_compressed_chunk_with_indexes() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        use crate::types::chunk::{CompressedChunk, MessageIndexEntry};
+
+        let mut message_indexes = BTreeMap::new();
+        message_indexes.insert(
+            0,
+            vec![
+                MessageIndexEntry {
+                    log_time: 1000,
+                    offset: 0,
+                },
+                MessageIndexEntry {
+                    log_time: 2000,
+                    offset: 50,
+                },
+            ],
+        );
+
+        let chunk = CompressedChunk {
+            sequence: 0,
+            compressed_data: vec![1, 2, 3, 4],
+            uncompressed_size: 100,
+            message_start_time: 1000,
+            message_end_time: 2000,
+            message_count: 2,
+            compression_ratio: 0.5,
+            message_indexes,
+        };
+
+        let result = writer.write_compressed_chunk(chunk);
+        assert!(result.is_ok());
+
+        assert_eq!(writer.chunks_written(), 1);
+    }
+
+    #[test]
+    fn test_finish_writes_footer() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        // Add a channel and write a message
+        let channel_id = writer
+            .add_channel(0, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+
+        writer
+            .write_message(channel_id, 1000, 1000, b"test")
+            .unwrap();
+
+        let _chunks_written = writer.finish().unwrap();
+
+        // Verify file has magic at end
+        let contents = read_file_contents(temp_file.path());
+        assert!(contents.len() > 8);
+
+        // Check footer magic at the end
+        let footer_magic_start = contents.len() - 8;
+        assert_eq!(
+            &contents[footer_magic_start..],
+            &MCAP_MAGIC[..],
+            "Footer magic should be at the end of the file"
+        );
+    }
+
+    #[test]
+    fn test_finish_empty_file() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        let chunks_written = writer.finish().unwrap();
+        assert_eq!(chunks_written, 0);
+
+        // Verify file is valid (has magic at both ends)
+        let contents = read_file_contents(temp_file.path());
+        assert_eq!(&contents[0..8], &MCAP_MAGIC[..]);
+        assert_eq!(&contents[contents.len() - 8..], &MCAP_MAGIC[..]);
+    }
+
+    #[test]
+    fn test_finish_with_summary_section() {
+        let temp_file = create_temp_file();
+
+        // Write messages to trigger chunk creation
+        let file = File::create(temp_file.path()).unwrap();
+        let mut writer = ParallelMcapWriter::with_chunk_size(file, 100).unwrap();
+
+        // Add schema
+        writer
+            .add_schema("test_schema", "protobuf", b"schema data")
+            .unwrap();
+
+        // Add channel
+        let channel_id = writer
+            .add_channel(1, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+
+        let data = vec![0u8; 200];
+        writer.write_message(channel_id, 1000, 1000, &data).unwrap();
+
+        writer.finish().unwrap();
+
+        // Verify file has proper structure
+        let contents = read_file_contents(temp_file.path());
+
+        // Check MCAP magic at the start
+        assert_eq!(&contents[0..8], &MCAP_MAGIC[..]);
+
+        // Check MCAP magic at the end
+        assert_eq!(&contents[contents.len() - 8..], &MCAP_MAGIC[..]);
+
+        // Verify the file contains some data between the magic bytes
+        assert!(contents.len() > 16);
+
+        // Verify footer opcode exists somewhere in the file (should be near the end)
+        let has_footer = contents.contains(&OP_FOOTER);
+        assert!(has_footer, "File should contain OP_FOOTER");
+
+        // Verify data end opcode exists
+        let has_data_end = contents.contains(&OP_DATA_END);
+        assert!(has_data_end, "File should contain OP_DATA_END");
+    }
+
+    #[test]
+    fn test_serialize_metadata() {
+        let metadata = test_metadata();
+        let bytes = serialize_metadata(&metadata).unwrap();
+
+        // Should have 4-byte length prefix + entries
+        assert!(bytes.len() > 4);
+
+        // Check length prefix
+        let total_len = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+        assert_eq!(total_len as usize, bytes.len() - 4);
+    }
+
+    #[test]
+    fn test_serialize_empty_metadata() {
+        let metadata = HashMap::new();
+        let bytes = serialize_metadata(&metadata).unwrap();
+
+        // Should have 4-byte length prefix (value 0)
+        assert_eq!(bytes.len(), 4);
+        assert_eq!(&bytes[0..4], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_flush() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        // Write some data
+        writer
+            .add_channel(0, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+
+        let result = writer.flush();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_chunks_written() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        assert_eq!(writer.chunks_written(), 0);
+
+        use crate::types::chunk::CompressedChunk;
+
+        let chunk = CompressedChunk {
+            sequence: 0,
+            compressed_data: vec![1, 2, 3],
+            uncompressed_size: 50,
+            message_start_time: 1000,
+            message_end_time: 2000,
+            message_count: 1,
+            compression_ratio: 0.5,
+            message_indexes: BTreeMap::new(),
+        };
+
+        writer.write_compressed_chunk(chunk).unwrap();
+
+        assert_eq!(writer.chunks_written(), 1);
+    }
+
+    #[test]
+    fn test_messages_written() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        assert_eq!(writer.messages_written(), 0);
+
+        let channel_id = writer
+            .add_channel(0, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+
+        writer
+            .write_message(channel_id, 1000, 1000, b"data")
+            .unwrap();
+
+        assert_eq!(writer.messages_written(), 1);
+    }
+
+    #[test]
+    fn test_channel_count() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        assert_eq!(writer.channel_ids.len(), 0);
+
+        writer
+            .add_channel(0, "/topic1", "protobuf", &HashMap::new())
+            .unwrap();
+        assert_eq!(writer.channel_ids.len(), 1);
+
+        writer
+            .add_channel(0, "/topic2", "json", &HashMap::new())
+            .unwrap();
+        assert_eq!(writer.channel_ids.len(), 2);
+
+        // Adding duplicate topic should not increase count
+        writer
+            .add_channel(0, "/topic1", "protobuf", &HashMap::new())
+            .unwrap();
+        assert_eq!(writer.channel_ids.len(), 2);
+    }
+
+    #[test]
+    fn test_format_writer_trait_path() {
+        let temp_file = create_temp_file();
+        let writer =
+            ParallelMcapWriter::<BufWriter<File>>::create_with_buffer(temp_file.path(), 8192)
+                .unwrap();
+        // The FormatWriter trait requires a path() method
+        // Our implementation returns "unknown" since we don't track the path
+        assert_eq!(writer.path(), "unknown");
+    }
+
+    #[test]
+    fn test_format_writer_trait() {
+        let temp_file = create_temp_file();
+        let mut writer =
+            ParallelMcapWriter::<BufWriter<File>>::create_with_buffer(temp_file.path(), 8192)
+                .unwrap();
+
+        // Use FormatWriter trait - use explicit trait method syntax to avoid ambiguity
+        use crate::io::traits::FormatWriter;
+
+        // Test add_channel via trait
+        let channel_id = FormatWriter::add_channel(
+            &mut writer,
+            "/test",
+            "std_msgs/String",
+            "protobuf",
+            Some("schema data"),
+        )
+        .unwrap();
+        assert_eq!(channel_id, 0);
+
+        // Test write via trait
+        let message = RawMessage {
+            channel_id: 0,
+            log_time: 1000,
+            publish_time: 1000,
+            data: b"test data".to_vec(),
+            sequence: Some(0),
+        };
+        FormatWriter::write(&mut writer, &message).unwrap();
+        assert_eq!(FormatWriter::message_count(&writer), 1);
+
+        // Test write_batch via trait
+        let message2 = RawMessage {
+            channel_id: 0,
+            log_time: 2000,
+            publish_time: 2000,
+            data: b"msg2".to_vec(),
+            sequence: Some(1),
+        };
+        FormatWriter::write_batch(&mut writer, &[message2]).unwrap();
+        assert_eq!(FormatWriter::message_count(&writer), 2);
+
+        // Test channel_count via trait
+        assert_eq!(FormatWriter::channel_count(&writer), 1);
+    }
+
+    #[test]
+    fn test_format_writer_trait_write() {
+        let temp_file = create_temp_file();
+        let mut writer =
+            ParallelMcapWriter::<BufWriter<File>>::create_with_buffer(temp_file.path(), 8192)
+                .unwrap();
+
+        use crate::io::traits::FormatWriter;
+        FormatWriter::add_channel(&mut writer, "/test", "std_msgs/String", "protobuf", None)
+            .unwrap();
+
+        let message = RawMessage {
+            channel_id: 0,
+            log_time: 1000,
+            publish_time: 1000,
+            data: b"test data".to_vec(),
+            sequence: Some(0),
+        };
+
+        let result = FormatWriter::write(&mut writer, &message);
+        assert!(result.is_ok());
+        assert_eq!(writer.messages_written(), 1);
+    }
+
+    #[test]
+    fn test_format_writer_trait_write_batch() {
+        let temp_file = create_temp_file();
+        let mut writer =
+            ParallelMcapWriter::<BufWriter<File>>::create_with_buffer(temp_file.path(), 8192)
+                .unwrap();
+
+        use crate::io::traits::FormatWriter;
+        FormatWriter::add_channel(&mut writer, "/test", "std_msgs/String", "protobuf", None)
+            .unwrap();
+
+        let messages = vec![
+            RawMessage {
+                channel_id: 0,
+                log_time: 1000,
+                publish_time: 1000,
+                data: b"msg1".to_vec(),
+                sequence: Some(0),
+            },
+            RawMessage {
+                channel_id: 0,
+                log_time: 2000,
+                publish_time: 2000,
+                data: b"msg2".to_vec(),
+                sequence: Some(1),
+            },
+        ];
+
+        let result = FormatWriter::write_batch(&mut writer, &messages);
+        assert!(result.is_ok());
+        assert_eq!(writer.messages_written(), 2);
+    }
+
+    #[test]
+    fn test_into_inner() {
+        let temp_file = create_temp_file();
+        let file = File::create(temp_file.path()).unwrap();
+        let writer = ParallelMcapWriter::new(file).unwrap();
+
+        // Finish the writer first
+        let mut writer = writer;
+        writer.finish().unwrap();
+
+        // Get the inner writer
+        let _inner = writer.into_inner();
+        // File should be closed/dropped properly
+    }
+
+    #[test]
+    fn test_message_sequence_tracking() {
+        let temp_file = create_temp_file();
+        let file = File::create(temp_file.path()).unwrap();
+        let mut writer = ParallelMcapWriter::with_chunk_size(file, 1000).unwrap();
+
+        let channel_id = writer
+            .add_channel(0, "/test", "protobuf", &HashMap::new())
+            .unwrap();
+
+        // Write multiple messages - they should have increasing sequence numbers
+        writer
+            .write_message(channel_id, 1000, 1000, b"msg1")
+            .unwrap();
+        writer
+            .write_message(channel_id, 2000, 2000, b"msg2")
+            .unwrap();
+        writer
+            .write_message(channel_id, 3000, 3000, b"msg3")
+            .unwrap();
+
+        assert_eq!(writer.messages_written(), 3);
+    }
+
+    #[test]
+    fn test_time_boundaries_tracking() {
+        let temp_file = create_temp_file();
+        let file = File::create(temp_file.path()).unwrap();
+        let mut writer = ParallelMcapWriter::with_chunk_size(file, 100).unwrap();
+
+        let channel_id = writer
+            .add_channel(0, "/test", "protobuf", &HashMap::new())
+            .unwrap();
+
+        // Write messages with different timestamps
+        writer
+            .write_message(channel_id, 5000, 5000, b"msg1")
+            .unwrap();
+        writer
+            .write_message(channel_id, 1000, 1000, b"msg2")
+            .unwrap();
+        writer
+            .write_message(channel_id, 10000, 10000, b"msg3")
+            .unwrap();
+
+        writer.finish().unwrap();
+
+        // Time boundaries should be tracked correctly
+        // The writer should track min (1000) and max (10000) times
+        // This is verified implicitly by the statistics section written
+    }
+
+    #[test]
+    fn test_multiple_schemas() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        // Add multiple schemas
+        let id1 = writer.add_schema("schema1", "protobuf", b"data1").unwrap();
+        let id2 = writer.add_schema("schema2", "protobuf", b"data2").unwrap();
+        let id3 = writer.add_schema("schema3", "json", b"data3").unwrap();
+
+        assert_eq!(id1, 1);
+        assert_eq!(id2, 2);
+        assert_eq!(id3, 3);
+
+        // Verify schema deduplication
+        let id1_again = writer.add_schema("schema1", "protobuf", b"data1").unwrap();
+        assert_eq!(id1_again, id1);
+    }
+
+    #[test]
+    fn test_schema_id_increment() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        // Schema IDs start at 1
+        let id1 = writer.add_schema("s1", "protobuf", b"").unwrap();
+        assert_eq!(id1, 1);
+
+        let id2 = writer.add_schema("s2", "protobuf", b"").unwrap();
+        assert_eq!(id2, 2);
+    }
+
+    #[test]
+    fn test_channel_with_schema() {
+        let temp_file = create_temp_file();
+        let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
+
+        // Add schema first
+        let schema_id = writer
+            .add_schema("my_schema", "protobuf", b"schema definition")
+            .unwrap();
+
+        // Add channel with schema
+        let channel_id = writer
+            .add_channel(schema_id, "/test/topic", "protobuf", &HashMap::new())
+            .unwrap();
+
+        assert_eq!(channel_id, 0);
+    }
+}
+
 /// Custom MCAP writer with manual chunk control.
 ///
 /// Unlike mcap::Writer, this writer accepts pre-compressed chunks

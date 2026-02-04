@@ -417,3 +417,238 @@ mod tests {
         );
     }
 }
+
+// =========================================================================
+// SchemaFormat enum tests
+// =========================================================================
+
+#[test]
+fn test_schema_format_classic_msg() {
+    let format = SchemaFormat::ClassicMsg;
+    assert!(matches!(format, SchemaFormat::ClassicMsg));
+}
+
+#[test]
+fn test_schema_format_omg_idl() {
+    let format = SchemaFormat::OmgIdl;
+    assert!(matches!(format, SchemaFormat::OmgIdl));
+}
+
+#[test]
+fn test_schema_format_ros2_idl() {
+    let format = SchemaFormat::Ros2Idl;
+    assert!(matches!(format, SchemaFormat::Ros2Idl));
+}
+
+#[test]
+fn test_schema_format_clone() {
+    let format = SchemaFormat::ClassicMsg;
+    let cloned = format;
+    assert_eq!(format, cloned);
+}
+
+#[test]
+fn test_schema_format_copy() {
+    let format = SchemaFormat::OmgIdl;
+    let copied = format;
+    assert_eq!(format, copied);
+}
+
+#[test]
+fn test_schema_format_equality() {
+    assert_eq!(SchemaFormat::ClassicMsg, SchemaFormat::ClassicMsg);
+    assert_ne!(SchemaFormat::ClassicMsg, SchemaFormat::OmgIdl);
+}
+
+#[test]
+fn test_schema_format_debug() {
+    let format = SchemaFormat::Ros2Idl;
+    let debug_str = format!("{:?}", format);
+    assert!(debug_str.contains("Ros2Idl"));
+}
+
+// =========================================================================
+// parse_schema_with_encoding tests
+// =========================================================================
+
+#[test]
+fn test_parse_schema_with_encoding_ros1msg() {
+    let schema = parse_schema_with_encoding("TestMsg", "int32 value", "ros1msg").unwrap();
+    let msg_type = schema.get_type("TestMsg").unwrap();
+    assert_eq!(msg_type.fields.len(), 1);
+}
+
+#[test]
+fn test_parse_schema_with_encoding_ros2msg() {
+    let schema = parse_schema_with_encoding("TestMsg", "int32 value", "ros2msg").unwrap();
+    let msg_type = schema.get_type("TestMsg").unwrap();
+    assert_eq!(msg_type.fields.len(), 1);
+}
+
+#[test]
+fn test_parse_schema_with_encoding_cdr() {
+    let schema = parse_schema_with_encoding("TestMsg", "int32 value", "cdr").unwrap();
+    let msg_type = schema.get_type("TestMsg").unwrap();
+    assert_eq!(msg_type.fields.len(), 1);
+}
+
+#[test]
+fn test_parse_schema_with_encoding_case_insensitive() {
+    // Encoding should be case-insensitive
+    let schema = parse_schema_with_encoding("TestMsg", "int32 value", "ROS1MSG").unwrap();
+    let msg_type = schema.get_type("TestMsg").unwrap();
+    assert_eq!(msg_type.fields.len(), 1);
+}
+
+// =========================================================================
+// detect_format ROS2 IDL format
+// =========================================================================
+
+#[test]
+fn test_detect_format_ros2_idl_with_separator() {
+    let idl = "================================================================================\nIDL: std_msgs/msg/Header\nstruct Header {\n    uint32 seq;\n};";
+    assert_eq!(detect_format(idl), SchemaFormat::Ros2Idl);
+}
+
+#[test]
+fn test_detect_format_ros2_idl_direct_idl_header() {
+    let idl = "IDL: std_msgs/msg/Header\nstruct Header {\n    uint32 seq;\n};";
+    assert_eq!(detect_format(idl), SchemaFormat::Ros2Idl);
+}
+
+#[test]
+fn test_detect_format_ros2_idl_short_separator() {
+    // Even a short separator with IDL: header triggers ROS2 IDL detection
+    // because the IDL: check doesn't require a long separator
+    let idl = "==\nIDL: std_msgs/msg/Header\nstruct Header {\n    uint32 seq;\n};";
+    assert_eq!(detect_format(idl), SchemaFormat::Ros2Idl);
+}
+
+#[test]
+fn test_detect_format_idl_contains_but_no_separator() {
+    // "idl:" in content but not "IDL:" is case-sensitive
+    let idl = "struct Foo { stringidl idl; };";
+    assert_eq!(detect_format(idl), SchemaFormat::OmgIdl); // Starts with struct
+}
+
+#[test]
+fn test_detect_format_module_keyword() {
+    let idl = "module Foo {\n    struct Bar { int32 x; };\n};";
+    assert_eq!(detect_format(idl), SchemaFormat::OmgIdl);
+}
+
+#[test]
+fn test_detect_format_struct_keyword() {
+    let idl = "struct Foo { int32 x; };";
+    assert_eq!(detect_format(idl), SchemaFormat::OmgIdl);
+}
+
+#[test]
+fn test_detect_format_leading_spaces() {
+    // Leading spaces before struct should still detect as OmgIdl
+    let idl = "   struct Foo { int32 x; };";
+    assert_eq!(detect_format(idl), SchemaFormat::OmgIdl);
+}
+
+#[test]
+fn test_detect_format_empty_definition() {
+    assert_eq!(detect_format(""), SchemaFormat::ClassicMsg);
+}
+
+// =========================================================================
+// parse_ros2_idl_with_encoding error path
+// =========================================================================
+
+#[test]
+fn test_parse_ros2_idl_empty_content() {
+    let idl = "================================================================================\nIDL: test/Msg\n";
+    let result = parse_ros2_idl("TestMsg", idl);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_ros2_idl_no_struct_after_stripping() {
+    let idl = "================================================================================\nIDL: test/Msg\nSome text but no struct keyword";
+    let result = parse_ros2_idl("TestMsg", idl);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_parse_ros2_idl_with_encoding_empty_content() {
+    let idl = "================================================================================\nIDL: test/Msg\n";
+    let result = parse_schema_with_encoding("TestMsg", idl, "ros2msg");
+    assert!(result.is_err());
+}
+
+// =========================================================================
+// SchemaParser tests
+// =========================================================================
+
+#[test]
+fn test_schema_parser_parse_auto() {
+    let schema = SchemaParser::parse_auto("TestMsg", "int32 value\nstring name").unwrap();
+    let msg_type = schema.get_type("TestMsg").unwrap();
+    assert_eq!(msg_type.fields.len(), 2);
+}
+
+#[test]
+fn test_schema_parser_parse_auto_idl() {
+    let idl = "struct Point { double x; double y; };";
+    let schema = SchemaParser::parse_auto("Point", idl).unwrap();
+    let msg_type = schema.get_type("Point").unwrap();
+    assert_eq!(msg_type.fields.len(), 2);
+}
+
+// =========================================================================
+// Edge cases
+// =========================================================================
+
+#[test]
+fn test_parse_schema_empty_definition() {
+    let result = parse_schema("TestMsg", "");
+    // Empty definition parses but has no fields
+    assert!(result.is_ok());
+    let schema = result.unwrap();
+    let msg_type = schema.get_type("TestMsg").unwrap();
+    assert_eq!(msg_type.fields.len(), 0);
+}
+
+#[test]
+fn test_parse_schema_only_whitespace() {
+    let schema = parse_schema("TestMsg", "   \n   \n\t").unwrap();
+    let msg_type = schema.get_type("TestMsg").unwrap();
+    assert_eq!(msg_type.fields.len(), 0);
+}
+
+#[test]
+fn test_parse_schema_only_comments() {
+    let schema = parse_schema("TestMsg", "# This is a comment\n# Another comment").unwrap();
+    let msg_type = schema.get_type("TestMsg").unwrap();
+    assert_eq!(msg_type.fields.len(), 0);
+}
+
+// =========================================================================
+// Builtin types override tests
+// =========================================================================
+
+#[test]
+fn test_builtin_types_not_override_user_schema() {
+    // If user defines their own Time type, it should take precedence
+    let schema = parse_schema("builtin_interfaces/Time", "int64 my_custom_field").unwrap();
+    let time = schema.get_type("builtin_interfaces/Time").unwrap();
+    // User's Time should have their custom field
+    assert_eq!(time.fields.len(), 1);
+    assert_eq!(time.fields[0].name, "my_custom_field");
+}
+
+// =========================================================================
+// IDL: header in middle of content
+// =========================================================================
+
+#[test]
+fn test_detect_format_idl_header_in_middle() {
+    // IDL: in the middle of a line should still trigger ROS2 IDL detection
+    // if there's also a separator line
+    let idl = "================================================================================\nIDL: test/Msg\nstruct Foo { int32 x; };";
+    assert_eq!(detect_format(idl), SchemaFormat::Ros2Idl);
+}

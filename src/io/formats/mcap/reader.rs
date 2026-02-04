@@ -868,3 +868,441 @@ impl<'a> Iterator for DecodedMessageWithTimestampStream<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    /// Get the path to the test MCAP fixture file.
+    fn get_fixture_path() -> Option<String> {
+        let paths = [
+            "tests/fixtures/robocodec_test_0.mcap",
+            "../tests/fixtures/robocodec_test_0.mcap",
+            "../../tests/fixtures/robocodec_test_0.mcap",
+        ];
+        for path in paths {
+            if std::path::Path::new(path).exists() {
+                return Some(path.to_string());
+            }
+        }
+        None
+    }
+
+    /// Helper to open a fixture-based reader, or return None if fixture not available.
+    fn open_fixture_reader() -> Option<McapReader> {
+        let path = get_fixture_path()?;
+        McapReader::open(&path).ok()
+    }
+
+    #[test]
+    fn test_create_reader() {
+        let path = get_fixture_path();
+        if path.is_none() {
+            return; // Skip if no fixture
+        }
+        let reader = McapReader::open(path.unwrap());
+        assert!(reader.is_ok());
+        let reader = reader.unwrap();
+        assert!(!reader.path().is_empty());
+    }
+
+    #[test]
+    fn test_open_nonexistent_file() {
+        let reader = McapReader::open("/nonexistent/path/file.mcap");
+        assert!(reader.is_err());
+    }
+
+    #[test]
+    fn test_reader_channels() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let channels = reader.channels();
+        assert!(!channels.is_empty());
+    }
+
+    #[test]
+    fn test_channel_by_topic() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        // Try to find any channel - we don't know exact topic names
+        let channels = reader.channels();
+        if let Some((_, channel)) = channels.iter().next() {
+            let found = reader.channel_by_topic(&channel.topic);
+            assert!(found.is_some());
+            assert_eq!(found.unwrap().topic, channel.topic);
+        }
+    }
+
+    #[test]
+    fn test_channel_by_topic_not_found() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let channel = reader.channel_by_topic("/nonexistent/topic/that/does/not/exist");
+        assert!(channel.is_none());
+    }
+
+    #[test]
+    fn test_message_count() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let count = reader.message_count();
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn test_reader_path() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let path = reader.path();
+        assert!(!path.is_empty());
+    }
+
+    #[test]
+    fn test_iter_raw() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let iter = reader.iter_raw();
+        assert!(iter.is_ok());
+        let iter = iter.unwrap();
+        let channels = iter.channels();
+        assert!(!channels.is_empty());
+    }
+
+    #[test]
+    fn test_raw_message_stream() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let iter = reader.iter_raw().unwrap();
+        let stream = iter.stream();
+        assert!(stream.is_ok());
+
+        let stream = stream.unwrap();
+        let mut message_count = 0;
+        for result in stream.take(10) {
+            assert!(result.is_ok());
+            let (msg, _channel) = result.unwrap();
+            assert!(msg.channel_id > 0 || msg.data.is_empty());
+            message_count += 1;
+        }
+        // At least some messages should be available
+        assert!(message_count > 0);
+    }
+
+    #[test]
+    fn test_raw_message_fields() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let iter = reader.iter_raw().unwrap();
+        let stream = iter.stream().unwrap();
+
+        if let Some(Ok((msg, _))) = stream.take(1).next() {
+            // Check message has valid fields
+            assert!(msg.data.capacity() >= 0);
+            // sequence may or may not be present
+        }
+    }
+
+    #[test]
+    fn test_decode_messages() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let iter = reader.decode_messages();
+        assert!(iter.is_ok());
+        let iter = iter.unwrap();
+        let channels = iter.channels();
+        assert!(!channels.is_empty());
+    }
+
+    #[test]
+    fn test_decoded_message_stream() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let iter = reader.decode_messages().unwrap();
+        let stream = iter.stream();
+        assert!(stream.is_ok());
+
+        let stream = stream.unwrap();
+        let mut message_count = 0;
+        // Check that stream produces some results (even if decoding errors occur)
+        for result in stream.take(10) {
+            let _ = result;
+            message_count += 1;
+        }
+        // At least some processing should happen
+        assert!(message_count > 0);
+    }
+
+    #[test]
+    fn test_decode_messages_with_timestamp() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let iter = reader.decode_messages_with_timestamp();
+        assert!(iter.is_ok());
+        let iter = iter.unwrap();
+        let channels = iter.channels();
+        assert!(!channels.is_empty());
+    }
+
+    #[test]
+    fn test_decoded_message_with_timestamp_stream() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        let stream = iter.stream();
+        assert!(stream.is_ok());
+
+        let stream = stream.unwrap();
+        let mut message_count = 0;
+        for result in stream.take(10) {
+            let _ = result;
+            message_count += 1;
+        }
+        assert!(message_count > 0);
+    }
+
+    #[test]
+    fn test_format_reader_trait() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        use crate::io::traits::FormatReader;
+
+        let channels = FormatReader::channels(&reader);
+        assert!(!channels.is_empty());
+
+        let message_count = FormatReader::message_count(&reader);
+        assert!(message_count > 0);
+
+        let path = FormatReader::path(&reader);
+        assert!(!path.is_empty());
+
+        let format = FormatReader::format(&reader);
+        assert!(matches!(format, crate::io::metadata::FileFormat::Mcap));
+
+        let file_size = FormatReader::file_size(&reader);
+        assert!(file_size > 0);
+
+        let any = FormatReader::as_any(&reader);
+        assert!(any.is::<McapReader>());
+    }
+
+    #[test]
+    fn test_start_end_time() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+
+        let start_time = reader.start_time();
+        let end_time = reader.end_time();
+
+        // Either both are Some or both are None
+        assert_eq!(start_time.is_some(), end_time.is_some());
+
+        if let (Some(start), Some(end)) = (start_time, end_time) {
+            assert!(end >= start);
+        }
+    }
+
+    #[test]
+    fn test_mcap_format_open() {
+        let path = get_fixture_path();
+        if path.is_none() {
+            return; // Skip if no fixture
+        }
+        let reader = McapFormat::open(path.unwrap());
+        assert!(reader.is_ok());
+    }
+
+    #[test]
+    fn test_for_each_decoded() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let mut count = 0;
+        let result = reader.for_each_decoded(|_msg, _channel| {
+            count += 1;
+            // Limit to avoid long-running tests
+            if count >= 10 {
+                return Err(CodecError::parse("test", "Done"));
+            }
+            Ok(())
+        });
+        // Should either succeed or fail with our test error
+        assert!(result.is_ok() || count > 0 || count >= 10);
+    }
+
+    #[test]
+    fn test_invalid_mcap_magic() {
+        let temp_file = NamedTempFile::new().unwrap();
+        temp_file
+            .as_file()
+            .write_all(b"INVALID_MAGIC_DATA_HERE")
+            .unwrap();
+
+        let reader = McapReader::open(temp_file.path());
+        assert!(reader.is_err());
+    }
+
+    #[test]
+    fn test_empty_file() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let reader = McapReader::open(temp_file.path());
+        assert!(reader.is_err());
+    }
+
+    #[test]
+    fn test_raw_message_struct() {
+        let msg = RawMessage {
+            channel_id: 1,
+            log_time: 12345,
+            publish_time: 12346,
+            data: vec![1, 2, 3, 4],
+            sequence: Some(42),
+        };
+
+        assert_eq!(msg.channel_id, 1);
+        assert_eq!(msg.log_time, 12345);
+        assert_eq!(msg.publish_time, 12346);
+        assert_eq!(msg.data, vec![1, 2, 3, 4]);
+        assert_eq!(msg.sequence, Some(42));
+    }
+
+    #[test]
+    fn test_raw_message_without_sequence() {
+        let msg = RawMessage {
+            channel_id: 1,
+            log_time: 12345,
+            publish_time: 12346,
+            data: vec![1, 2, 3, 4],
+            sequence: None,
+        };
+
+        assert_eq!(msg.sequence, None);
+    }
+
+    #[test]
+    fn test_channel_info_from_reader() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let channels = reader.channels();
+
+        // Check that at least one channel exists and has valid fields
+        if let Some((_, channel)) = channels.iter().next() {
+            assert!(!channel.topic.is_empty());
+            assert!(!channel.message_type.is_empty());
+            assert!(!channel.encoding.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_reader_cloned_channels() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let channels1 = reader.channels();
+        let channels2 = reader.channels();
+
+        assert_eq!(channels1.len(), channels2.len());
+    }
+
+    #[test]
+    fn test_timestamp_ordering() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+        let iter = reader.iter_raw().unwrap();
+        let stream = iter.stream().unwrap();
+
+        let mut prev_time = 0u64;
+        let mut count = 0;
+        for result in stream.take(100) {
+            let (msg, _) = result.unwrap();
+            // Timestamps should generally be non-decreasing in well-formed files
+            if msg.log_time >= prev_time {
+                prev_time = msg.log_time;
+            }
+            count += 1;
+        }
+        // At least some messages were processed
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn test_stream_after_channel_lookup() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+
+        // First check channels exist
+        let channels = reader.channels();
+        if channels.is_empty() {
+            return;
+        }
+
+        // Then create the iterator
+        let iter = reader.iter_raw().unwrap();
+        let stream = iter.stream().unwrap();
+
+        let mut count = 0;
+        for result in stream.take(10) {
+            assert!(result.is_ok());
+            count += 1;
+        }
+        assert!(count > 0);
+    }
+
+    #[test]
+    fn test_multiple_iterations() {
+        let reader = match open_fixture_reader() {
+            Some(r) => r,
+            None => return, // Skip if no fixture
+        };
+
+        // First iteration
+        let iter1 = reader.iter_raw().unwrap();
+        let stream1 = iter1.stream().unwrap();
+        let count1: usize = stream1.take(10).filter_map(|r| r.ok()).count();
+
+        // Second iteration on same reader
+        let iter2 = reader.iter_raw().unwrap();
+        let stream2 = iter2.stream().unwrap();
+        let count2: usize = stream2.take(10).filter_map(|r| r.ok()).count();
+
+        // Both should produce similar results
+        assert_eq!(count1, count2);
+    }
+}

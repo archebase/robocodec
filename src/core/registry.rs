@@ -205,3 +205,200 @@ mod tests {
         assert!("unknown".parse::<Encoding>().is_err());
     }
 }
+
+// =========================================================================
+// TypeRegistry::names tests
+// =========================================================================
+
+#[test]
+fn test_type_registry_names_empty() {
+    let registry = TypeRegistry::<i32>::new();
+    let names = registry.names().unwrap();
+    assert!(names.is_empty());
+}
+
+#[test]
+fn test_type_registry_names_multiple() {
+    let registry = TypeRegistry::new();
+    registry.register("first", 1).unwrap();
+    registry.register("second", 2).unwrap();
+    registry.register("third", 3).unwrap();
+
+    let names = registry.names().unwrap();
+    assert_eq!(names.len(), 3);
+    // Names should be collected (order may vary)
+    assert!(names.contains(&"first".to_string()));
+    assert!(names.contains(&"second".to_string()));
+    assert!(names.contains(&"third".to_string()));
+}
+
+// =========================================================================
+// TypeRegistry::clear tests
+// =========================================================================
+
+#[test]
+fn test_type_registry_clear() {
+    let registry = TypeRegistry::new();
+    registry.register("test1", 1).unwrap();
+    registry.register("test2", 2).unwrap();
+    assert_eq!(registry.len().unwrap(), 2);
+
+    registry.clear().unwrap();
+    assert_eq!(registry.len().unwrap(), 0);
+    assert!(registry.is_empty().unwrap());
+}
+
+#[test]
+fn test_type_registry_clear_empty() {
+    let registry: TypeRegistry<i32> = TypeRegistry::new();
+    registry.clear().unwrap();
+    assert_eq!(registry.len().unwrap(), 0);
+}
+
+// =========================================================================
+// TypeRegistry::Default tests
+// =========================================================================
+
+#[test]
+fn test_type_registry_default() {
+    let registry = TypeRegistry::<i32>::default();
+    assert_eq!(registry.len().unwrap(), 0);
+    assert!(registry.is_empty().unwrap());
+}
+
+// =========================================================================
+// TypeRegistry::get edge cases
+// =========================================================================
+
+#[test]
+fn test_type_registry_get_nonexistent() {
+    let registry: TypeRegistry<i32> = TypeRegistry::new();
+    let result = registry.get("nonexistent").unwrap();
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_type_registry_remove_nonexistent() {
+    let registry: TypeRegistry<i32> = TypeRegistry::new();
+    let removed = registry.remove("nonexistent").unwrap();
+    assert!(!removed);
+}
+
+#[test]
+fn test_type_registry_contains_nonexistent() {
+    let registry: TypeRegistry<i32> = TypeRegistry::new();
+    assert!(!registry.contains("nonexistent").unwrap());
+}
+
+// =========================================================================
+// TypeRegistry override behavior
+// =========================================================================
+
+#[test]
+fn test_type_registry_register_override() {
+    let registry: TypeRegistry<i32> = TypeRegistry::new();
+    registry.register("test", 1).unwrap();
+    registry.register("test", 2).unwrap(); // Override
+    assert_eq!(registry.get("test").unwrap(), Some(2));
+}
+
+// =========================================================================
+// Encoding enum tests
+// =========================================================================
+
+#[test]
+fn test_encoding_debug() {
+    assert!(format!("{:?}", Encoding::Cdr).contains("Cdr"));
+    assert!(format!("{:?}", Encoding::Protobuf).contains("Protobuf"));
+    assert!(format!("{:?}", Encoding::Json).contains("Json"));
+}
+
+#[test]
+fn test_encoding_clone() {
+    let enc = Encoding::Protobuf;
+    let cloned = enc;
+    assert_eq!(enc, cloned);
+}
+
+#[test]
+fn test_encoding_copy() {
+    let enc = Encoding::Json;
+    let copied = enc;
+    assert_eq!(enc, copied);
+}
+
+#[test]
+fn test_encoding_partial_eq() {
+    assert_eq!(Encoding::Cdr, Encoding::Cdr);
+    assert_ne!(Encoding::Cdr, Encoding::Protobuf);
+    assert_ne!(Encoding::Protobuf, Encoding::Json);
+}
+
+// =========================================================================
+// Encoding::FromStr extended tests
+// =========================================================================
+
+#[test]
+fn test_encoding_from_str_ros1() {
+    assert_eq!("ros1".parse::<Encoding>(), Ok(Encoding::Cdr));
+    assert_eq!("ROS1".parse::<Encoding>(), Ok(Encoding::Cdr));
+}
+
+#[test]
+fn test_encoding_from_str_ros2() {
+    assert_eq!("ros2".parse::<Encoding>(), Ok(Encoding::Cdr));
+    assert_eq!("ROS2".parse::<Encoding>(), Ok(Encoding::Cdr));
+}
+
+#[test]
+fn test_encoding_from_str_proto() {
+    assert_eq!("proto".parse::<Encoding>(), Ok(Encoding::Protobuf));
+    assert_eq!("PROTO".parse::<Encoding>(), Ok(Encoding::Protobuf));
+}
+
+#[test]
+fn test_encoding_from_str_pb() {
+    assert_eq!("pb".parse::<Encoding>(), Ok(Encoding::Protobuf));
+    assert_eq!("PB".parse::<Encoding>(), Ok(Encoding::Protobuf));
+}
+
+#[test]
+fn test_encoding_from_str_various_invalid() {
+    assert!("".parse::<Encoding>().is_err());
+    assert!("xml".parse::<Encoding>().is_err());
+    assert!("yaml".parse::<Encoding>().is_err());
+    assert!("cbor".parse::<Encoding>().is_err());
+}
+
+// =========================================================================
+// Encoding::Display tests
+// =========================================================================
+
+#[test]
+fn test_encoding_display_cdr() {
+    assert_eq!(format!("{}", Encoding::Cdr), "cdr");
+}
+
+#[test]
+fn test_encoding_display_protobuf() {
+    assert_eq!(format!("{}", Encoding::Protobuf), "protobuf");
+}
+
+#[test]
+fn test_encoding_display_json() {
+    assert_eq!(format!("{}", Encoding::Json), "json");
+}
+
+// =========================================================================
+// Encoding::Hash tests
+// =========================================================================
+
+#[test]
+fn test_encoding_hash() {
+    use std::collections::HashSet;
+    let mut set = HashSet::new();
+    set.insert(Encoding::Cdr);
+    set.insert(Encoding::Protobuf);
+    set.insert(Encoding::Json);
+    assert_eq!(set.len(), 3);
+}

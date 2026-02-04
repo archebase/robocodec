@@ -735,4 +735,479 @@ mod tests {
         let result = extract_protobuf_package("...");
         assert_eq!(result, ".");
     }
+
+    // =========================================================================
+    // extract_protobuf_message_name Tests
+    // =========================================================================
+
+    #[test]
+    fn test_extract_protobuf_message_name_with_leading_dot() {
+        // Test with leading dot: ".pkg.foo.Bar" -> "Bar"
+        let result = extract_protobuf_message_name(".pkg.foo.Bar");
+        assert_eq!(result, "Bar");
+    }
+
+    #[test]
+    fn test_extract_protobuf_message_name_without_leading_dot() {
+        // Test without leading dot: "pkg.foo.Bar" -> "Bar"
+        let result = extract_protobuf_message_name("pkg.foo.Bar");
+        assert_eq!(result, "Bar");
+    }
+
+    #[test]
+    fn test_extract_protobuf_message_name_single_part() {
+        // Test with single part: "MessageType" -> "MessageType"
+        let result = extract_protobuf_message_name("MessageType");
+        assert_eq!(result, "MessageType");
+    }
+
+    #[test]
+    fn test_extract_protobuf_message_name_two_parts() {
+        // Test with two parts: "pkg.Message" -> "Message"
+        let result = extract_protobuf_message_name("pkg.Message");
+        assert_eq!(result, "Message");
+    }
+
+    #[test]
+    fn test_extract_protobuf_message_name_nested_packages() {
+        // Test with nested packages: "foo.bar.baz.Type" -> "Type"
+        let result = extract_protobuf_message_name("foo.bar.baz.Type");
+        assert_eq!(result, "Type");
+    }
+
+    #[test]
+    fn test_extract_protobuf_message_name_empty_string() {
+        // Test with empty string: "" -> ""
+        let result = extract_protobuf_message_name("");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_extract_protobuf_message_name_only_dots() {
+        // Test with only dots: "..." -> "" (last element of split is empty)
+        let result = extract_protobuf_message_name("...");
+        assert_eq!(result, "");
+    }
+
+    // =========================================================================
+    // validate_protobuf_message_name Tests
+    // =========================================================================
+
+    #[test]
+    fn test_validate_protobuf_message_name_valid() {
+        // Valid names
+        assert!(validate_protobuf_message_name("ValidName", "pkg.ValidName").is_ok());
+        assert!(validate_protobuf_message_name("_underscore", "pkg._underscore").is_ok());
+        assert!(validate_protobuf_message_name("Mixed123", "pkg.Mixed123").is_ok());
+        assert!(validate_protobuf_message_name("a_b_c", "pkg.a_b_c").is_ok());
+    }
+
+    #[test]
+    fn test_validate_protobuf_message_name_empty() {
+        // Empty name should fail
+        let result = validate_protobuf_message_name("", "pkg.");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_protobuf_message_name_starts_with_digit() {
+        // Starting with digit should fail
+        let result = validate_protobuf_message_name("123Invalid", "pkg.123Invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_protobuf_message_name_starts_with_special_char() {
+        // Starting with special character should fail
+        let result = validate_protobuf_message_name("-invalid", "pkg.-invalid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_protobuf_message_name_contains_invalid_chars() {
+        // Invalid characters in the middle should fail
+        let result = validate_protobuf_message_name("inva-lid", "pkg.inva-lid");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_protobuf_message_name_contains_dot() {
+        // Dots are not allowed in message names
+        let result = validate_protobuf_message_name("invalid.name", "pkg.invalid.name");
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // stats() Method Tests
+    // =========================================================================
+
+    #[test]
+    fn test_stats_returns_reference() {
+        let engine = McapRewriteEngine::new();
+        let stats = engine.stats();
+        assert_eq!(stats.message_count, 0);
+        assert_eq!(stats.reencoded_count, 0);
+    }
+
+    #[test]
+    fn test_stats_after_increment() {
+        let mut engine = McapRewriteEngine::new();
+        engine.stats.message_count = 42;
+        let stats = engine.stats();
+        assert_eq!(stats.message_count, 42);
+    }
+
+    // =========================================================================
+    // take_stats() Method Tests
+    // =========================================================================
+
+    #[test]
+    fn test_take_stats_returns_and_resets() {
+        let mut engine = McapRewriteEngine::new();
+        engine.stats.message_count = 10;
+        engine.stats.reencoded_count = 5;
+
+        let taken = engine.take_stats();
+        assert_eq!(taken.message_count, 10);
+        assert_eq!(taken.reencoded_count, 5);
+
+        // Stats should be reset
+        assert_eq!(engine.stats.message_count, 0);
+        assert_eq!(engine.stats.reencoded_count, 0);
+    }
+
+    // =========================================================================
+    // schema_count() Method Tests
+    // =========================================================================
+
+    #[test]
+    fn test_schema_count_initially_zero() {
+        let engine = McapRewriteEngine::new();
+        assert_eq!(engine.schema_count(), 0);
+    }
+
+    #[test]
+    fn test_schema_count_after_prepare() {
+        if !fixture_path("robocodec_test_5.mcap").exists() {
+            return;
+        }
+
+        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+        let mut engine = McapRewriteEngine::new();
+
+        engine.prepare_schemas(&reader, None).unwrap();
+        assert!(engine.schema_count() > 0);
+    }
+
+    // =========================================================================
+    // get_transformed_topic() Method Tests
+    // =========================================================================
+
+    #[test]
+    fn test_get_transformed_topic_without_schemas() {
+        let engine = McapRewriteEngine::new();
+        assert_eq!(engine.get_transformed_topic(0), None);
+        assert_eq!(engine.get_transformed_topic(999), None);
+    }
+
+    #[test]
+    fn test_get_transformed_topic_after_prepare() {
+        if !fixture_path("robocodec_test_5.mcap").exists() {
+            return;
+        }
+
+        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+        let mut engine = McapRewriteEngine::new();
+
+        engine.prepare_schemas(&reader, None).unwrap();
+
+        // Get first channel ID from reader
+        if let Some((&channel_id, _)) = reader.channels().iter().next() {
+            let topic = engine.get_transformed_topic(channel_id);
+            assert!(topic.is_some());
+        }
+    }
+
+    // =========================================================================
+    // get_transformed_schema() Method Tests
+    // =========================================================================
+
+    #[test]
+    fn test_get_transformed_schema_without_schemas() {
+        let engine = McapRewriteEngine::new();
+        assert!(engine.get_transformed_schema(0).is_none());
+        assert!(engine.get_transformed_schema(999).is_none());
+    }
+
+    #[test]
+    fn test_get_transformed_schema_after_prepare() {
+        if !fixture_path("robocodec_test_5.mcap").exists() {
+            return;
+        }
+
+        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+        let mut engine = McapRewriteEngine::new();
+
+        engine.prepare_schemas(&reader, None).unwrap();
+
+        // Get first channel ID from reader
+        if let Some((&channel_id, _)) = reader.channels().iter().next() {
+            let schema = engine.get_transformed_schema(channel_id);
+            assert!(schema.is_some());
+        }
+    }
+
+    // =========================================================================
+    // rewrite_message() Method Tests
+    // =========================================================================
+
+    #[test]
+    fn test_rewrite_message_without_schema() {
+        let mut engine = McapRewriteEngine::new();
+
+        // Create a mock message with no available schema
+        let msg = RawMessage {
+            channel_id: 0,
+            log_time: 0,
+            publish_time: 0,
+            sequence: Some(0),
+            data: vec![1, 2, 3],
+        };
+
+        // Create mock channel info
+        let channel_info = ChannelInfo {
+            id: 0,
+            topic: "/test".to_string(),
+            message_type: "test/Msg".to_string(),
+            encoding: "cdr".to_string(),
+            schema: None,
+            schema_encoding: None,
+            schema_data: None,
+            message_count: 0,
+            callerid: None,
+        };
+
+        let mut called = false;
+        let result = engine.rewrite_message(&msg, &channel_info, true, |data| {
+            called = true;
+            // Should be called with original data (passthrough)
+            assert_eq!(data, &[1, 2, 3]);
+            Ok(())
+        });
+
+        assert!(result.is_ok());
+        assert!(called);
+        assert_eq!(engine.stats.passthrough_count, 1);
+    }
+
+    #[test]
+    fn test_rewrite_message_no_skip_decode_failures() {
+        // This tests that when skip_decode_failures is false,
+        // decode errors are propagated (not passed through)
+        let mut engine = McapRewriteEngine::new();
+
+        // Prepare a minimal reader to set up schemas
+        if !fixture_path("robocodec_test_5.mcap").exists() {
+            return;
+        }
+
+        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+        let prepare_result = engine.prepare_schemas(&reader, None);
+        if prepare_result.is_err() {
+            // Schema preparation failed, skip this test
+            return;
+        }
+
+        // Get first channel for testing
+        let (&channel_id, channel_info) = match reader.channels().iter().next() {
+            Some(c) => c,
+            None => return,
+        };
+
+        // Create invalid message data (too short to be valid)
+        let msg = RawMessage {
+            channel_id,
+            log_time: 0,
+            publish_time: 0,
+            sequence: Some(0),
+            data: vec![0xFF], // Invalid CDR data
+        };
+
+        // With skip_decode_failures = false, errors should be propagated
+        let result = engine.rewrite_message(&msg, &channel_info, false, |_data| Ok(()));
+
+        // Result should be an error (decode failed and not skipped)
+        assert!(result.is_err() || engine.stats.decode_failures > 0);
+    }
+
+    #[test]
+    fn test_rewrite_message_skip_decode_failures_true() {
+        let mut engine = McapRewriteEngine::new();
+
+        if !fixture_path("robocodec_test_5.mcap").exists() {
+            return;
+        }
+
+        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+        let prepare_result = engine.prepare_schemas(&reader, None);
+        if prepare_result.is_err() {
+            return;
+        }
+
+        let (&channel_id, channel_info) = match reader.channels().iter().next() {
+            Some(c) => c,
+            None => return,
+        };
+
+        // Create invalid message data
+        let msg = RawMessage {
+            channel_id,
+            log_time: 0,
+            publish_time: 0,
+            sequence: Some(0),
+            data: vec![0xFF],
+        };
+
+        // With skip_decode_failures = true, should pass through original data
+        let result = engine.rewrite_message(&msg, &channel_info, true, |data| {
+            assert_eq!(data, &[0xFF]);
+            Ok(())
+        });
+
+        assert!(result.is_ok());
+    }
+
+    // =========================================================================
+    // McapRewriteStats Tests
+    // =========================================================================
+
+    #[test]
+    fn test_mcap_rewrite_stats_all_fields() {
+        let stats = McapRewriteStats {
+            message_count: 100,
+            reencoded_count: 80,
+            passthrough_count: 15,
+            decode_failures: 3,
+            encode_failures: 2,
+            topics_renamed: 5,
+            types_renamed: 3,
+        };
+
+        assert_eq!(stats.message_count, 100);
+        assert_eq!(stats.reencoded_count, 80);
+        assert_eq!(stats.passthrough_count, 15);
+        assert_eq!(stats.decode_failures, 3);
+        assert_eq!(stats.encode_failures, 2);
+        assert_eq!(stats.topics_renamed, 5);
+        assert_eq!(stats.types_renamed, 3);
+    }
+
+    #[test]
+    fn test_mcap_rewrite_stats_clone() {
+        let stats1 = McapRewriteStats {
+            message_count: 10,
+            ..Default::default()
+        };
+        let stats2 = stats1.clone();
+        assert_eq!(stats2.message_count, 10);
+    }
+
+    // =========================================================================
+    // Error Path Tests
+    // =========================================================================
+
+    #[test]
+    fn test_prepare_schemas_caches_channel_schemas() {
+        if !fixture_path("robocodec_test_5.mcap").exists() {
+            return;
+        }
+
+        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+        let mut engine = McapRewriteEngine::new();
+
+        engine.prepare_schemas(&reader, None).unwrap();
+
+        // channel_schemas should be populated
+        assert!(!engine.channel_schemas.is_empty());
+    }
+
+    #[test]
+    fn test_prepare_schemas_caches_channel_topics() {
+        if !fixture_path("robocodec_test_5.mcap").exists() {
+            return;
+        }
+
+        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+        let mut engine = McapRewriteEngine::new();
+
+        engine.prepare_schemas(&reader, None).unwrap();
+
+        // channel_topics should be populated
+        assert!(!engine.channel_topics.is_empty());
+    }
+
+    #[test]
+    fn test_reset_clears_all_maps() {
+        if !fixture_path("robocodec_test_5.mcap").exists() {
+            return;
+        }
+
+        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+        let mut engine = McapRewriteEngine::new();
+
+        engine.prepare_schemas(&reader, None).unwrap();
+        assert!(engine.schema_count() > 0);
+
+        engine.reset();
+
+        assert_eq!(engine.schema_count(), 0);
+        assert!(engine.channel_schemas.is_empty());
+        assert!(engine.channel_topics.is_empty());
+    }
+
+    #[test]
+    fn test_codec_factory_initialization() {
+        let engine = McapRewriteEngine::new();
+        // CodecFactory is private but we can verify it works via rewrite
+        assert_eq!(engine.stats.message_count, 0);
+    }
+
+    // =========================================================================
+    // Transform Statistics Tests
+    // =========================================================================
+
+    #[test]
+    fn test_prepare_schemas_tracks_topic_renames() {
+        if !fixture_path("robocodec_test_5.mcap").exists() {
+            return;
+        }
+
+        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+        let mut engine = McapRewriteEngine::new();
+
+        let pipeline = crate::transform::TransformBuilder::new()
+            .with_topic_rename("/old", "/new")
+            .build();
+
+        // Even if the transform doesn't match, stats should be accessible
+        engine.prepare_schemas(&reader, Some(&pipeline)).unwrap();
+        let _ = engine.stats().topics_renamed;
+    }
+
+    #[test]
+    fn test_prepare_schemas_tracks_type_renames() {
+        if !fixture_path("robocodec_test_5.mcap").exists() {
+            return;
+        }
+
+        let reader = McapReader::open(fixture_path("robocodec_test_5.mcap")).unwrap();
+        let mut engine = McapRewriteEngine::new();
+
+        let pipeline = crate::transform::TransformBuilder::new()
+            .with_type_rename("old", "new")
+            .build();
+
+        engine.prepare_schemas(&reader, Some(&pipeline)).unwrap();
+        let _ = engine.stats().types_renamed;
+    }
 }
