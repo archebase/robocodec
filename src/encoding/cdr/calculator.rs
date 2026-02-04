@@ -5,7 +5,7 @@
 //! CDR size calculator for computing the size of CDR-encoded data.
 //!
 //! Based on the TypeScript implementation at:
-//! https://github.com/emulated-devices/rtps-cdr/blob/main/src/CdrSizeCalculator.ts
+//! <https://github.com/emulated-devices/rtps-cdr/blob/main/src/CdrSizeCalculator.ts>
 
 /// CDR size calculator.
 ///

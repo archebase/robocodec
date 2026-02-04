@@ -23,7 +23,8 @@ pub mod writer;
 
 // Re-exports
 pub use parallel::{
-    BagDecodedMessageIter, BagDecodedMessageStream, BagFormat, BagRawIter, ParallelBagReader,
+    BagDecodedMessageIter, BagDecodedMessageStream, BagDecodedMessageWithTimestampIter,
+    BagDecodedMessageWithTimestampStream, BagFormat, BagRawIter, ParallelBagReader,
 };
 pub use sequential::{BagSequentialFormat, SequentialBagRawIter, SequentialBagReader};
 pub use writer::{BagMessage, BagWriter};

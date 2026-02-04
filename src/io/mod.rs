@@ -19,7 +19,9 @@ pub mod s3;
 // Re-exports
 pub use arena::{MmapArena, MmapArenaRef};
 pub use detection::{detect_format, is_bag_file, is_mcap_file, FormatDetector};
-pub use metadata::{ChannelInfo, FileFormat, FileInfo, MessageMetadata, RawMessage};
+pub use metadata::{
+    ChannelInfo, FileFormat, FileInfo, MessageMetadata, RawMessage, TimestampedDecodedMessage,
+};
 
 // Re-export S3 types when `s3` feature is enabled
 #[cfg(feature = "s3")]
@@ -42,5 +44,9 @@ pub use filter::{ChannelFilter, TopicFilter};
 // Unified reader/writer with auto-detection
 pub mod reader;
 pub mod writer;
-pub use reader::{ReadStrategy, ReaderBuilder, RoboReader};
-pub use writer::{RoboWriter, WriteStrategy};
+
+// Reader exports
+pub use reader::{DecodedMessageIter, ReaderConfig, ReaderConfigBuilder, RoboReader};
+
+// Writer exports
+pub use writer::{RoboWriter, WriteStrategy, WriterBuilder, WriterConfig, WriterConfigBuilder};

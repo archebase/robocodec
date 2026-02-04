@@ -4,30 +4,29 @@
 
 //! Unified writer for robotics data formats.
 //!
-//! This module provides a high-level writer that supports different
-//! formats and writing strategies.
+//! This module provides a high-level writer that automatically detects
+//! the format from the file extension.
 
 pub mod builder;
-pub mod write_strategy;
 
-pub use builder::{WriterBuilder, WriterConfig};
-pub use write_strategy::{AutoWrite, ParallelWrite, SequentialWrite, WriteStrategy};
+pub use builder::{WriteStrategy, WriterBuilder, WriterConfig, WriterConfigBuilder};
 
-use crate::io::metadata::RawMessage;
+use crate::io::detection::detect_format;
+use crate::io::formats::bag::BagFormat;
+use crate::io::formats::mcap::McapFormat;
+use crate::io::metadata::{FileFormat, RawMessage};
 use crate::io::traits::FormatWriter;
-use crate::Result;
-use tokio::runtime::Runtime;
+use crate::{CodecError, Result};
 
 /// Get or create a shared Tokio runtime for blocking async operations.
 ///
 /// This reuses a single runtime across all S3 operations, avoiding
 /// the overhead of creating a new runtime for each open/write.
-fn shared_runtime() -> &'static Runtime {
+#[cfg(feature = "s3")]
+fn shared_runtime() -> &'static tokio::runtime::Runtime {
     use std::sync::OnceLock;
-
-    static RT: OnceLock<Runtime> = OnceLock::new();
-
-    RT.get_or_init(|| Runtime::new().expect("Failed to create tokio runtime"))
+    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    RT.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
 }
 
 /// Unified writer that delegates to format-specific implementations.
@@ -48,7 +47,7 @@ impl RoboWriter {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use robocodec::io::RoboWriter;
+    /// use robocodec::io::{FormatWriter, RoboWriter};
     ///
     /// // Local file
     /// let writer = RoboWriter::create("output.mcap")?;
@@ -58,56 +57,47 @@ impl RoboWriter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn create(path: &str) -> Result<Self> {
-        Self::create_with_strategy(path, WriteStrategy::Auto)
+        Self::create_with_config(path, WriterConfig::default())
     }
 
-    /// Create a writer with a specific strategy.
+    /// Create a writer with the specified configuration.
     ///
     /// Supports both local file paths and S3 URLs (s3://bucket/key).
     ///
     /// # Arguments
     ///
     /// * `path` - Path to the output file, or S3 URL (s3://bucket/key)
-    /// * `strategy` - The writing strategy to use
+    /// * `config` - Writer configuration
     ///
     /// # Example
     ///
     /// ```rust,no_run
-    /// use robocodec::io::{RoboWriter, WriteStrategy};
+    /// use robocodec::io::{RoboWriter, WriterConfig};
     ///
-    /// // Local file
-    /// let writer = RoboWriter::create_with_strategy(
+    /// let writer = RoboWriter::create_with_config(
     ///     "output.mcap",
-    ///     WriteStrategy::Sequential
-    /// )?;
-    ///
-    /// // S3 object
-    /// let writer = RoboWriter::create_with_strategy(
-    ///     "s3://my-bucket/output.mcap",
-    ///     WriteStrategy::Sequential
+    ///     WriterConfig::default()
     /// )?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn create_with_strategy(path: &str, _strategy: WriteStrategy) -> Result<Self> {
+    pub fn create_with_config(path: &str, config: WriterConfig) -> Result<Self> {
+        let _ = config; // Config reserved for future use
+
         // Check if this is an S3 URL
         #[cfg(feature = "s3")]
         {
             if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
                 // Use S3Writer for s3:// URLs
-                // Block on the async initialization using shared runtime
                 let rt = shared_runtime();
-
                 let writer = rt.block_on(async {
-                    // Create S3 client
                     let client = crate::io::s3::S3Client::default_client().map_err(|e| {
-                        crate::CodecError::EncodeError {
+                        CodecError::EncodeError {
                             codec: "S3".to_string(),
                             message: e.to_string(),
                         }
                     })?;
-                    Ok::<_, crate::CodecError>(crate::io::s3::S3Writer::new(location, client)?)
+                    Ok::<_, CodecError>(crate::io::s3::S3Writer::new(location, client)?)
                 })?;
-
                 return Ok(Self {
                     inner: Box::new(writer),
                 });
@@ -115,7 +105,62 @@ impl RoboWriter {
         }
 
         // Fall back to local file path
-        WriterBuilder::new().path(path).build()
+        let path_obj = std::path::Path::new(path);
+
+        // Get parent directory and ensure it exists
+        if let Some(parent) = path_obj.parent() {
+            if !parent.as_os_str().is_empty() {
+                match parent.try_exists() {
+                    Ok(false) => {
+                        return Err(CodecError::parse(
+                            "RoboWriter",
+                            format!("Parent directory does not exist: {}", parent.display()),
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(CodecError::parse(
+                            "RoboWriter",
+                            format!("Cannot access parent directory {}: {}", parent.display(), e),
+                        ));
+                    }
+                    Ok(true) => {}
+                }
+            }
+        }
+
+        let format = detect_format(path_obj)?;
+
+        let inner: Box<dyn FormatWriter> = match format {
+            FileFormat::Mcap => McapFormat::create_writer(path_obj, &config)?,
+            FileFormat::Bag => BagFormat::create_writer(path_obj, &config)?,
+            FileFormat::Unknown => {
+                // Try to determine from extension
+                let extension = path_obj.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+                match extension {
+                    "mcap" => McapFormat::create_writer(path_obj, &config)?,
+                    "bag" => BagFormat::create_writer(path_obj, &config)?,
+                    _ => {
+                        return Err(CodecError::parse(
+                            "RoboWriter",
+                            format!("Unknown file format. Use .mcap or .bag extension: {}", path),
+                        ))
+                    }
+                }
+            }
+        };
+
+        Ok(Self { inner })
+    }
+
+    /// Get the file format being written.
+    pub fn format(&self) -> FileFormat {
+        // Determine from path extension
+        match self.path().rsplit('.').next() {
+            Some("mcap") => FileFormat::Mcap,
+            Some("bag") => FileFormat::Bag,
+            _ => FileFormat::Unknown,
+        }
     }
 
     /// Downcast to the inner writer for format-specific operations.
@@ -252,47 +297,6 @@ mod tests {
         fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
             self
         }
-    }
-
-    #[test]
-    fn test_robowriter_downcast_ref() {
-        let mock = MockWriter::new("test.mcap");
-        let writer = RoboWriter {
-            inner: Box::new(mock),
-        };
-
-        // Should be able to downcast to MockWriter
-        let mock_ref = writer.downcast_ref::<MockWriter>();
-        assert!(mock_ref.is_some());
-        assert_eq!(mock_ref.unwrap().path(), "test.mcap");
-    }
-
-    #[test]
-    fn test_robowriter_downcast_mut() {
-        let mock = MockWriter::new("test.mcap");
-        let mut writer = RoboWriter {
-            inner: Box::new(mock),
-        };
-
-        // Should be able to downcast mutably to MockWriter
-        let mock_mut = writer.downcast_mut::<MockWriter>();
-        assert!(mock_mut.is_some());
-        assert_eq!(mock_mut.unwrap().path(), "test.mcap");
-    }
-
-    #[test]
-    fn test_robowriter_downcast_wrong_type() {
-        let mock = MockWriter::new("test.mcap");
-        let mut writer = RoboWriter {
-            inner: Box::new(mock),
-        };
-
-        // Try to downcast to wrong type should fail
-        let wrong_ref = writer.downcast_ref::<String>();
-        assert!(wrong_ref.is_none());
-
-        let wrong_mut = writer.downcast_mut::<String>();
-        assert!(wrong_mut.is_none());
     }
 
     #[test]

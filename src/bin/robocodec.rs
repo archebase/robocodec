@@ -15,8 +15,8 @@
 //! # List topics
 //! robocodec inspect topics file.bag
 //!
-//! # Convert formats
-//! robocodec convert to-mcap input.bag output.mcap
+//! # Rewrite a file (same format)
+//! robocodec rewrite input.bag output.bag
 //!
 //! # Extract data
 //! robocodec extract topics input.mcap output.mcap /camera,/lidar
@@ -31,7 +31,7 @@ mod common;
 use std::process;
 
 use clap::{Parser, Subcommand};
-use cmd::{ConvertCmd, ExtractCmd, InspectCmd, SchemaCmd, SearchCmd};
+use cmd::{ExtractCmd, InspectCmd, RewriteCmd, SchemaCmd, SearchCmd};
 use common::Result;
 
 /// Robocodec - Robotics data format toolkit
@@ -55,9 +55,8 @@ enum Commands {
     #[command(subcommand)]
     Inspect(InspectCmd),
 
-    /// Convert between formats (bag-to-mcap, mcap-to-bag, normalize)
-    #[command(subcommand)]
-    Convert(ConvertCmd),
+    /// Rewrite a file (same format only)
+    Rewrite(RewriteCmd),
 
     /// Extract subsets of data (by topic, time, count)
     #[command(subcommand)]
@@ -77,7 +76,7 @@ fn run() -> Result<()> {
 
     match cli.command {
         Commands::Inspect(cmd) => cmd.run(),
-        Commands::Convert(cmd) => cmd.run(),
+        Commands::Rewrite(cmd) => cmd.run(),
         Commands::Extract(cmd) => cmd.run(),
         Commands::Search(cmd) => cmd.run(),
         Commands::Schema(cmd) => cmd.run(),

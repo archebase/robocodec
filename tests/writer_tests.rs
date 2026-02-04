@@ -17,8 +17,8 @@ use std::path::PathBuf;
 use robocodec::io::formats::bag::{BagFormat, BagWriter};
 use robocodec::io::traits::FormatReader;
 use robocodec::io::traits::FormatWriter;
-use robocodec::io::writer::{WriteStrategy, WriterBuilder};
 use robocodec::io::RoboWriter;
+use robocodec::io::{WriterBuilder, WriterConfig};
 
 // ============================================================================
 // Test Fixtures
@@ -69,7 +69,7 @@ impl Drop for CleanupGuard {
 fn test_robowriter_create_bag() {
     let (path, _guard) = temp_path("bag");
 
-    let writer = RoboWriter::create(path.to_str().unwrap());
+    let writer = RoboWriter::create(&path);
     assert!(
         writer.is_ok(),
         "RoboWriter::create should succeed for .bag files: {:?}",
@@ -81,7 +81,7 @@ fn test_robowriter_create_bag() {
 fn test_robowriter_create_mcap() {
     let (path, _guard) = temp_path("mcap");
 
-    let writer = RoboWriter::create(path.to_str().unwrap());
+    let writer = RoboWriter::create(&path);
     assert!(
         writer.is_ok(),
         "RoboWriter::create should succeed for .mcap files: {:?}",
@@ -93,7 +93,7 @@ fn test_robowriter_create_mcap() {
 fn test_robowriter_create_with_unknown_extension() {
     let (path, _guard) = temp_path("unknown");
 
-    let writer = RoboWriter::create(path.to_str().unwrap());
+    let writer = RoboWriter::create(&path);
     assert!(
         writer.is_err(),
         "RoboWriter::create should fail for unknown extensions"
@@ -101,14 +101,15 @@ fn test_robowriter_create_with_unknown_extension() {
 }
 
 #[test]
-fn test_robowriter_create_with_strategy() {
+fn test_robowriter_create_with_config() {
     let (path, _guard) = temp_path("bag");
 
-    // Strategy parameter is currently ignored but should still work
-    let writer = RoboWriter::create_with_strategy(path.to_str().unwrap(), WriteStrategy::Parallel);
+    // Create writer with config
+    let config = WriterConfig::builder().compression_level(3).build();
+    let writer = RoboWriter::create_with_config(&path, config);
     assert!(
         writer.is_ok(),
-        "RoboWriter::create_with_strategy should succeed: {:?}",
+        "RoboWriter::create_with_config should succeed: {:?}",
         writer.err()
     );
 }
@@ -121,7 +122,7 @@ fn test_robowriter_create_with_strategy() {
 fn test_robowriter_write_bag_messages() {
     let (path, _guard) = temp_path("bag");
 
-    let mut writer = RoboWriter::create(path.to_str().unwrap()).unwrap();
+    let mut writer = RoboWriter::create(&path).unwrap();
 
     // Add a channel
     let channel_id = writer
@@ -157,7 +158,7 @@ fn test_robowriter_write_bag_round_trip() {
     let (path, _guard) = temp_path("bag");
 
     // Write
-    let mut writer = RoboWriter::create(path.to_str().unwrap()).unwrap();
+    let mut writer = RoboWriter::create(&path).unwrap();
     writer
         .add_channel("/test", "std_msgs/String", "cdr", Some(STD_MSGS_STRING_DEF))
         .unwrap();
@@ -188,7 +189,7 @@ fn test_robowriter_write_bag_round_trip() {
 fn test_robowriter_message_count() {
     let (path, _guard) = temp_path("bag");
 
-    let mut writer = RoboWriter::create(path.to_str().unwrap()).unwrap();
+    let mut writer = RoboWriter::create(&path).unwrap();
     writer
         .add_channel(
             "/chatter",
@@ -225,7 +226,7 @@ fn test_robowriter_message_count() {
 fn test_robowriter_channel_count() {
     let (path, _guard) = temp_path("bag");
 
-    let mut writer = RoboWriter::create(path.to_str().unwrap()).unwrap();
+    let mut writer = RoboWriter::create(&path).unwrap();
 
     assert_eq!(
         writer.channel_count(),
@@ -262,10 +263,10 @@ fn test_robowriter_channel_count() {
 fn test_robowriter_downcast_bag_writer() {
     let (path, _guard) = temp_path("bag");
 
-    let writer = RoboWriter::create(path.to_str().unwrap()).unwrap();
+    let writer = RoboWriter::create(&path).unwrap();
 
-    // Downcast to BagWriter should succeed
-    let bag_writer = writer.downcast_ref::<BagWriter>();
+    // Downcast to BagWriter should succeed using as_any
+    let bag_writer = writer.as_any().downcast_ref::<BagWriter>();
     assert!(
         bag_writer.is_some(),
         "should be able to downcast to BagWriter"
@@ -276,7 +277,7 @@ fn test_robowriter_downcast_bag_writer() {
 fn test_robowriter_downcast_mcap_writer() {
     let (path, _guard) = temp_path("mcap");
 
-    let mut writer = RoboWriter::create(path.to_str().unwrap()).unwrap();
+    let mut writer = RoboWriter::create(&path).unwrap();
 
     // Note: ParallelMcapWriter.path() returns "unknown" as it doesn't store the path
     // Just verify the writer was created successfully
@@ -291,10 +292,10 @@ fn test_robowriter_downcast_mcap_writer() {
 fn test_robowriter_downcast_mut() {
     let (path, _guard) = temp_path("bag");
 
-    let mut writer = RoboWriter::create(path.to_str().unwrap()).unwrap();
+    let mut writer = RoboWriter::create(&path).unwrap();
 
-    // Downcast to mutable BagWriter should succeed
-    let bag_writer = writer.downcast_mut::<BagWriter>();
+    // Downcast to mutable BagWriter should succeed using as_any_mut
+    let bag_writer = writer.as_any_mut().downcast_mut::<BagWriter>();
     assert!(
         bag_writer.is_some(),
         "should be able to downcast mut to BagWriter"
@@ -305,12 +306,12 @@ fn test_robowriter_downcast_mut() {
 fn test_robowriter_downcast_wrong_type() {
     let (path, _guard) = temp_path("bag");
 
-    let writer = RoboWriter::create(path.to_str().unwrap()).unwrap();
+    let writer = RoboWriter::create(&path).unwrap();
 
     // Try to downcast BagWriter to something it's not (e.g., a different concrete type)
     // We can't test this with ParallelMcapWriter due to the generic parameter,
     // so we just verify the BagWriter downcast works
-    let bag_writer = writer.downcast_ref::<BagWriter>();
+    let bag_writer = writer.as_any().downcast_ref::<BagWriter>();
     assert!(bag_writer.is_some(), "BagWriter should downcast to itself");
 }
 

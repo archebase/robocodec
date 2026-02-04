@@ -5,7 +5,7 @@
 //! CDR cursor for reading CDR-encoded data with proper alignment.
 //!
 //! Based on the TypeScript implementation at:
-//! https://github.com/emulated-devices/rtps-cdr/blob/main/src/CdrReader.ts
+//! <https://github.com/emulated-devices/rtps-cdr/blob/main/src/CdrReader.ts>
 
 use crate::CodecError;
 use crate::Result as CoreResult;
@@ -112,6 +112,27 @@ impl<'a> CdrCursor<'a> {
         }
     }
 
+    /// Create a new CDR cursor for headerless ROS1 bag data.
+    ///
+    /// For ROS1 bag messages where the parser has already extracted
+    /// just the CDR message data (without wrapper headers). Uses ROS1
+    /// alignment rules (primitive arrays stored contiguously).
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The CDR-encoded binary data WITHOUT any headers
+    /// * `little_endian` - Whether the data uses little endian encoding
+    pub fn new_headerless_ros1(data: &'a [u8], little_endian: bool) -> Self {
+        Self {
+            data,
+            offset: 0,
+            origin: 0,
+            origin_stack: Vec::new(),
+            little_endian,
+            is_ros1: true,
+        }
+    }
+
     /// Create a new CDR cursor for ROS1 bag data.
     ///
     /// ROS1 bags have data that includes a CDR header, but the header
@@ -170,10 +191,18 @@ impl<'a> CdrCursor<'a> {
     ///
     /// This matches the TypeScript implementation: `(offset - origin) % size`
     ///
+    /// Note: For ROS1 data (is_ros1 = true), alignment is skipped because
+    /// ROS1 serialization is packed (no padding between fields).
+    ///
     /// # Arguments
     ///
     /// * `size` - The alignment boundary (e.g., 4 for 4-byte alignment)
     pub fn align(&mut self, size: usize) -> CoreResult<()> {
+        // ROS1 serialization is packed - no alignment padding
+        if self.is_ros1 {
+            return Ok(());
+        }
+
         let alignment = (self.offset - self.origin) % size;
         if alignment > 0 {
             let padding = size - alignment;

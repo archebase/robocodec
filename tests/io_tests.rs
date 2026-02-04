@@ -13,7 +13,7 @@ use std::path::Path;
 use robocodec::io::detection::detect_format;
 use robocodec::io::formats::mcap::McapFormat;
 use robocodec::io::metadata::{ChannelInfo, FileFormat, RawMessage};
-use robocodec::io::reader::{ReadStrategy, ReaderBuilder};
+use robocodec::io::ReaderConfig;
 
 #[test]
 fn test_detect_format_mcap_extension() {
@@ -71,27 +71,36 @@ fn test_detect_format_unknown() {
 }
 
 #[test]
-fn test_reader_builder() {
-    let builder = ReaderBuilder::new();
-    let _builder = builder;
+fn test_reader_config_default() {
+    let config = ReaderConfig::default();
+    assert!(config.prefer_parallel);
+    assert!(config.chunk_merge_enabled);
+    assert!(config.num_threads.is_none());
 }
 
 #[test]
-fn test_reader_builder_missing_path() {
-    let result = ReaderBuilder::new().build();
-    assert!(result.is_err());
+fn test_reader_config_sequential() {
+    let config = ReaderConfig::sequential();
+    assert!(!config.prefer_parallel);
 }
 
 #[test]
-fn test_read_strategy_resolve() {
-    let strategy = ReadStrategy::Auto.resolve(FileFormat::Bag, false, false);
-    assert_eq!(strategy, ReadStrategy::Sequential);
+fn test_reader_config_parallel() {
+    let config = ReaderConfig::parallel();
+    assert!(config.prefer_parallel);
+}
 
-    let strategy = ReadStrategy::Auto.resolve(FileFormat::Mcap, true, true);
-    assert_eq!(strategy, ReadStrategy::Parallel);
+#[test]
+fn test_reader_config_builder() {
+    let config = ReaderConfig::builder()
+        .prefer_parallel(false)
+        .num_threads(4)
+        .chunk_merge_enabled(false)
+        .build();
 
-    let strategy = ReadStrategy::Auto.resolve(FileFormat::Mcap, false, false);
-    assert_eq!(strategy, ReadStrategy::Sequential);
+    assert!(!config.prefer_parallel);
+    assert_eq!(config.num_threads, Some(4));
+    assert!(!config.chunk_merge_enabled);
 }
 
 #[test]
@@ -127,10 +136,10 @@ fn test_mcap_format_exists() {
 }
 
 #[test]
-fn test_robo_reader_auto_strategy() {
-    let result = robocodec::io::RoboReader::open_with_strategy(
+fn test_robo_reader_auto_config() {
+    let result = robocodec::io::RoboReader::open_with_config(
         "/tmp/claude/nonexistent_file_xYz123.mcap",
-        ReadStrategy::Auto,
+        ReaderConfig::default(),
     );
     assert!(result.is_err());
 }

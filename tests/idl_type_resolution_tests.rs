@@ -256,12 +256,13 @@ uint32 nanosec
     );
 }
 
-/// Test that Header field is removed from ROS1 schemas.
+/// Test that Header field is preserved in ROS1 schemas.
 ///
-/// ROS1 types should have their header field removed because
-/// the header data is in the ROS1 record header, not in the message bytes.
+/// ROS1 message data includes the full std_msgs/Header field.
+/// The ROS1 record header (connection_id, timestamp) is separate metadata,
+/// not the same as std_msgs/Header which is part of the message payload.
 #[test]
-fn test_ros1_removes_header_field() {
+fn test_ros1_preserves_header_field() {
     let schema_str = r#"
 std_msgs/Header header
 string data
@@ -283,14 +284,18 @@ uint32 nanosec
         .get_type_variants("test_pkg/TestMsg")
         .expect("TestMsg type should exist");
 
-    // ROS1 should remove the header field
+    // ROS1 should preserve the header field (it's part of the message data)
     assert_eq!(
         test_msg.fields.len(),
-        1,
-        "ROS1 TestMsg should have 1 field (data only, header removed)"
+        2,
+        "ROS1 TestMsg should have 2 fields (header, data)"
     );
     assert_eq!(
-        test_msg.fields[0].name, "data",
-        "First field should be 'data' (header was removed)"
+        test_msg.fields[0].name, "header",
+        "First field should be 'header'"
+    );
+    assert_eq!(
+        test_msg.fields[1].name, "data",
+        "Second field should be 'data'"
     );
 }

@@ -6,7 +6,7 @@
 //!
 //! This module provides a lock-free buffer pool using crossbeam::queue::ArrayQueue
 //! that reuses buffers across compression operations, eliminating per-chunk allocations
-//! and the 10% deallocation overhead from dropping Vec<u8>.
+//! and the 10% deallocation overhead from dropping `Vec<u8>`.
 
 use crossbeam_queue::ArrayQueue;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -306,7 +306,7 @@ impl BufferPool {
 
     /// Directly return a buffer to the pool without going through PooledBuffer.
     ///
-    /// This is useful when you have a Vec<u8> that you want to return to the pool
+    /// This is useful when you have a `Vec<u8>` that you want to return to the pool
     /// without creating a PooledBuffer wrapper. The buffer will be cleared before
     /// being returned to the pool.
     ///

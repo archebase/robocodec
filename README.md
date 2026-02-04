@@ -108,13 +108,26 @@ use robocodec::RoboReader;
 
 // Works for both BAG and MCAP formats
 let reader = RoboReader::open("file.bag")?;  // or .mcap
-let decoded_iter = reader.decode_messages()?;
-let mut stream = decoded_iter.stream()?;
+let mut iter = reader.decoded()?;
 
-while let Some(result) = stream.next() {
-    let (message, channel) = result?;
-    println!("Topic: {}", channel.topic);
-    println!("Data: {:?}", message);
+while let Some(result) = iter.next() {
+    let msg = result?;
+    println!("Topic: {}", msg.channel.topic);
+    println!("Data: {:?}", msg.message);
+    println!("Log time: {:?}", msg.log_time);
+}
+```
+
+Or using the iterator directly:
+
+```rust
+use robocodec::RoboReader;
+
+let reader = RoboReader::open("file.mcap")?;
+
+for result in reader.decoded()? {
+    let msg = result?;
+    // Access msg.message, msg.channel, msg.log_time, msg.publish_time, msg.sequence
 }
 ```
 

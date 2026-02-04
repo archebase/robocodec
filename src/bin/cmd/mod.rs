@@ -4,14 +4,14 @@
 
 //! CLI subcommands.
 
-mod convert;
 mod extract;
 mod inspect;
+mod rewrite;
 mod schema;
 mod search;
 
-pub use convert::ConvertCmd;
 pub use extract::ExtractCmd;
 pub use inspect::InspectCmd;
+pub use rewrite::RewriteCmd;
 pub use schema::SchemaCmd;
 pub use search::SearchCmd;

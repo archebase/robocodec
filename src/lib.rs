@@ -7,26 +7,28 @@
 //! Robotics data format library for MCAP and ROS bag files.
 //!
 //! This library provides a unified interface for reading and writing robotics data files:
-//! - **[`RoboReader`]** - Auto-detects format and uses parallel reading when available
-//! - **[`RoboWriter`]** - Auto-detects format from extension and uses parallel writing
+//! - **[`RoboReader`]** - Auto-detects format and provides unified message iteration
+//! - **[`RoboWriter`]** - Auto-detects format from extension
 //! - **[`RoboRewriter`]** - Unified rewriter with format auto-detection
-//! - **[`Transform`]** - Topic/type renaming and transformations
-//!
-//! ## Unified API
-//!
-//! The library provides format-agnostic `RoboReader` and `RoboWriter` types that
-//! automatically detect the file format and use optimal strategies (parallel when
-//! available, fallback to sequential).
+//! - **[`TransformBuilder`]** - Topic/type renaming and transformations
 //!
 //! ## Example: Reading with Auto-Detection
 //!
 //! ```rust,no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use robocodec::{FormatReader, RoboReader};
+//! use robocodec::RoboReader;
+//! use robocodec::io::FormatReader;
 //!
-//! // Format auto-detected, parallel mode used when available
+//! // Format auto-detected
 //! let reader = RoboReader::open("file.mcap")?;
 //! println!("Channels: {}", reader.channels().len());
+//!
+//! // Iterate over decoded messages
+//! for result in reader.decoded()? {
+//!     let decoded = result?;
+//!     println!("Topic: {}", decoded.topic());
+//!     println!("Data: {:?}", decoded.message);
+//! }
 //! # Ok(())
 //! # }
 //! ```
@@ -35,7 +37,8 @@
 //!
 //! ```rust,no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use robocodec::{FormatWriter, RoboWriter};
+//! use robocodec::io::FormatWriter;
+//! use robocodec::RoboWriter;
 //!
 //! // Format detected from extension (.mcap or .bag)
 //! let mut writer = RoboWriter::create("output.mcap")?;
@@ -79,8 +82,8 @@ pub mod types;
 pub mod io;
 
 // Re-export key I/O types
-pub use io::metadata::{ChannelInfo, FileFormat, FileInfo, MessageMetadata};
-pub use io::reader::{DecodedMessageIter, DecodedMessageStream};
+pub use io::metadata::{ChannelInfo, DecodedMessageResult, FileFormat, FileInfo, MessageMetadata};
+pub use io::reader::{DecodedMessageIter, ReaderConfig, ReaderConfigBuilder};
 pub use io::traits::{FormatReader, FormatWriter};
 pub use io::{MmapArena, MmapArenaRef, RoboReader, RoboWriter};
 
