@@ -172,12 +172,13 @@ impl PyRoboWriter {
     /// Returns
     /// -------
     /// str
-    ///     File format: "MCAP", "BAG", or "Unknown"
+    ///     File format: "MCAP", "BAG", "RRD", or "Unknown"
     #[getter]
     fn format(&self) -> String {
         match self.format {
             FileFormat::Mcap => "MCAP".to_string(),
             FileFormat::Bag => "BAG".to_string(),
+            FileFormat::Rrd => "RRD".to_string(),
             FileFormat::Unknown => "Unknown".to_string(),
         }
     }
@@ -209,6 +210,8 @@ mod tests {
             FileFormat::Mcap
         } else if path.ends_with(".bag") {
             FileFormat::Bag
+        } else if path.ends_with(".rrd") {
+            FileFormat::Rrd
         } else {
             FileFormat::Unknown
         }
@@ -220,6 +223,7 @@ mod tests {
         match format {
             FileFormat::Mcap => "MCAP",
             FileFormat::Bag => "BAG",
+            FileFormat::Rrd => "RRD",
             FileFormat::Unknown => "Unknown",
         }
     }
@@ -239,6 +243,13 @@ mod tests {
     }
 
     #[test]
+    fn test_format_detection_rrd() {
+        assert_eq!(detect_format("test.rrd"), FileFormat::Rrd);
+        assert_eq!(detect_format("/path/to/file.rrd"), FileFormat::Rrd);
+        assert_eq!(detect_format("data.rrd"), FileFormat::Rrd);
+    }
+
+    #[test]
     fn test_format_detection_unknown() {
         assert_eq!(detect_format("test.txt"), FileFormat::Unknown);
         assert_eq!(detect_format("data.json"), FileFormat::Unknown);
@@ -249,6 +260,7 @@ mod tests {
     fn test_format_to_string_conversion() {
         assert_eq!(format_to_string(FileFormat::Mcap), "MCAP");
         assert_eq!(format_to_string(FileFormat::Bag), "BAG");
+        assert_eq!(format_to_string(FileFormat::Rrd), "RRD");
         assert_eq!(format_to_string(FileFormat::Unknown), "Unknown");
     }
 

@@ -384,6 +384,8 @@ pub enum FileFormat {
     Mcap,
     /// ROS1 bag format
     Bag,
+    /// Rerun RRD format
+    Rrd,
     /// Unknown format
     Unknown,
 }
@@ -394,6 +396,7 @@ impl FileFormat {
         match self {
             FileFormat::Mcap => "mcap",
             FileFormat::Bag => "bag",
+            FileFormat::Rrd => "rrd",
             FileFormat::Unknown => "",
         }
     }
@@ -403,6 +406,7 @@ impl FileFormat {
         match self {
             FileFormat::Mcap => "application/x-mcap",
             FileFormat::Bag => "application/x-rosbag",
+            FileFormat::Rrd => "application/x-rrd",
             FileFormat::Unknown => "application/octet-stream",
         }
     }
@@ -413,6 +417,7 @@ impl std::fmt::Display for FileFormat {
         match self {
             FileFormat::Mcap => write!(f, "MCAP"),
             FileFormat::Bag => write!(f, "ROS1 Bag"),
+            FileFormat::Rrd => write!(f, "RRD"),
             FileFormat::Unknown => write!(f, "Unknown"),
         }
     }

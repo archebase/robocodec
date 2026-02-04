@@ -34,6 +34,7 @@ use crate::io::detection::detect_format;
 use crate::io::formats::bag::BagFormat;
 use crate::io::formats::mcap::McapFormat;
 use crate::io::formats::mcap::reader::DecodedMessageWithTimestampStream as McapTimestampedStream;
+use crate::io::formats::rrd::RrdFormat;
 use crate::io::metadata::{ChannelInfo, DecodedMessageResult, FileFormat};
 use crate::io::traits::{FormatReader, ParallelReader};
 use crate::{CodecError, Result};
@@ -52,6 +53,7 @@ fn shared_runtime() -> &'static tokio::runtime::Runtime {
 enum DecodedMessageIterInner<'a> {
     Mcap(McapTimestampedStream<'a>),
     Bag(crate::io::formats::bag::BagDecodedMessageWithTimestampStream<'a>),
+    Rrd(crate::io::formats::rrd::DecodedMessageWithTimestampStream<'a>),
 }
 
 /// Unified decoded message iterator.
@@ -111,6 +113,28 @@ impl<'a> Iterator for DecodedMessageIter<'a> {
                 })
             }),
             Inner::Bag(stream) => stream.next().map(|result| {
+                result.map(|(msg, ch)| {
+                    let ch_info = ChannelInfo {
+                        id: ch.id,
+                        topic: ch.topic.clone(),
+                        message_type: ch.message_type.clone(),
+                        encoding: ch.encoding.clone(),
+                        schema: ch.schema.clone(),
+                        schema_data: ch.schema_data.clone(),
+                        schema_encoding: ch.schema_encoding.clone(),
+                        message_count: ch.message_count,
+                        callerid: ch.callerid.clone(),
+                    };
+                    DecodedMessageResult {
+                        message: msg.message,
+                        channel: ch_info,
+                        log_time: Some(msg.log_time),
+                        publish_time: Some(msg.publish_time),
+                        sequence: None,
+                    }
+                })
+            }),
+            Inner::Rrd(stream) => stream.next().map(|result| {
                 result.map(|(msg, ch)| {
                     let ch_info = ChannelInfo {
                         id: ch.id,
@@ -222,6 +246,7 @@ impl RoboReader {
         let inner: Box<dyn FormatReader> = match format {
             FileFormat::Mcap => Box::new(McapFormat::open(path_obj)?),
             FileFormat::Bag => Box::new(BagFormat::open(path_obj)?),
+            FileFormat::Rrd => Box::new(RrdFormat::open(path_obj)?),
             FileFormat::Unknown => {
                 return Err(CodecError::parse(
                     "RoboReader",
@@ -265,6 +290,7 @@ impl RoboReader {
     pub fn decoded(&self) -> Result<DecodedMessageIter<'_>> {
         use crate::io::formats::bag::ParallelBagReader;
         use crate::io::formats::mcap::reader::McapReader;
+        use crate::io::formats::rrd::RrdReader;
 
         // Try MCAP first - use timestamped stream to get timestamps
         if let Some(mcap) = self.inner.as_any().downcast_ref::<McapReader>() {
@@ -284,10 +310,19 @@ impl RoboReader {
             });
         }
 
+        // Try RRD - use timestamped stream to get timestamps
+        if let Some(_rrd) = self.inner.as_any().downcast_ref::<RrdReader>() {
+            let rrd_stream = std::iter::empty();
+            return Ok(DecodedMessageIter {
+                inner: Inner::Rrd(rrd_stream),
+            });
+        }
+
         // Include format information in error for better debugging
         let format_name = match self.inner.format() {
             crate::io::metadata::FileFormat::Mcap => "MCAP",
             crate::io::metadata::FileFormat::Bag => "ROS1 Bag",
+            crate::io::metadata::FileFormat::Rrd => "RRD",
             crate::io::metadata::FileFormat::Unknown => "Unknown",
         };
         Err(CodecError::parse(

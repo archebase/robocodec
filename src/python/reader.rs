@@ -180,12 +180,13 @@ impl PyRoboReader {
     /// Returns
     /// -------
     /// str
-    ///     File format: "MCAP", "BAG", or "Unknown"
+    ///     File format: "MCAP", "BAG", "RRD", or "Unknown"
     #[getter]
     fn format(&self) -> String {
         match self.inner.format() {
             FileFormat::Mcap => "MCAP".to_string(),
             FileFormat::Bag => "BAG".to_string(),
+            FileFormat::Rrd => "RRD".to_string(),
             FileFormat::Unknown => "Unknown".to_string(),
         }
     }

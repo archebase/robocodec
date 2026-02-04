@@ -14,6 +14,7 @@ pub use builder::{WriteStrategy, WriterBuilder, WriterConfig, WriterConfigBuilde
 use crate::io::detection::detect_format;
 use crate::io::formats::bag::BagFormat;
 use crate::io::formats::mcap::McapFormat;
+use crate::io::formats::rrd::RrdFormat;
 use crate::io::metadata::{FileFormat, RawMessage};
 use crate::io::traits::FormatWriter;
 use crate::{CodecError, Result};
@@ -138,6 +139,7 @@ impl RoboWriter {
         let inner: Box<dyn FormatWriter> = match format {
             FileFormat::Mcap => McapFormat::create_writer(path_obj, &config)?,
             FileFormat::Bag => BagFormat::create_writer(path_obj, &config)?,
+            FileFormat::Rrd => RrdFormat::create_writer(path_obj, &config)?,
             FileFormat::Unknown => {
                 // Try to determine from extension
                 let extension = path_obj.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -145,10 +147,14 @@ impl RoboWriter {
                 match extension {
                     "mcap" => McapFormat::create_writer(path_obj, &config)?,
                     "bag" => BagFormat::create_writer(path_obj, &config)?,
+                    "rrd" => RrdFormat::create_writer(path_obj, &config)?,
                     _ => {
                         return Err(CodecError::parse(
                             "RoboWriter",
-                            format!("Unknown file format. Use .mcap or .bag extension: {}", path),
+                            format!(
+                                "Unknown file format. Use .mcap, .bag, or .rrd extension: {}",
+                                path
+                            ),
                         ));
                     }
                 }
@@ -164,6 +170,7 @@ impl RoboWriter {
         match self.path().rsplit('.').next() {
             Some("mcap") => FileFormat::Mcap,
             Some("bag") => FileFormat::Bag,
+            Some("rrd") => FileFormat::Rrd,
             _ => FileFormat::Unknown,
         }
     }

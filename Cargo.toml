@@ -94,3 +94,4 @@ s3 = [
 proptest = "1.4"
 wiremock = "0.6"
 tokio-test = "0.4"
+tempfile = "3.10"
