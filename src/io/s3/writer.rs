@@ -463,4 +463,83 @@ mod tests {
         assert_eq!(DEFAULT_PART_SIZE, 5 * 1024 * 1024);
         assert_eq!(MIN_PART_SIZE, 5 * 1024 * 1024);
     }
+
+    #[test]
+    fn test_s3_writer_write_after_finish() {
+        let location = S3Location::new("bucket", "test.mcap");
+        let client = S3Client::default_client().unwrap();
+        let mut writer = S3Writer::new(location, client).unwrap();
+
+        // Mark as finished by setting the internal state
+        writer.finished = true;
+
+        let msg = RawMessage {
+            channel_id: 0,
+            log_time: 1000,
+            publish_time: 1000,
+            data: vec![1, 2, 3, 4],
+            sequence: None,
+        };
+
+        let result = writer.write(&msg);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("already finished"));
+    }
+
+    #[test]
+    fn test_s3_writer_buffer_size_limit() {
+        let location = S3Location::new("bucket", "test.mcap");
+        let client = S3Client::default_client().unwrap();
+        let mut writer = S3Writer::new(location, client).unwrap();
+
+        // Set buffer to near max limit
+        writer.buffer.resize(S3Writer::MAX_BUFFER_SIZE - 100, 0);
+
+        let msg = RawMessage {
+            channel_id: 0,
+            log_time: 1000,
+            publish_time: 1000,
+            data: vec![1; 200], // Exceeds limit
+            sequence: None,
+        };
+
+        let result = writer.write(&msg);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Buffer size limit"));
+    }
+
+    #[test]
+    fn test_s3_writer_add_channel_with_schema() {
+        let location = S3Location::new("bucket", "test.mcap");
+        let client = S3Client::default_client().unwrap();
+        let mut writer = S3Writer::new(location, client).unwrap();
+
+        let id = writer
+            .add_channel("/test", "std_msgs/String", "cdr", Some("string msg"))
+            .unwrap();
+        assert_eq!(id, 0);
+        assert_eq!(writer.channel_count(), 1);
+
+        let channel = &writer.channels[&0];
+        assert_eq!(channel.topic, "/test");
+        assert_eq!(channel.message_type, "std_msgs/String");
+        assert_eq!(channel.schema, Some("string msg".to_string()));
+    }
+
+    #[test]
+    fn test_s3_writer_channel_id_overflow() {
+        let location = S3Location::new("bucket", "test.mcap");
+        let client = S3Client::default_client().unwrap();
+        let mut writer = S3Writer::new(location, client).unwrap();
+
+        // Set next_channel_id to max value
+        writer.next_channel_id = u16::MAX;
+
+        let result = writer.add_channel("/test", "type", "cdr", None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("overflow"));
+    }
 }

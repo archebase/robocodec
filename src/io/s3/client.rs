@@ -605,6 +605,7 @@ impl S3Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::s3::AwsCredentials;
 
     #[test]
     fn test_s3_client_new_default() {
@@ -650,5 +651,49 @@ mod tests {
         // Invalid header value (contains null byte)
         let result = S3Client::insert_header(&mut headers, http::header::RANGE, "bytes=\0-0");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_s3_client_with_credentials() {
+        let creds = AwsCredentials::new("test_key", "test_secret").unwrap();
+        let config = S3ReaderConfig::default().with_credentials(Some(creds));
+        let client = S3Client::new(config);
+        assert!(client.is_ok());
+        let client = client.unwrap();
+        assert!(client.config().credentials().is_some());
+    }
+
+    #[test]
+    fn test_s3_client_with_invalid_ssl_disabled() {
+        let config = S3ReaderConfig::default().with_validate_ssl(false);
+        let client = S3Client::new(config);
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_s3_client_with_custom_timeout() {
+        let config =
+            S3ReaderConfig::default().with_request_timeout(std::time::Duration::from_secs(60));
+        let client = S3Client::new(config);
+        assert!(client.is_ok());
+        let client = client.unwrap();
+        assert_eq!(
+            client.config().request_timeout(),
+            std::time::Duration::from_secs(60)
+        );
+    }
+
+    #[test]
+    fn test_s3_client_with_pool_config() {
+        let config = S3ReaderConfig::default().with_pool_max_idle(10);
+        let client = S3Client::new(config);
+        assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_s3_client_invalid_timeout() {
+        let config =
+            S3ReaderConfig::default().with_request_timeout(std::time::Duration::from_secs(0));
+        assert!(S3Client::new(config).is_err());
     }
 }

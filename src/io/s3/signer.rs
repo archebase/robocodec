@@ -228,6 +228,8 @@ pub fn should_sign(credentials: &AwsCredentials) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::s3::config::AwsCredentials;
+    use std::str::FromStr;
 
     #[test]
     fn test_should_sign_none_credentials() {
@@ -256,5 +258,158 @@ mod tests {
             hash,
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
+    }
+
+    #[test]
+    fn test_hex_sha256_non_empty() {
+        let hash = hex_sha256(b"test");
+        assert_eq!(
+            hash,
+            "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+        );
+    }
+
+    #[test]
+    fn test_should_sign_empty_access_key() {
+        // Empty access key means new() returns None
+        let creds = AwsCredentials::new("", "secret");
+        assert!(creds.is_none());
+    }
+
+    #[test]
+    fn test_should_sign_empty_secret_key() {
+        // Empty secret key means new() returns None
+        let creds = AwsCredentials::new("key", "");
+        assert!(creds.is_none());
+    }
+
+    #[test]
+    fn test_format_amz_date_epoch() {
+        let date = format_amz_date(0); // 1970-01-01 00:00:00 UTC
+        assert!(date.starts_with("19700101"));
+        assert!(date.ends_with("Z"));
+    }
+
+    #[test]
+    fn test_sign_request_valid_credentials() {
+        let creds = AwsCredentials::new(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        )
+        .unwrap();
+
+        let uri = Uri::from_str("https://examplebucket.s3.amazonaws.com/test.txt").unwrap();
+        let mut headers = HeaderMap::new();
+
+        let result = sign_request(&creds, "us-east-1", "s3", &Method::GET, &uri, &mut headers);
+        assert!(result.is_ok());
+
+        // Check that required headers were added
+        assert!(headers.contains_key("Authorization"));
+        assert!(headers.contains_key("x-amz-date"));
+        assert!(headers.contains_key("x-amz-content-sha256"));
+
+        // Authorization header should contain our access key
+        let auth = headers.get("Authorization").unwrap().to_str().unwrap();
+        assert!(auth.contains("AKIAIOSFODNN7EXAMPLE"));
+    }
+
+    #[test]
+    fn test_sign_request_empty_credentials() {
+        // Empty credentials result in None from new()
+        let creds = AwsCredentials::new("", "");
+        assert!(creds.is_none());
+    }
+
+    #[test]
+    fn test_sign_request_with_session_token() {
+        let creds = AwsCredentials::new(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        )
+        .unwrap()
+        .with_session_token("session_token");
+
+        let uri = Uri::from_str("https://examplebucket.s3.amazonaws.com/test.txt").unwrap();
+        let mut headers = HeaderMap::new();
+
+        let result = sign_request(&creds, "us-east-1", "s3", &Method::GET, &uri, &mut headers);
+        assert!(result.is_ok());
+
+        // Check that session token header was added
+        assert!(headers.contains_key("x-amz-security-token"));
+
+        // Authorization header should include security-token in signed headers
+        let auth = headers.get("Authorization").unwrap().to_str().unwrap();
+        assert!(auth.contains("x-amz-security-token"));
+    }
+
+    #[test]
+    fn test_sign_request_with_query_string() {
+        let creds = AwsCredentials::new(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        )
+        .unwrap();
+
+        let uri =
+            Uri::from_str("https://examplebucket.s3.amazonaws.com/test.txt?versionId=123").unwrap();
+        let mut headers = HeaderMap::new();
+
+        let result = sign_request(&creds, "us-east-1", "s3", &Method::GET, &uri, &mut headers);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_sign_request_post_method() {
+        let creds = AwsCredentials::new(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        )
+        .unwrap();
+
+        let uri = Uri::from_str("https://examplebucket.s3.amazonaws.com/test.txt").unwrap();
+        let mut headers = HeaderMap::new();
+
+        let result = sign_request(&creds, "us-east-1", "s3", &Method::POST, &uri, &mut headers);
+        assert!(result.is_ok());
+
+        let auth = headers.get("Authorization").unwrap().to_str().unwrap();
+        assert!(auth.contains("AKIAIOSFODNN7EXAMPLE"));
+    }
+
+    #[test]
+    fn test_format_canonical_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("Host", HeaderValue::from_static("example.com"));
+        headers.insert("x-amz-date", HeaderValue::from_static("20250101T000000Z"));
+        headers.insert(
+            "x-amz-content-sha256",
+            HeaderValue::from_static("UNSIGNED-PAYLOAD"),
+        );
+
+        let canonical = format_canonical_headers(&headers);
+
+        // Check headers are in correct order and format
+        assert!(canonical.contains("host:example.com\n"));
+        assert!(canonical.contains("x-amz-content-sha256:UNSIGNED-PAYLOAD\n"));
+        assert!(canonical.contains("x-amz-date:20250101T000000Z\n"));
+    }
+
+    #[test]
+    fn test_format_canonical_headers_with_session_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert("Host", HeaderValue::from_static("example.com"));
+        headers.insert("x-amz-date", HeaderValue::from_static("20250101T000000Z"));
+        headers.insert(
+            "x-amz-content-sha256",
+            HeaderValue::from_static("UNSIGNED-PAYLOAD"),
+        );
+        headers.insert("x-amz-security-token", HeaderValue::from_static("my-token"));
+
+        let canonical = format_canonical_headers(&headers);
+
+        // Session token should be included at the end
+        assert!(canonical.contains("x-amz-security-token:my-token\n"));
     }
 }
