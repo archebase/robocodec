@@ -102,7 +102,7 @@ fn test_robocodec_test_2_peristatus_schema() {
     // Find the PeriStatus channel
     let mut found_peristatus = false;
     let channels = reader.channels();
-    for (_id, channel) in channels {
+    for channel in channels.values() {
         if channel.message_type.contains("PeriStatus") {
             found_peristatus = true;
             // Verify schema is present
@@ -209,7 +209,7 @@ fn test_robocodec_test_2_channel_topics() {
 
     let mut has_topic = false;
     let channels = reader.channels();
-    for (_id, channel) in channels {
+    for channel in channels.values() {
         if !channel.topic.is_empty() {
             has_topic = true;
             // Topic should start with /
