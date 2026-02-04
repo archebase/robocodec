@@ -68,6 +68,7 @@ once_cell = { version = "1.19", optional = true }
 # AWS SDK for S3 (already gated)
 aws-config = { version = "1.5", features = ["behavior-version-latest"], default-features = false, optional = true }
 aws-credential-types = { version = "1.2", default-features = false, optional = true }
+percent-encoding = { version = "2.3.2", optional = true }
 
 [features]
 default = ["s3"]
@@ -86,6 +87,7 @@ s3 = [
     "futures",
     "url",
     "once_cell",
+    "percent-encoding",
 ]
 
 [dev-dependencies]

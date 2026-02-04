@@ -310,17 +310,22 @@ impl S3Location {
         // Validate bucket name for security
         validate_bucket_name(bucket)?;
 
-        // Parse query parameters
+        // Parse query parameters with URL decoding
         let mut endpoint = None;
         let mut region = None;
 
         if let Some(query_str) = query {
             for pair in query_str.split('&') {
                 let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-                match key {
-                    "endpoint" => endpoint = Some(value.to_string()),
-                    "region" => region = Some(value.to_string()),
-                    _ => {} // Ignore unknown query parameters
+                // URL-decode the value (e.g., %3A -> ':')
+                let decoded = percent_encoding::percent_decode_str(value)
+                    .decode_utf8()
+                    .ok()
+                    .map(|v| v.into_owned());
+                match (key, decoded) {
+                    ("endpoint", Some(value)) if !value.is_empty() => endpoint = Some(value),
+                    ("region", Some(value)) if !value.is_empty() => region = Some(value),
+                    _ => {} // Ignore unknown parameters, decode failures, or empty values
                 }
             }
         }
@@ -328,6 +333,11 @@ impl S3Location {
         // If no endpoint specified, check S3_ENDPOINT environment variable
         if endpoint.is_none() {
             endpoint = std::env::var("S3_ENDPOINT").ok();
+        }
+
+        // Validate endpoint for security (SSRF prevention)
+        if let Some(ref ep) = endpoint {
+            validate_endpoint(ep)?;
         }
 
         Ok(Self {
@@ -613,12 +623,12 @@ mod tests {
 
     #[test]
     fn test_from_url_empty_query_value() {
-        // Empty endpoint query parameter should be ignored (env var will be used instead)
+        // Empty endpoint query parameter should be ignored
         let location = S3Location::from_s3_url("s3://bucket/file.mcap?endpoint=").unwrap();
         assert_eq!(location.bucket(), "bucket");
         assert_eq!(location.key(), "file.mcap");
-        // Empty string is still Some(""), which is a valid (though unusual) value
-        assert_eq!(location.endpoint(), Some(""));
+        // Empty endpoint values are ignored
+        assert_eq!(location.endpoint(), None);
     }
 
     #[test]
@@ -634,12 +644,23 @@ mod tests {
     #[test]
     fn test_from_url_with_multiple_query_params() {
         let location = S3Location::from_s3_url(
-            "s3://bucket/file.mcap?endpoint=http://minio:9000&region=us-west-1&unknown=value",
+            "s3://bucket/file.mcap?endpoint=http://localhost:9000&region=us-west-1&unknown=value",
         )
         .unwrap();
         assert_eq!(location.bucket(), "bucket");
         assert_eq!(location.key(), "file.mcap");
-        assert_eq!(location.endpoint(), Some("http://minio:9000"));
+        assert_eq!(location.endpoint(), Some("http://localhost:9000"));
         assert_eq!(location.region(), Some("us-west-1"));
+    }
+
+    #[test]
+    fn test_from_url_with_encoded_endpoint() {
+        // URL-encoded endpoint should be decoded
+        let location =
+            S3Location::from_s3_url("s3://bucket/file.mcap?endpoint=http%3A%2F%2Flocalhost%3A9000")
+                .unwrap();
+        assert_eq!(location.bucket(), "bucket");
+        assert_eq!(location.key(), "file.mcap");
+        assert_eq!(location.endpoint(), Some("http://localhost:9000"));
     }
 }

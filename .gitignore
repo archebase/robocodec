@@ -63,3 +63,4 @@ profiles/
 lcov.info
 *.profraw
 *.profdata
+coverage/
