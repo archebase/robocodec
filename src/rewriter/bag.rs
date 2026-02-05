@@ -858,9 +858,9 @@ mod tests {
 
         let rewriter = BagRewriter::with_options(options);
 
-        assert_eq!(rewriter.options().validate_schemas, true);
-        assert_eq!(rewriter.options().skip_decode_failures, false);
-        assert_eq!(rewriter.options().passthrough_non_cdr, false);
+        assert!(rewriter.options().validate_schemas);
+        assert!(!rewriter.options().skip_decode_failures);
+        assert!(!rewriter.options().passthrough_non_cdr);
         assert!(rewriter.options().has_transforms());
     }
 
@@ -907,9 +907,9 @@ mod tests {
 
         let rewriter = BagRewriter::with_options(options);
 
-        assert_eq!(rewriter.options().validate_schemas, false);
-        assert_eq!(rewriter.options().skip_decode_failures, true);
-        assert_eq!(rewriter.options().passthrough_non_cdr, false);
+        assert!(!rewriter.options().validate_schemas);
+        assert!(rewriter.options().skip_decode_failures);
+        assert!(!rewriter.options().passthrough_non_cdr);
         assert!(!rewriter.options().has_transforms());
     }
 

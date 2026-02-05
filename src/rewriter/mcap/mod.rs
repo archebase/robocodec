@@ -1410,20 +1410,24 @@ mod tests {
 
     #[test]
     fn test_rewrite_stats_partial_update() {
-        let mut stats = RewriteStats::default();
-        stats.message_count = 10;
-        stats.reencoded_count = 8;
+        let stats = RewriteStats {
+            message_count: 10,
+            reencoded_count: 8,
+            ..RewriteStats::default()
+        };
         assert_eq!(stats.message_count, 10);
         assert_eq!(stats.reencoded_count, 8);
     }
 
     #[test]
     fn test_mcap_rewriter_statistics_accumulation() {
-        let mut stats = RewriteStats::default();
-        stats.message_count = 100;
-        stats.channel_count = 5;
-        stats.reencoded_count = 80;
-        stats.passthrough_count = 20;
+        let stats = RewriteStats {
+            message_count: 100,
+            channel_count: 5,
+            reencoded_count: 80,
+            passthrough_count: 20,
+            ..RewriteStats::default()
+        };
 
         assert_eq!(stats.message_count, 100);
         assert_eq!(stats.channel_count, 5);
@@ -1455,16 +1459,16 @@ mod tests {
 
     #[test]
     fn test_rewrite_stats_all_fields_independent() {
-        let mut stats = RewriteStats::default();
-
-        stats.message_count = 100;
-        stats.channel_count = 5;
-        stats.reencoded_count = 80;
-        stats.passthrough_count = 20;
-        stats.decode_failures = 2;
-        stats.encode_failures = 1;
-        stats.topics_renamed = 3;
-        stats.types_renamed = 4;
+        let stats = RewriteStats {
+            message_count: 100,
+            channel_count: 5,
+            reencoded_count: 80,
+            passthrough_count: 20,
+            decode_failures: 2,
+            encode_failures: 1,
+            topics_renamed: 3,
+            types_renamed: 4,
+        };
 
         assert_eq!(stats.message_count, 100);
         assert_eq!(stats.channel_count, 5);
@@ -1900,10 +1904,10 @@ mod tests {
 
     #[test]
     fn test_message_handling_traits() {
-        // MessageHandling should implement common traits
+        // MessageHandling should implement Copy trait
         let handling = MessageHandling::Reencode;
-        let _cloned = handling.clone();
         let _copied = handling;
+        let _another_copy = handling;
     }
 
     #[test]

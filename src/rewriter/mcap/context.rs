@@ -162,11 +162,4 @@ mod tests {
         let copied = handling;
         assert_eq!(copied, MessageHandling::Reencode);
     }
-
-    #[test]
-    fn test_message_handling_clone() {
-        let handling = MessageHandling::Passthrough;
-        let cloned = handling.clone();
-        assert_eq!(handling, cloned);
-    }
 }

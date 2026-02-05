@@ -551,16 +551,16 @@ mod tests {
     #[test]
     fn test_rewrite_stats_mutability() {
         // Test that stats fields can be modified
-        let mut stats = RewriteStats::default();
-
-        stats.message_count = 100;
-        stats.channel_count = 5;
-        stats.reencoded_count = 80;
-        stats.passthrough_count = 20;
-        stats.decode_failures = 2;
-        stats.encode_failures = 1;
-        stats.topics_renamed = 3;
-        stats.types_renamed = 4;
+        let stats = RewriteStats {
+            message_count: 100,
+            channel_count: 5,
+            reencoded_count: 80,
+            passthrough_count: 20,
+            decode_failures: 2,
+            encode_failures: 1,
+            topics_renamed: 3,
+            types_renamed: 4,
+        };
 
         assert_eq!(stats.message_count, 100);
         assert_eq!(stats.channel_count, 5);
@@ -658,11 +658,12 @@ mod tests {
     #[test]
     fn test_rewrite_stats_independent_fields() {
         // Verify each stat field tracks independently
-        let mut stats = RewriteStats::default();
-
-        stats.message_count = 10;
-        stats.reencoded_count = 8;
-        stats.passthrough_count = 2;
+        let stats = RewriteStats {
+            message_count: 10,
+            reencoded_count: 8,
+            passthrough_count: 2,
+            ..RewriteStats::default()
+        };
 
         // reencoded + passthrough may be less than message_count (due to failures)
         assert_eq!(stats.reencoded_count + stats.passthrough_count, 10);
