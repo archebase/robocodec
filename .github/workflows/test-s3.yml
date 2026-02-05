@@ -54,9 +54,9 @@ jobs:
         run: cargo build --release
 
       - name: Start MinIO with docker-compose
-        run: docker compose up -d minio minio-init
+        run: docker compose up -d
 
-      - name: Wait for MinIO to be ready
+      - name: Wait for MinIO and bucket creation
         run: |
           # Wait for MinIO health endpoint
           for i in {1..30}; do
@@ -68,7 +68,23 @@ jobs:
             sleep 2
           done
 
-          # Verify bucket was created by minio-init
+          # Wait for minio-init to complete and create bucket
+          echo "Waiting for bucket creation..."
+          for i in {1..60}; do
+            if docker compose ps minio-init | grep -q "Exited (0)"; then
+              echo "minio-init completed successfully"
+              break
+            fi
+            if docker compose ps minio-init | grep -q "Exited"; then
+              echo "minio-init failed with error"
+              docker compose logs minio-init
+              exit 1
+            fi
+            echo "Waiting for minio-init... ($i/60)"
+            sleep 2
+          done
+
+          # Verify bucket was created
           if ! curl -f http://localhost:9000/test-fixtures 2>/dev/null; then
             echo "Bucket 'test-fixtures' not found"
             docker compose logs minio-init
