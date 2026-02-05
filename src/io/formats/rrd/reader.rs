@@ -454,20 +454,14 @@ impl<'a> DecodedMessageIter<'a> {
             if pos + len <= data_buf.len() {
                 let payload = data_buf[pos..pos + len].to_vec();
 
-                // Try to decompress if it's an ArrowMsg protobuf
-                let decompressed = match ArrowMsg::from_bytes(&payload) {
-                    Ok(arrow_msg) => match arrow_msg.decompress_payload() {
-                        Ok(data) => data,
-                        Err(_) => {
-                            // Decompression failed, use as-is
-                            payload
-                        }
-                    },
-                    Err(_) => {
-                        // Not a valid ArrowMsg, use as-is
-                        payload
-                    }
-                };
+                // Parse ArrowMsg protobuf and decompress
+                let arrow_msg = ArrowMsg::from_bytes(&payload).map_err(|e| {
+                    CodecError::parse("RRD", format!("Failed to parse ArrowMsg: {e}"))
+                })?;
+
+                let decompressed = arrow_msg.decompress_payload().map_err(|e| {
+                    CodecError::parse("RRD", format!("Failed to decompress ArrowMsg: {e}"))
+                })?;
 
                 messages.push((decompressed, topic));
                 pos += len;
@@ -613,20 +607,14 @@ impl<'a> DecodedMessageWithTimestampIter<'a> {
             if pos + len <= data_buf.len() {
                 let payload = data_buf[pos..pos + len].to_vec();
 
-                // Try to decompress if it's an ArrowMsg protobuf
-                let decompressed = match ArrowMsg::from_bytes(&payload) {
-                    Ok(arrow_msg) => match arrow_msg.decompress_payload() {
-                        Ok(data) => data,
-                        Err(_) => {
-                            // Decompression failed, use as-is
-                            payload
-                        }
-                    },
-                    Err(_) => {
-                        // Not a valid ArrowMsg, use as-is
-                        payload
-                    }
-                };
+                // Parse ArrowMsg protobuf and decompress
+                let arrow_msg = ArrowMsg::from_bytes(&payload).map_err(|e| {
+                    CodecError::parse("RRD", format!("Failed to parse ArrowMsg: {e}"))
+                })?;
+
+                let decompressed = arrow_msg.decompress_payload().map_err(|e| {
+                    CodecError::parse("RRD", format!("Failed to decompress ArrowMsg: {e}"))
+                })?;
 
                 messages.push((decompressed, topic));
                 pos += len;

@@ -251,30 +251,25 @@ impl StreamingRrdParser {
         self.initialized = true;
     }
 
-    /// Decompress message payload if needed.
+    /// Decompress message payload.
     ///
-    /// In RRF2, ArrowMsg payloads can be LZ4 compressed at the message level.
+    /// In RRF2, ArrowMsg payloads are LZ4 compressed at the message level.
     /// The payload is an ArrowMsg protobuf which contains:
     /// - compression field (i32)
     /// - uncompressed_size field (u64)
     /// - payload field (bytes) - the actual Arrow IPC data, potentially LZ4 compressed
     fn decompress_payload(&self, payload: &[u8]) -> Result<Vec<u8>, FatalError> {
-        // Try to parse as ArrowMsg protobuf
-        match ArrowMsg::from_bytes(payload) {
-            Ok(arrow_msg) => {
-                // Decompress the ArrowMsg payload if needed
-                arrow_msg
-                    .decompress_payload()
-                    .map_err(|e| FatalError::ConfigError {
-                        message: format!("Failed to decompress ArrowMsg payload: {e}"),
-                    })
-            }
-            Err(_) => {
-                // Not a valid ArrowMsg protobuf - return as-is for backward compatibility
-                // This handles old-format RRD files without ArrowMsg wrapper
-                Ok(payload.to_vec())
-            }
-        }
+        // Parse as ArrowMsg protobuf
+        let arrow_msg = ArrowMsg::from_bytes(payload).map_err(|e| FatalError::ConfigError {
+            message: format!("Failed to parse ArrowMsg protobuf: {e}"),
+        })?;
+
+        // Decompress the ArrowMsg payload if needed
+        arrow_msg
+            .decompress_payload()
+            .map_err(|e| FatalError::ConfigError {
+                message: format!("Failed to decompress ArrowMsg payload: {e}"),
+            })
     }
 
     /// Get the RRD stream header if parsed.
@@ -395,17 +390,27 @@ impl StreamingParser for StreamingRrdParser {
 
                     let payload = &self.buffer[self.buffer_pos..self.buffer_pos + len];
 
-                    // Decompress if needed
-                    let data = match self.decompress_payload(payload) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            tracing::warn!("Failed to process RRD payload: {}", e);
-                            // Skip this message
-                            self.buffer_pos += len;
-                            self.state = ParserState::NeedMessageHeader;
-                            self.message_index += 1;
-                            continue;
+                    // Process payload based on message kind
+                    let data = match kind {
+                        MessageKind::ArrowMsg => {
+                            // ArrowMsg messages contain LZ4-compressed Arrow IPC data
+                            match self.decompress_payload(payload) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    tracing::warn!("Failed to decompress ArrowMsg payload: {}", e);
+                                    // Skip this message
+                                    self.buffer_pos += len;
+                                    self.state = ParserState::NeedMessageHeader;
+                                    self.message_index += 1;
+                                    continue;
+                                }
+                            }
                         }
+                        MessageKind::SetStoreInfo | MessageKind::BlueprintActivationCommand => {
+                            // These messages are plain protobuf, return as-is
+                            payload.to_vec()
+                        }
+                        MessageKind::End => unreachable!(), // handled above
                     };
 
                     // Determine topic based on message kind
@@ -625,6 +630,8 @@ mod tests {
 
     #[test]
     fn test_no_compression_decompress() {
+        use crate::io::formats::rrd::arrow_msg::ArrowMsg;
+
         let mut parser = StreamingRrdParser::new();
         parser.header = Some(RrdStreamHeader {
             magic: *RRD_MAGIC,
@@ -633,16 +640,23 @@ mod tests {
             serializer: SERIALIZER_PROTOBUF,
         });
 
-        let data = b"test data";
-        let result = parser.decompress_payload(data);
+        // Create a valid ArrowMsg protobuf with uncompressed data
+        let arrow_msg = ArrowMsg::new(b"test data".to_vec());
+        let payload = arrow_msg.to_bytes().unwrap();
+
+        let result = parser.decompress_payload(&payload);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), data);
+        assert_eq!(result.unwrap(), b"test data".to_vec());
     }
 
     #[test]
     fn test_decompress_passthrough() {
-        // RRF2 stores messages as plain Protobuf regardless of stream compression flag
-        // The decompress_payload function should pass through data unchanged
+        use crate::io::formats::rrd::arrow_msg::ArrowMsg;
+
+        // Create an ArrowMsg with LZ4 compression
+        let arrow_msg = ArrowMsg::with_lz4(b"test protobuf data".to_vec()).unwrap();
+        let payload = arrow_msg.to_bytes().unwrap();
+
         let mut parser = StreamingRrdParser::new();
         parser.header = Some(RrdStreamHeader {
             magic: *RRD_MAGIC,
@@ -651,14 +665,15 @@ mod tests {
             serializer: SERIALIZER_PROTOBUF,
         });
 
-        let data = b"test protobuf data";
-        let result = parser.decompress_payload(data);
+        let result = parser.decompress_payload(&payload);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), data);
+        assert_eq!(result.unwrap(), b"test protobuf data".to_vec());
     }
 
     #[test]
     fn test_parse_simple_message() {
+        use crate::io::formats::rrd::arrow_msg::ArrowMsg;
+
         let mut parser = StreamingRrdParser::new();
 
         // Create header
@@ -669,12 +684,16 @@ mod tests {
         data.push(SERIALIZER_PROTOBUF);
         data.extend_from_slice(&[0u8; 2]); // reserved
 
+        // Create ArrowMsg payload
+        let arrow_msg = ArrowMsg::new(b"hello".to_vec());
+        let payload = arrow_msg.to_bytes().unwrap();
+
         // Add message header (ArrowMsg)
         data.extend_from_slice(&2u64.to_le_bytes()); // kind = ArrowMsg
-        data.extend_from_slice(&5u64.to_le_bytes()); // len = 5
+        data.extend_from_slice(&(payload.len() as u64).to_le_bytes()); // len
 
-        // Add payload
-        data.extend_from_slice(b"hello");
+        // Add ArrowMsg payload
+        data.extend_from_slice(&payload);
 
         // Add end marker
         data.extend_from_slice(&0u64.to_le_bytes()); // kind = End
