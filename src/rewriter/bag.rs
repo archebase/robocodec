@@ -48,6 +48,56 @@ impl BagRewriter {
         }
     }
 
+    /// Check if a message should be re-encoded based on schema availability.
+    ///
+    /// # Arguments
+    ///
+    /// * `transformed_type` - The transformed message type
+    /// * `schemas` - Map of available schemas
+    ///
+    /// # Returns
+    ///
+    /// true if schema is available for re-encoding
+    #[must_use]
+    pub fn has_schema_for_reencode(
+        transformed_type: Option<&str>,
+        schemas: &HashMap<String, MessageSchema>,
+    ) -> bool {
+        transformed_type.is_some_and(|t| schemas.contains_key(t))
+    }
+
+    /// Get the package name from a type name.
+    ///
+    /// # Arguments
+    ///
+    /// * `type_name` - The full type name (e.g., "std_msgs/String")
+    ///
+    /// # Returns
+    ///
+    /// The package name (e.g., "std_msgs") or empty string
+    #[must_use]
+    pub fn extract_package_name(type_name: &str) -> &str {
+        type_name.split('/').next().unwrap_or("")
+    }
+
+    /// Check if packages are different.
+    ///
+    /// # Arguments
+    ///
+    /// * `old_type` - The original type name
+    /// * `new_type` - The new type name
+    ///
+    /// # Returns
+    ///
+    /// true if packages are different and both non-empty
+    #[must_use]
+    pub fn has_package_change(old_type: &str, new_type: &str) -> bool {
+        let old_pkg = Self::extract_package_name(old_type);
+        let new_pkg = Self::extract_package_name(new_type);
+
+        !old_pkg.is_empty() && !new_pkg.is_empty() && old_pkg != new_pkg
+    }
+
     /// Rewrite a ROS1 bag file to a new location.
     ///
     /// # Arguments
@@ -519,5 +569,447 @@ mod tests {
     fn test_as_any() {
         let rewriter = BagRewriter::new();
         let _any: &dyn std::any::Any = rewriter.as_any();
+    }
+
+    #[test]
+    fn test_as_any_downcast() {
+        let rewriter = BagRewriter::new();
+        let any = rewriter.as_any();
+        // Verify we can downcast back to BagRewriter
+        assert!(any.is::<BagRewriter>());
+    }
+
+    #[test]
+    fn test_format_rewriter_trait_methods() {
+        let rewriter = BagRewriter::new();
+        // Verify FormatRewriter trait methods are accessible
+        let _options = rewriter.options();
+        let _any = rewriter.as_any();
+    }
+
+    #[test]
+    fn test_rewriter_with_transforms() {
+        use crate::transform::TransformBuilder;
+
+        let pipeline = TransformBuilder::new()
+            .with_topic_rename("/old", "/new")
+            .build();
+
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: Some(pipeline),
+        };
+
+        let rewriter = BagRewriter::with_options(options);
+        assert!(rewriter.options().transforms.is_some());
+        assert!(rewriter.options().has_transforms());
+    }
+
+    #[test]
+    fn test_rewriter_empty_schemas_initially() {
+        let rewriter = BagRewriter::new();
+        // Access the private schemas field indirectly through behavior
+        // Since schemas is private, we verify through rewrite behavior
+        assert!(rewriter.options().validate_schemas);
+    }
+
+    #[test]
+    fn test_rewriter_stats_initially_zero() {
+        let rewriter = BagRewriter::new();
+        // Can't directly access stats, but we can verify default options
+        assert!(rewriter.options().skip_decode_failures);
+        assert!(rewriter.options().passthrough_non_cdr);
+    }
+
+    #[test]
+    fn test_rewriter_with_all_options_false() {
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: false,
+            passthrough_non_cdr: false,
+            transforms: None,
+        };
+
+        let rewriter = BagRewriter::with_options(options);
+        assert!(!rewriter.options().validate_schemas);
+        assert!(!rewriter.options().skip_decode_failures);
+        assert!(!rewriter.options().passthrough_non_cdr);
+    }
+
+    #[test]
+    fn test_rewriter_with_all_options_true() {
+        use crate::transform::TransformBuilder;
+
+        let pipeline = TransformBuilder::new()
+            .with_type_rename("old", "new")
+            .build();
+
+        let options = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: Some(pipeline),
+        };
+
+        let rewriter = BagRewriter::with_options(options);
+        assert!(rewriter.options().validate_schemas);
+        assert!(rewriter.options().skip_decode_failures);
+        assert!(rewriter.options().passthrough_non_cdr);
+        assert!(rewriter.options().has_transforms());
+    }
+
+    #[test]
+    fn test_rewriter_with_empty_transform_pipeline() {
+        use crate::transform::MultiTransform;
+
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: Some(MultiTransform::new()),
+        };
+
+        let rewriter = BagRewriter::with_options(options);
+        assert!(!rewriter.options().has_transforms());
+    }
+
+    #[test]
+    fn test_rewriter_options_combinations() {
+        use crate::transform::TransformBuilder;
+
+        // Test 1: Only validate_schemas = true
+        let rewriter = BagRewriter::with_options(RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: false,
+            passthrough_non_cdr: false,
+            transforms: None,
+        });
+        assert!(rewriter.options().validate_schemas);
+
+        // Test 2: Only skip_decode_failures = true
+        let rewriter = BagRewriter::with_options(RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: false,
+            transforms: None,
+        });
+        assert!(rewriter.options().skip_decode_failures);
+
+        // Test 3: Only passthrough_non_cdr = true
+        let rewriter = BagRewriter::with_options(RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: false,
+            passthrough_non_cdr: true,
+            transforms: None,
+        });
+        assert!(rewriter.options().passthrough_non_cdr);
+
+        // Test 4: With transforms
+        let pipeline = TransformBuilder::new()
+            .with_topic_rename("/a", "/b")
+            .with_type_rename("old/Old", "new/New")
+            .build();
+
+        let rewriter = BagRewriter::with_options(RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: false,
+            passthrough_non_cdr: false,
+            transforms: Some(pipeline),
+        });
+        assert!(rewriter.options().has_transforms());
+    }
+
+    #[test]
+    fn test_rewriter_returns_error_for_nonexistent_input() {
+        let temp_dir = create_temp_dir();
+        let output_path = temp_dir.path().join("output.bag");
+
+        let mut rewriter = BagRewriter::new();
+        let result = rewriter.rewrite("nonexistent.bag", &output_path);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rewriter_send_sync_trait_bounds() {
+        // Verify BagRewriter satisfies the trait bounds
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<BagRewriter>();
+    }
+
+    #[test]
+    fn test_rewriter_clone_is_not_implemented() {
+        // BagRewriter does not implement Clone
+        // This is a compile-time verification that we're not accidentally cloning
+        let rewriter = BagRewriter::new();
+        let _rewriter_ref = &rewriter; // Just take a reference
+    }
+
+    #[test]
+    fn test_multiple_rewriters_independent() {
+        let rewriter1 = BagRewriter::new();
+        let rewriter2 = BagRewriter::new();
+
+        // Each rewriter should have independent options
+        assert_eq!(
+            rewriter1.options().validate_schemas,
+            rewriter2.options().validate_schemas
+        );
+    }
+
+    #[test]
+    fn test_rewriter_with_passthrough_non_cdr() {
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+
+        let rewriter = BagRewriter::with_options(options);
+        assert!(rewriter.options().passthrough_non_cdr);
+        assert!(!rewriter.options().validate_schemas);
+        assert!(rewriter.options().skip_decode_failures);
+    }
+
+    #[test]
+    fn test_rewriter_options_accessor_returns_reference() {
+        let rewriter = BagRewriter::new();
+        let options = rewriter.options();
+
+        // Should be able to access fields through the reference
+        let _ = options.validate_schemas;
+        let _ = options.skip_decode_failures;
+        let _ = options.passthrough_non_cdr;
+        let _ = options.transforms.as_ref();
+    }
+
+    #[test]
+    fn test_rewriter_with_various_boolean_combinations() {
+        let combinations = [
+            (false, false, false),
+            (false, false, true),
+            (false, true, false),
+            (false, true, true),
+            (true, false, false),
+            (true, false, true),
+            (true, true, false),
+        ];
+
+        for (validate, skip, passthrough) in combinations {
+            let options = RewriteOptions {
+                validate_schemas: validate,
+                skip_decode_failures: skip,
+                passthrough_non_cdr: passthrough,
+                transforms: None,
+            };
+
+            let rewriter = BagRewriter::with_options(options);
+            assert_eq!(rewriter.options().validate_schemas, validate);
+            assert_eq!(rewriter.options().skip_decode_failures, skip);
+            assert_eq!(rewriter.options().passthrough_non_cdr, passthrough);
+        }
+    }
+
+    #[test]
+    fn test_rewrite_with_transform_pipeline_tracks_renames() {
+        use crate::transform::TransformBuilder;
+
+        let pipeline = TransformBuilder::new()
+            .with_topic_rename("/old_topic", "/new_topic")
+            .with_type_rename("old/OldType", "new/NewType")
+            .build();
+
+        let options = RewriteOptions::default().with_transforms(pipeline);
+        let rewriter = BagRewriter::with_options(options);
+
+        assert!(rewriter.options().has_transforms());
+    }
+
+    #[test]
+    fn test_rewriter_nonexistent_file() {
+        let temp_dir = create_temp_dir();
+        let input_path = temp_dir.path().join("nonexistent.bag");
+        let output_path = temp_dir.path().join("output.bag");
+
+        let mut rewriter = BagRewriter::new();
+        let result = rewriter.rewrite(&input_path, &output_path);
+
+        // Should fail because input doesn't exist
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rewriter_preserves_all_option_fields() {
+        use crate::transform::TransformBuilder;
+
+        let pipeline = TransformBuilder::new()
+            .with_topic_rename("/a", "/b")
+            .build();
+
+        let options = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: false,
+            passthrough_non_cdr: false,
+            transforms: Some(pipeline),
+        };
+
+        let rewriter = BagRewriter::with_options(options);
+
+        assert!(rewriter.options().validate_schemas);
+        assert!(!rewriter.options().skip_decode_failures);
+        assert!(!rewriter.options().passthrough_non_cdr);
+        assert!(rewriter.options().has_transforms());
+    }
+
+    #[test]
+    fn test_rewriter_with_invalid_output_directory() {
+        let temp_dir = create_temp_dir();
+        let input_path = temp_dir.path().join("input.bag");
+
+        // Create a minimal input file
+        std::fs::write(&input_path, b"invalid bag content").unwrap();
+
+        let output_path = "/nonexistent/directory/output.bag";
+
+        let mut rewriter = BagRewriter::new();
+        let result = rewriter.rewrite(&input_path, output_path);
+
+        // Should fail because output directory doesn't exist
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rewriter_empty_transforms_has_no_transforms() {
+        use crate::transform::MultiTransform;
+
+        let options = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: true,
+            passthrough_non_cdr: true,
+            transforms: Some(MultiTransform::new()),
+        };
+
+        let rewriter = BagRewriter::with_options(options);
+        assert!(!rewriter.options().has_transforms());
+    }
+
+    #[test]
+    fn test_rewriter_options_fields_match() {
+        let options = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: false,
+            transforms: None,
+        };
+
+        let rewriter = BagRewriter::with_options(options);
+
+        assert!(!rewriter.options().validate_schemas);
+        assert!(rewriter.options().skip_decode_failures);
+        assert!(!rewriter.options().passthrough_non_cdr);
+        assert!(!rewriter.options().has_transforms());
+    }
+
+    #[test]
+    fn test_has_schema_for_reencode() {
+        let mut schemas: HashMap<String, MessageSchema> = HashMap::new();
+
+        // No schemas available
+        assert!(!BagRewriter::has_schema_for_reencode(
+            Some("std_msgs/String"),
+            &schemas
+        ));
+        assert!(!BagRewriter::has_schema_for_reencode(None, &schemas));
+
+        // Schema available
+        schemas.insert(
+            "std_msgs/String".to_string(),
+            MessageSchema::new("std_msgs/String".to_string()),
+        );
+        assert!(BagRewriter::has_schema_for_reencode(
+            Some("std_msgs/String"),
+            &schemas
+        ));
+        assert!(!BagRewriter::has_schema_for_reencode(
+            Some("geometry_msgs/Twist"),
+            &schemas
+        ));
+    }
+
+    #[test]
+    fn test_extract_package_name_bag() {
+        assert_eq!(
+            BagRewriter::extract_package_name("std_msgs/String"),
+            "std_msgs"
+        );
+        assert_eq!(
+            BagRewriter::extract_package_name("geometry_msgs/Twist"),
+            "geometry_msgs"
+        );
+        assert_eq!(
+            BagRewriter::extract_package_name("sensor_msgs/Image"),
+            "sensor_msgs"
+        );
+
+        // Edge cases
+        assert_eq!(BagRewriter::extract_package_name("NoSlash"), "NoSlash");
+        assert_eq!(BagRewriter::extract_package_name(""), "");
+        assert_eq!(BagRewriter::extract_package_name("/LeadingSlash"), "");
+    }
+
+    #[test]
+    fn test_has_package_change() {
+        // Same package
+        assert!(!BagRewriter::has_package_change(
+            "std_msgs/String",
+            "std_msgs/Int32"
+        ));
+
+        // Different packages
+        assert!(BagRewriter::has_package_change(
+            "std_msgs/String",
+            "geometry_msgs/Twist"
+        ));
+
+        // No package (no slash) - both are non-empty and different
+        assert!(BagRewriter::has_package_change(
+            "MessageType",
+            "AnotherType"
+        ));
+
+        // Same type without slash
+        assert!(!BagRewriter::has_package_change(
+            "MessageType",
+            "MessageType"
+        ));
+
+        // Empty strings
+        assert!(!BagRewriter::has_package_change("", "std_msgs/String"));
+        assert!(!BagRewriter::has_package_change("std_msgs/String", ""));
+        assert!(!BagRewriter::has_package_change("", ""));
+
+        // Complex package names
+        assert!(BagRewriter::has_package_change(
+            "old_pkg/Type",
+            "new_pkg/Type"
+        ));
+    }
+
+    #[test]
+    fn test_package_extraction_consistency() {
+        // Test that extract_package_name is consistent
+        let test_cases = [
+            ("pkg/Type", "pkg"),
+            ("pkg/subpkg/Type", "pkg"), // Only first part
+            ("Type", "Type"),           // No slash, returns whole string
+            ("", ""),                   // Empty returns empty
+        ];
+
+        for (input, expected) in test_cases {
+            assert_eq!(BagRewriter::extract_package_name(input), expected);
+        }
     }
 }

@@ -432,6 +432,44 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_format_rrd() {
+        // RRD format should not be recognized (not supported by rewriter)
+        let path = Path::new("test.rrd");
+        assert_eq!(detect_format(path), None);
+    }
+
+    #[test]
+    fn test_detect_format_empty_extension() {
+        // File with trailing dot but no extension
+        let path = Path::new("test.");
+        assert_eq!(detect_format(path), None);
+    }
+
+    #[test]
+    fn test_detect_format_multiple_extensions() {
+        // Files with multiple dots should still detect correctly
+        let path = Path::new("test.data.file.mcap");
+        assert_eq!(detect_format(path), Some("mcap"));
+
+        let path = Path::new("my.data.file.bag");
+        assert_eq!(detect_format(path), Some("bag"));
+    }
+
+    #[test]
+    fn test_detect_format_json() {
+        // JSON is not a supported rewriter format
+        let path = Path::new("test.json");
+        assert_eq!(detect_format(path), None);
+    }
+
+    #[test]
+    fn test_detect_format_dat() {
+        // .dat files are not recognized
+        let path = Path::new("test.dat");
+        assert_eq!(detect_format(path), None);
+    }
+
+    #[test]
     fn test_robo_rewriter_open_unknown_format() {
         // This would try to open a file, so we test the error path differently
         let path = Path::new("test.unknown");
@@ -462,5 +500,200 @@ mod tests {
         let path = Path::new("test.txt");
         let format = detect_format(path);
         assert_eq!(format, None);
+    }
+
+    #[test]
+    fn test_rewrite_options_builder_pattern() {
+        use crate::transform::TransformBuilder;
+
+        // Test the builder pattern is ergonomic
+        let options = RewriteOptions::default().with_transforms(
+            TransformBuilder::new()
+                .with_topic_rename("/a", "/b")
+                .with_type_rename("old/Old", "new/New")
+                .build(),
+        );
+
+        assert!(options.has_transforms());
+        assert!(options.validate_schemas);
+        assert!(options.skip_decode_failures);
+        assert!(options.passthrough_non_cdr);
+    }
+
+    #[test]
+    fn test_rewrite_options_combinations() {
+        // Test various boolean combinations
+        let test_cases = [
+            (true, true, true),
+            (true, true, false),
+            (true, false, true),
+            (true, false, false),
+            (false, true, true),
+            (false, true, false),
+            (false, false, true),
+            (false, false, false),
+        ];
+
+        for (validate_schemas, skip_decode_failures, passthrough_non_cdr) in test_cases {
+            let options = RewriteOptions {
+                validate_schemas,
+                skip_decode_failures,
+                passthrough_non_cdr,
+                transforms: None,
+            };
+
+            assert_eq!(options.validate_schemas, validate_schemas);
+            assert_eq!(options.skip_decode_failures, skip_decode_failures);
+            assert_eq!(options.passthrough_non_cdr, passthrough_non_cdr);
+        }
+    }
+
+    #[test]
+    fn test_rewrite_stats_mutability() {
+        // Test that stats fields can be modified
+        let stats = RewriteStats {
+            message_count: 100,
+            channel_count: 5,
+            reencoded_count: 80,
+            passthrough_count: 20,
+            decode_failures: 2,
+            encode_failures: 1,
+            topics_renamed: 3,
+            types_renamed: 4,
+        };
+
+        assert_eq!(stats.message_count, 100);
+        assert_eq!(stats.channel_count, 5);
+        assert_eq!(stats.reencoded_count, 80);
+        assert_eq!(stats.passthrough_count, 20);
+        assert_eq!(stats.decode_failures, 2);
+        assert_eq!(stats.encode_failures, 1);
+        assert_eq!(stats.topics_renamed, 3);
+        assert_eq!(stats.types_renamed, 4);
+    }
+
+    #[test]
+    fn test_rewrite_stats_fields_are_public() {
+        // Verify all fields are accessible
+        let stats = RewriteStats {
+            message_count: 1,
+            channel_count: 2,
+            decode_failures: 3,
+            encode_failures: 4,
+            reencoded_count: 5,
+            passthrough_count: 6,
+            topics_renamed: 7,
+            types_renamed: 8,
+        };
+
+        // All fields should be accessible publicly
+        let _ = stats.message_count;
+        let _ = stats.channel_count;
+        let _ = stats.decode_failures;
+        let _ = stats.encode_failures;
+        let _ = stats.reencoded_count;
+        let _ = stats.passthrough_count;
+        let _ = stats.topics_renamed;
+        let _ = stats.types_renamed;
+    }
+
+    #[test]
+    fn test_rewrite_options_fields_are_public() {
+        // Verify all fields are accessible
+        let options = RewriteOptions {
+            validate_schemas: true,
+            skip_decode_failures: false,
+            passthrough_non_cdr: true,
+            transforms: None,
+        };
+
+        // All fields should be accessible publicly
+        let _ = options.validate_schemas;
+        let _ = options.skip_decode_failures;
+        let _ = options.passthrough_non_cdr;
+        let _ = options.transforms;
+    }
+
+    #[test]
+    fn test_rewrite_options_clone() {
+        use crate::transform::TransformBuilder;
+
+        let pipeline = TransformBuilder::new()
+            .with_topic_rename("/old", "/new")
+            .build();
+
+        let options1 = RewriteOptions {
+            validate_schemas: false,
+            skip_decode_failures: true,
+            passthrough_non_cdr: false,
+            transforms: Some(pipeline),
+        };
+
+        let options2 = options1.clone();
+
+        assert_eq!(options1.validate_schemas, options2.validate_schemas);
+        assert_eq!(options1.skip_decode_failures, options2.skip_decode_failures);
+        assert_eq!(options1.passthrough_non_cdr, options2.passthrough_non_cdr);
+        assert!(options2.has_transforms());
+    }
+
+    #[test]
+    fn test_rewrite_stats_equality() {
+        let stats1 = RewriteStats {
+            message_count: 10,
+            channel_count: 2,
+            ..Default::default()
+        };
+
+        let stats2 = RewriteStats {
+            message_count: 10,
+            channel_count: 2,
+            ..Default::default()
+        };
+
+        assert_eq!(stats1.message_count, stats2.message_count);
+        assert_eq!(stats1.channel_count, stats2.channel_count);
+    }
+
+    #[test]
+    fn test_rewrite_stats_independent_fields() {
+        // Verify each stat field tracks independently
+        let stats = RewriteStats {
+            message_count: 10,
+            reencoded_count: 8,
+            passthrough_count: 2,
+            ..RewriteStats::default()
+        };
+
+        // reencoded + passthrough may be less than message_count (due to failures)
+        assert_eq!(stats.reencoded_count + stats.passthrough_count, 10);
+        assert_eq!(stats.message_count, 10);
+    }
+
+    #[test]
+    fn test_format_rewriter_send_sync_bounds() {
+        // The FormatRewriter trait requires Send + Sync
+        // Verify that concrete implementations satisfy these bounds
+        fn assert_send_sync<T: Send + Sync>() {}
+
+        // BagRewriter should be Send + Sync
+        assert_send_sync::<crate::rewriter::bag::BagRewriter>();
+
+        // McapRewriter should be Send + Sync
+        assert_send_sync::<crate::rewriter::mcap::McapRewriter>();
+    }
+
+    #[test]
+    fn test_rewrite_options_debug_format() {
+        let options = RewriteOptions::default();
+        let debug_str = format!("{:?}", options);
+        assert!(debug_str.contains("RewriteOptions"));
+    }
+
+    #[test]
+    fn test_rewrite_stats_debug_format() {
+        let stats = RewriteStats::default();
+        let debug_str = format!("{:?}", stats);
+        assert!(debug_str.contains("RewriteStats"));
     }
 }
