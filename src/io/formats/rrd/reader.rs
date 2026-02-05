@@ -213,12 +213,16 @@ impl RrdReader {
         let mut reader = BufReader::new(file);
         let header = RrdHeader::read(&mut reader)?;
 
-        // Validate version (RRF2 version is [0, 0, 0, 1])
-        // For now, we accept any version that starts with 0.0.0.x
-        if header.version[0] != 0 || header.version[1] != 0 || header.version[2] != 0 {
+        // Validate version - Rerun encodes its semver in the version field
+        // e.g., [0, 27, 0, 193] = Rerun 0.27.0
+        // For now, we accept any 0.x.x.x version (all Rerun 0.x releases)
+        if header.version[0] != 0 {
             return Err(CodecError::parse(
                 "RRD",
-                format!("Unsupported version: {:?}", header.version),
+                format!(
+                    "Unsupported version: {:?} (only Rerun 0.x supported)",
+                    header.version
+                ),
             ));
         }
 
@@ -454,16 +458,23 @@ impl<'a> DecodedMessageIter<'a> {
             if pos + len <= data_buf.len() {
                 let payload = data_buf[pos..pos + len].to_vec();
 
-                // Parse ArrowMsg protobuf and decompress
-                let arrow_msg = ArrowMsg::from_bytes(&payload).map_err(|e| {
-                    CodecError::parse("RRD", format!("Failed to parse ArrowMsg: {e}"))
-                })?;
+                // Only ArrowMsg messages use the ArrowMsg protobuf format
+                // SetStoreInfo and BlueprintActivationCommand are different protobufs
+                let data = if kind == MSG_KIND_ARROW_MSG {
+                    // Parse ArrowMsg protobuf and decompress
+                    let arrow_msg = ArrowMsg::from_bytes(&payload).map_err(|e| {
+                        CodecError::parse("RRD", format!("Failed to parse ArrowMsg: {e}"))
+                    })?;
 
-                let decompressed = arrow_msg.decompress_payload().map_err(|e| {
-                    CodecError::parse("RRD", format!("Failed to decompress ArrowMsg: {e}"))
-                })?;
+                    arrow_msg.decompress_payload().map_err(|e| {
+                        CodecError::parse("RRD", format!("Failed to decompress ArrowMsg: {e}"))
+                    })?
+                } else {
+                    // Other message types are returned as-is
+                    payload
+                };
 
-                messages.push((decompressed, topic));
+                messages.push((data, topic));
                 pos += len;
             } else {
                 break;
@@ -607,16 +618,23 @@ impl<'a> DecodedMessageWithTimestampIter<'a> {
             if pos + len <= data_buf.len() {
                 let payload = data_buf[pos..pos + len].to_vec();
 
-                // Parse ArrowMsg protobuf and decompress
-                let arrow_msg = ArrowMsg::from_bytes(&payload).map_err(|e| {
-                    CodecError::parse("RRD", format!("Failed to parse ArrowMsg: {e}"))
-                })?;
+                // Only ArrowMsg messages use the ArrowMsg protobuf format
+                // SetStoreInfo and BlueprintActivationCommand are different protobufs
+                let data = if kind == MSG_KIND_ARROW_MSG {
+                    // Parse ArrowMsg protobuf and decompress
+                    let arrow_msg = ArrowMsg::from_bytes(&payload).map_err(|e| {
+                        CodecError::parse("RRD", format!("Failed to parse ArrowMsg: {e}"))
+                    })?;
 
-                let decompressed = arrow_msg.decompress_payload().map_err(|e| {
-                    CodecError::parse("RRD", format!("Failed to decompress ArrowMsg: {e}"))
-                })?;
+                    arrow_msg.decompress_payload().map_err(|e| {
+                        CodecError::parse("RRD", format!("Failed to decompress ArrowMsg: {e}"))
+                    })?
+                } else {
+                    // Other message types are returned as-is
+                    payload
+                };
 
-                messages.push((decompressed, topic));
+                messages.push((data, topic));
                 pos += len;
             } else {
                 break;

@@ -7,13 +7,15 @@
 //! This module handles the ArrowMsg format used by Rerun's RRD files.
 //! ArrowMsg contains potentially LZ4-compressed Arrow IPC data.
 //!
-//! # ArrowMsg Format
+//! # ArrowMsg Format (Rerun 0.27+)
 //!
 //! ```text
 //! ArrowMsg (Protobuf):
-//!   - compression: int32 (0=Off, 1=LZ4)
-//!   - uncompressed_size: uint64
-//!   - payload: bytes (Arrow IPC data, potentially compressed)
+//!   - field 1: entity_path (bytes, length-delimited) - skip
+//!   - field 2: compression (varint): 0=Off, 2=LZ4
+//!   - field 3: uncompressed_size (varint)
+//!   - field 4: num_instances or flag (varint) - skip
+//!   - field 5: payload (bytes, length-delimited) - Arrow IPC data, potentially compressed
 //! ```
 
 use std::io;
@@ -24,14 +26,15 @@ use crate::core::Result;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArrowCompression {
     Off = 0,
-    Lz4 = 1,
+    Lz4 = 2, // Rerun uses 2 for LZ4
 }
 
 impl ArrowCompression {
     /// Create from u32 value.
+    /// Rerun uses: 0=Off, 2=LZ4
     pub fn from_u32(value: u32) -> Self {
         const OFF: u32 = 0;
-        const LZ4: u32 = 1;
+        const LZ4: u32 = 2;
 
         match value {
             OFF => Self::Off,
@@ -90,11 +93,13 @@ impl ArrowMsg {
     /// Parse an ArrowMsg from bytes (protobuf format).
     ///
     /// This implements a minimal protobuf parser for the ArrowMsg format.
-    /// The format is:
+    /// Rerun's ArrowMsg format:
     /// ```text
-    /// field 1 (compression): varint, tag=0x08
-    /// field 2 (uncompressed_size): varint, tag=0x10
-    /// field 3 (payload): length-delimited, tag=0x1A
+    /// field 1: entity_path (bytes, length-delimited) - skip
+    /// field 2: compression (varint): 0=Off, 2=LZ4
+    /// field 3: uncompressed_size (varint)
+    /// field 4: num_instances/flag (varint) - skip
+    /// field 5: payload (bytes, length-delimited)
     /// ```
     pub fn from_bytes(mut data: &[u8]) -> Result<Self> {
         let mut compression = ArrowCompression::Off;
@@ -109,7 +114,18 @@ impl ArrowMsg {
 
             match field_number {
                 1 => {
-                    // compression field (varint)
+                    // entity_path field (length-delimited) - skip
+                    if wire_type != 2 {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Invalid wire type for entity_path field",
+                        )
+                        .into());
+                    }
+                    skip_field(&mut data, wire_type)?;
+                }
+                2 => {
+                    // compression field (varint): 0=Off, 2=LZ4
                     if wire_type != 0 {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
@@ -119,7 +135,7 @@ impl ArrowMsg {
                     }
                     compression = ArrowCompression::from_u32(read_varint(&mut data)? as u32);
                 }
-                2 => {
+                3 => {
                     // uncompressed_size field (varint)
                     if wire_type != 0 {
                         return Err(io::Error::new(
@@ -130,7 +146,11 @@ impl ArrowMsg {
                     }
                     uncompressed_size = read_varint(&mut data)?;
                 }
-                3 => {
+                4 => {
+                    // num_instances/flag field (varint) - skip
+                    skip_field(&mut data, wire_type)?;
+                }
+                5 => {
                     // payload field (length-delimited)
                     if wire_type != 2 {
                         return Err(io::Error::new(
@@ -165,19 +185,28 @@ impl ArrowMsg {
     }
 
     /// Serialize the ArrowMsg to bytes (protobuf format).
+    /// Writes in Rerun's ArrowMsg format.
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
 
-        // Write compression field (field 1, varint)
-        write_varint(&mut buf, (1 << 3) | 0); // tag
+        // Write entity_path field (field 1, length-delimited) - empty for now
+        write_varint(&mut buf, (1 << 3) | 2); // tag
+        write_varint(&mut buf, 0); // empty length
+
+        // Write compression field (field 2, varint)
+        write_varint(&mut buf, (2 << 3) | 0); // tag
         write_varint(&mut buf, self.compression.as_u32() as u64);
 
-        // Write uncompressed_size field (field 2, varint)
-        write_varint(&mut buf, (2 << 3) | 0); // tag
+        // Write uncompressed_size field (field 3, varint)
+        write_varint(&mut buf, (3 << 3) | 0); // tag
         write_varint(&mut buf, self.uncompressed_size);
 
-        // Write payload field (field 3, length-delimited)
-        write_varint(&mut buf, (3 << 3) | 2); // tag
+        // Write num_instances field (field 4, varint) - default to 1
+        write_varint(&mut buf, (4 << 3) | 0); // tag
+        write_varint(&mut buf, 1);
+
+        // Write payload field (field 5, length-delimited)
+        write_varint(&mut buf, (5 << 3) | 2); // tag
         write_varint(&mut buf, self.payload.len() as u64);
         buf.extend_from_slice(&self.payload);
 
@@ -336,14 +365,14 @@ mod tests {
     #[test]
     fn test_arrow_compression_from_u32() {
         assert_eq!(ArrowCompression::from_u32(0), ArrowCompression::Off);
-        assert_eq!(ArrowCompression::from_u32(1), ArrowCompression::Lz4);
+        assert_eq!(ArrowCompression::from_u32(2), ArrowCompression::Lz4); // Rerun uses 2 for LZ4
         assert_eq!(ArrowCompression::from_u32(99), ArrowCompression::Off); // Default
     }
 
     #[test]
     fn test_arrow_compression_to_u32() {
         assert_eq!(ArrowCompression::Off.as_u32(), 0);
-        assert_eq!(ArrowCompression::Lz4.as_u32(), 1);
+        assert_eq!(ArrowCompression::Lz4.as_u32(), 2); // Rerun uses 2 for LZ4
     }
 
     #[test]
