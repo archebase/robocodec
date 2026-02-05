@@ -8,7 +8,7 @@
 //! to S3 using multipart upload for efficient handling of large files.
 
 use crate::io::metadata::{ChannelInfo, RawMessage};
-use crate::io::s3::{client::S3Client, error::FatalError, location::S3Location};
+use crate::io::s3::{FatalError, S3Client, S3Location};
 
 /// Writer for S3-hosted robotics data files.
 ///

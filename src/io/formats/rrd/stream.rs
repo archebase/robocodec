@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Streaming RRD parser for S3 (RRF2 format).
+//! Streaming RRD parser (RRF2 format).
 //!
 //! This module provides a streaming parser for Rerun RRD (RRF2) files that can parse
-//! RRD data from byte chunks as they arrive from S3, without requiring the
+//! RRD data from byte chunks as they arrive, without requiring the
 //! entire file to be available locally.
 //!
 //! The RRF2 format structure:
@@ -22,8 +22,7 @@ use crate::io::formats::rrd::constants::{
     STREAM_HEADER_SIZE,
 };
 use crate::io::metadata::ChannelInfo;
-use crate::io::s3::error::FatalError;
-use crate::io::s3::parser::StreamingParser;
+use crate::io::s3::{FatalError, StreamingParser};
 
 /// RRD magic for streaming (RRF2).
 pub const RRD_STREAM_MAGIC: &[u8; 4] = RRD_MAGIC;
@@ -134,7 +133,7 @@ enum ParserState {
 /// Streaming RRD parser for RRF2 format.
 ///
 /// This parser maintains state across chunks and can parse RRD data
-/// incrementally as data arrives from S3.
+/// incrementally as data arrives.
 pub struct StreamingRrdParser {
     /// Parser state
     state: ParserState,

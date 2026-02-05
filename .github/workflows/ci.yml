@@ -96,10 +96,11 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov-rust.info
           flags: rust
-          name: codecov-rust
+          name: rust-coverage
+          fail_ci_if_error: false
+          verbose: true
 
   rust-test-windows:
     name: Rust Tests (Windows)
@@ -161,10 +162,11 @@ jobs:
       - name: Upload Python coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           flags: python
-          name: codecov-python-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: python-coverage-${{ matrix.os }}-py${{ matrix.python-version }}
+          fail_ci_if_error: false
+          verbose: true
 
   python-examples:
     name: Python Examples (API Compatibility)

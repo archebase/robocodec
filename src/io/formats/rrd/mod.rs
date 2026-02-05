@@ -48,9 +48,16 @@ pub mod constants;
 /// Reader implementation.
 pub mod reader;
 
+/// Streaming parser (transport-agnostic).
+pub mod stream;
+
 /// Writer implementation.
 pub mod writer;
 
 // Re-exports
 pub use reader::{DecodedMessageWithTimestampStream, RrdFormat, RrdReader};
+pub use stream::{
+    Compression, MessageKind, RRD_STREAM_MAGIC, RrdMessageRecord, RrdStreamHeader,
+    StreamingRrdParser,
+};
 pub use writer::RrdWriter;

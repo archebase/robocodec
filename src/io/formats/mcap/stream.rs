@@ -2,21 +2,20 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Streaming MCAP parser for S3.
+//! Streaming MCAP parser.
 //!
 //! This module provides a zero-copy streaming parser that can parse MCAP records
-//! from byte chunks as they arrive from S3, without requiring the entire file
-//! to be available locally.
+//! from byte chunks as they arrive from any transport (S3, HTTP, etc.).
 
 use std::collections::HashMap;
 
-use crate::io::formats::mcap::constants::{
+use super::constants::{
     MCAP_MAGIC, OP_ATTACHMENT, OP_ATTACHMENT_INDEX, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX,
     OP_DATA_END, OP_FOOTER, OP_HEADER, OP_MESSAGE, OP_MESSAGE_INDEX, OP_METADATA,
     OP_METADATA_INDEX, OP_SCHEMA, OP_STATISTICS, OP_SUMMARY_OFFSET,
 };
 use crate::io::metadata::ChannelInfo;
-use crate::io::s3::error::FatalError;
+use crate::io::s3::FatalError;
 
 /// MCAP record header as parsed from the stream.
 #[derive(Debug, Clone, PartialEq)]
@@ -80,7 +79,7 @@ pub struct MessageRecord {
 /// Streaming MCAP parser.
 ///
 /// This parser maintains state across chunks and can parse MCAP records
-/// incrementally as data arrives.
+/// incrementally as data arrives from any byte stream.
 pub struct StreamingMcapParser {
     /// Discovered schemas indexed by schema ID
     schemas: HashMap<u16, SchemaInfo>,

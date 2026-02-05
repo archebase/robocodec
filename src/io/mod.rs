@@ -12,6 +12,9 @@ pub mod detection;
 pub mod formats;
 pub mod metadata;
 
+// Transport layer for different data sources
+pub mod transport;
+
 // S3 streaming support (requires `s3` feature)
 #[cfg(feature = "s3")]
 pub mod s3;
