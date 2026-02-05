@@ -225,6 +225,8 @@ make build-python-dev
 | ROS1 Bag | ✅ | ✅ |
 | RRF2 (Rerun) | ✅ | ✅ |
 
+> **注意：** RRF2 支持兼容 Rerun **0.27+** 版本。更早版本使用不同的格式，暂不支持。
+
 ## 消息编码
 
 | 编码 | 描述 |

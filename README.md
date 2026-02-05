@@ -224,6 +224,8 @@ make build-python-dev
 | ROS1 Bag | ✅ | ✅ |
 | RRF2 (Rerun) | ✅ | ✅ |
 
+> **Note:** RRF2 support is compatible with Rerun **0.27+**. Earlier versions use a different format and are not supported.
+
 ## Message Encodings
 
 | Encoding | Description |
