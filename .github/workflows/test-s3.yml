@@ -76,7 +76,15 @@ jobs:
 
       - name: Configure MinIO and upload test fixtures
         run: |
-          mc alias set s3 http://127.0.0.1:9000 minioadmin minioadmin
+          # Retry mc alias set in case MinIO isn't fully ready yet
+          for i in {1..10}; do
+            if mc alias set s3 http://127.0.0.1:9000 minioadmin minioadmin 2>/dev/null; then
+              echo "MinIO alias configured successfully"
+              break
+            fi
+            echo "Retrying mc alias set... ($i/10)"
+            sleep 2
+          done
           mc mb s3/robocodec-test --ignore-existing
 
           # Upload MCAP test fixtures
