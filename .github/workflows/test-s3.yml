@@ -92,14 +92,11 @@ jobs:
           fi
           echo "Bucket 'test-fixtures' is ready"
 
-      - name: Run S3 integration tests
-        run: cargo test --test s3_integration
-
       - name: Run S3 unit tests
         run: cargo test --package robocodec --lib io::s3
 
-      - name: Run S3 integration tests (live)
-        run: cargo test --package robocodec --lib s3_integration_tests
+      - name: Run S3 integration tests (with live MinIO)
+        run: cargo test --test s3_tests s3_integration
 
       - name: Run clippy on S3 module
         run: cargo clippy --package robocodec -- -D warnings -D clippy::all
