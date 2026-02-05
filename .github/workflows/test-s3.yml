@@ -56,41 +56,26 @@ jobs:
       - name: Start MinIO with docker-compose
         run: docker compose up -d
 
-      - name: Wait for MinIO and bucket creation
+      - name: Wait for MinIO to be healthy (bucket created)
         run: |
-          # Wait for MinIO health endpoint
-          for i in {1..30}; do
-            if curl -f http://localhost:9000/minio/health/live 2>/dev/null; then
-              echo "MinIO is ready"
-              break
-            fi
-            echo "Waiting for MinIO... ($i/30)"
-            sleep 2
-          done
-
-          # Wait for minio-init to complete and create bucket
-          echo "Waiting for bucket creation..."
-          for i in {1..60}; do
-            if docker compose ps minio-init | grep -q "Exited (0)"; then
-              echo "minio-init completed successfully"
-              break
-            fi
-            if docker compose ps minio-init | grep -q "Exited"; then
-              echo "minio-init failed with error"
-              docker compose logs minio-init
-              exit 1
-            fi
-            echo "Waiting for minio-init... ($i/60)"
-            sleep 2
-          done
-
-          # Verify bucket was created
-          if ! curl -f http://localhost:9000/test-fixtures 2>/dev/null; then
-            echo "Bucket 'test-fixtures' not found"
-            docker compose logs minio-init
-            exit 1
+        # Wait for MinIO healthcheck to pass (this means bucket exists)
+        for i in {1..60}; do
+          if docker compose ps | grep "robocodec-minio" | grep -q "healthy"; then
+            echo "MinIO is healthy and bucket is ready"
+            docker compose ps
+            break
           fi
-          echo "Bucket 'test-fixtures' is ready"
+          echo "Waiting for MinIO to be healthy... ($i/60)"
+          sleep 2
+        done
+
+        # Verify bucket exists
+        if ! curl -f http://localhost:9000/test-fixtures 2>/dev/null; then
+          echo "Bucket 'test-fixtures' not found"
+          docker compose logs minio minio-init
+          exit 1
+        fi
+        echo "Bucket 'test-fixtures' verified"
 
       - name: Run S3 unit tests
         run: cargo test --package robocodec --lib io::s3
