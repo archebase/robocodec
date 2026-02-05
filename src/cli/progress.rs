@@ -93,3 +93,101 @@ impl Progress {
         self.last_width = line.len();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_progress_new() {
+        let progress = Progress::new(100, "Testing");
+        assert_eq!(progress.current, 0);
+        assert_eq!(progress.total, 100);
+    }
+
+    #[test]
+    fn test_progress_inc() {
+        let mut progress = Progress::new(100, "Testing");
+        progress.inc();
+        assert_eq!(progress.current, 1);
+        progress.inc();
+        assert_eq!(progress.current, 2);
+    }
+
+    #[test]
+    fn test_progress_set() {
+        let mut progress = Progress::new(100, "Testing");
+        progress.set(50);
+        assert_eq!(progress.current, 50);
+    }
+
+    #[test]
+    fn test_progress_set_clamps_to_total() {
+        let mut progress = Progress::new(100, "Testing");
+        progress.set(150);
+        assert_eq!(progress.current, 100);
+    }
+
+    #[test]
+    fn test_progress_set_zero() {
+        let mut progress = Progress::new(100, "Testing");
+        progress.set(0);
+        assert_eq!(progress.current, 0);
+    }
+
+    #[test]
+    fn test_progress_zero_total() {
+        let mut progress = Progress::new(0, "Testing");
+        assert_eq!(progress.total, 0);
+        // Should not panic when drawing with zero total
+        progress.set(0);
+    }
+
+    #[test]
+    fn test_progress_finish_with_message() {
+        let progress = Progress::new(100, "Testing");
+        // Just verify it doesn't panic - actual output is to stderr
+        progress.finish("Done");
+    }
+
+    #[test]
+    fn test_progress_finish_with_empty_message() {
+        let progress = Progress::new(100, "Testing");
+        progress.finish("");
+    }
+
+    #[test]
+    fn test_progress_multiple_sets() {
+        let mut progress = Progress::new(100, "Testing");
+        for i in 0..=100 {
+            progress.set(i);
+            assert_eq!(progress.current, i.min(100));
+        }
+    }
+
+    #[test]
+    fn test_progress_large_values() {
+        let mut progress = Progress::new(1_000_000_000, "Large");
+        progress.set(500_000_000);
+        assert_eq!(progress.current, 500_000_000);
+    }
+
+    #[test]
+    fn test_progress_prefix_variations() {
+        let mut progress1 = Progress::new(100, "Prefix1");
+        let mut progress2 = Progress::new(100, "");
+        let mut progress3 = Progress::new(100, "A very long prefix message here");
+        // Verify they don't panic
+        progress1.set(10);
+        progress2.set(10);
+        progress3.set(10);
+    }
+
+    #[test]
+    fn test_progress_set_same_value() {
+        let mut progress = Progress::new(100, "Testing");
+        progress.set(50);
+        progress.set(50);
+        assert_eq!(progress.current, 50);
+    }
+}

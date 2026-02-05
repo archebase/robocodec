@@ -39,3 +39,52 @@ pub use anyhow::Result as CliResult;
 
 #[cfg(feature = "cli")]
 pub type Result<T = ()> = CliResult<T>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_open_reader_nonexistent_file() {
+        let path = std::path::Path::new("/nonexistent/file/path.mcap");
+        let result = open_reader(path);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_open_reader_empty_path() {
+        let path = std::path::Path::new("");
+        let result = open_reader(path);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_open_reader_invalid_utf8() {
+        // Create a path with invalid UTF-8 (this is tricky on some systems)
+        // On most systems, we can't actually create an invalid UTF-8 path
+        // But we can test with a valid path that doesn't exist
+        let path = std::path::Path::new("test\0.mcap"); // Null byte makes it invalid
+        let result = open_reader(path);
+        // Should either error on invalid UTF-8 or file not found
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_result_type_alias() {
+        // Test that Result type alias works
+        let _result: Result<()> = Ok(());
+        let _result2: Result<i32> = Ok(42);
+    }
+
+    #[cfg(feature = "cli")]
+    #[test]
+    fn test_open_reader_relative_path() {
+        let path = std::path::Path::new("nonexistent.bag");
+        let result = open_reader(path);
+        assert!(result.is_err());
+    }
+}

@@ -134,4 +134,139 @@ mod tests {
         assert_eq!(start, 1_234_567_890_000_000_000);
         assert_eq!(end, 1_234_567_900_000_000_000);
     }
+
+    #[test]
+    fn test_format_duration_milliseconds() {
+        assert_eq!(format_duration(1_000_000), "1ms");
+        assert_eq!(format_duration(999_999_999), "999ms");
+        assert_eq!(format_duration(500_000_000), "500ms");
+    }
+
+    #[test]
+    fn test_format_duration_seconds() {
+        assert_eq!(format_duration(1_000_000_000), "1.000s");
+        assert_eq!(format_duration(5_500_000_000), "5.500s");
+    }
+
+    #[test]
+    fn test_format_duration_minutes() {
+        assert_eq!(format_duration(60_000_000_000), "1m 0s");
+        assert_eq!(format_duration(125_000_000_000), "2m 5s");
+    }
+
+    #[test]
+    fn test_format_duration_hours() {
+        assert_eq!(format_duration(3_600_000_000_000), "1h 0m");
+        assert_eq!(format_duration(7_200_000_000_000), "2h 0m");
+        assert_eq!(format_duration(3_600_000_000_000 + 60_000_000_000), "1h 1m");
+    }
+
+    #[test]
+    fn test_format_duration_zero() {
+        assert_eq!(format_duration(0), "0ms");
+    }
+
+    #[test]
+    fn test_format_timestamp_valid() {
+        let result = format_timestamp(1_700_000_000_000_000_000);
+        // Just verify it doesn't panic and returns something
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_format_timestamp_zero() {
+        let result = format_timestamp(0);
+        assert!(result.contains("1970"));
+    }
+
+    #[test]
+    fn test_parse_timestamp_zero() {
+        assert_eq!(parse_timestamp("0").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_parse_timestamp_as_seconds() {
+        assert_eq!(
+            parse_timestamp("1609459200").unwrap(),
+            1_609_459_200_000_000_000
+        ); // 2021-01-01 00:00:00 UTC
+    }
+
+    #[test]
+    fn test_parse_timestamp_as_nanos() {
+        // Large number should be treated as nanoseconds (just above threshold)
+        // Max u64 is ~18.4e19, threshold is ~32.5e9 seconds
+        // So we need a value > 32_503_680_000 * 1_000_000_000 = 32_503_680_000_000_000_000
+        // But that overflows! Let's use a value within u64 range
+        // 18_000_000_000_000_000_000 is valid and > threshold
+        assert_eq!(
+            parse_timestamp("18000000000000000000").unwrap(),
+            18_000_000_000_000_000_000
+        );
+    }
+
+    #[test]
+    fn test_parse_timestamp_iso8601() {
+        let result = parse_timestamp("2023-01-01T00:00:00Z");
+        assert!(result.is_ok());
+        assert!(result.unwrap() > 0);
+    }
+
+    #[test]
+    fn test_parse_timestamp_iso8601_with_timezone() {
+        let result = parse_timestamp("2023-01-01T00:00:00+00:00");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_timestamp_invalid_string() {
+        assert!(parse_timestamp("invalid").is_err());
+        assert!(parse_timestamp("").is_err());
+        assert!(parse_timestamp("abc123").is_err());
+    }
+
+    #[test]
+    fn test_parse_time_range_with_dash() {
+        let (start, end) = parse_time_range("0-1").unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 1_000_000_000);
+    }
+
+    #[test]
+    fn test_parse_time_range_invalid_format() {
+        assert!(parse_time_range("0").is_err());
+        assert!(parse_time_range("").is_err());
+    }
+
+    #[test]
+    fn test_parse_time_range_end_before_start() {
+        assert!(parse_time_range("10,0").is_err());
+        assert!(parse_time_range("100,50").is_err());
+    }
+
+    #[test]
+    fn test_parse_time_range_equal_times() {
+        // Equal times should error
+        assert!(parse_time_range("100,100").is_err());
+    }
+
+    #[test]
+    fn test_parse_timestamp_negative_rejected() {
+        assert!(parse_timestamp("-1").is_err());
+    }
+
+    #[test]
+    fn test_format_duration_boundary_values() {
+        // Test exact boundary: 59.999 seconds
+        assert_eq!(format_duration(59_999_000_000), "59.999s");
+
+        // Test exact boundary: 60 seconds
+        assert_eq!(format_duration(60_000_000_000), "1m 0s");
+
+        // Test exact boundary: 3599.999 seconds
+        assert_eq!(format_duration(3_599_999_000_000), "59m 59s");
+
+        // Test exact boundary: 3600 seconds
+        assert_eq!(format_duration(3_600_000_000_000), "1h 0m");
+    }
 }
