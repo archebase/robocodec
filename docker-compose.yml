@@ -27,27 +27,30 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
+      # Healthcheck verifies bucket exists (minio-init must create it first)
+      test: ["CMD-SHELL", "mc alias set local http://localhost:9000 minioadmin minioadmin && mc ls local/test-fixtures || exit 1"]
+      interval: 5s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      retries: 30
+      start_period: 5s
 
-  # MinIO client to create buckets and upload test fixtures
+  # MinIO client to create buckets
   minio-init:
     image: minio/mc:latest
     container_name: robocodec-minio-init
     restart: "no"
     depends_on:
       minio:
-        condition: service_started
+        condition: service_started  # Start after MinIO starts, not healthy
     entrypoint: >
       /bin/sh -c "
-        sleep 5;
-        mc alias set robocodec http://minio:9000 minioadmin minioadmin;
-        mc mb robocodec/test-fixtures --ignore-existing;
-        mc anonymous set download robocodec/test-fixtures;
-        exit 0;
+      echo 'Creating S3 buckets...';
+      sleep 3;
+      mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      mc mb myminio/test-fixtures --ignore-existing;
+      mc anonymous set download myminio/test-fixtures;
+      echo 'Buckets created successfully';
+      exit 0;
       "
 
 volumes:

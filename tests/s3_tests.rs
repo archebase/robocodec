@@ -9,7 +9,7 @@
 //! - Two-tier reading tests (footer-first, summary parsing, fallback scanning)
 //! - Golden file comparison tests
 //! - Wiremock mock server tests
-//! - MinIO integration tests
+//! - S3 integration tests
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -1481,32 +1481,33 @@ mod wiremock_tests {
 }
 
 // ============================================================================
-// MinIO Integration Tests
+// S3 Integration Tests
 // ============================================================================
 
-mod minio_tests {
+mod s3_integration_tests {
     use super::*;
 
     #[derive(Clone)]
-    struct MinIOConfig {
+    struct S3Config {
         pub endpoint: String,
         pub bucket: String,
         pub region: String,
     }
 
-    impl Default for MinIOConfig {
+    impl Default for S3Config {
         fn default() -> Self {
             Self {
                 endpoint: std::env::var("MINIO_ENDPOINT")
                     .unwrap_or_else(|_| "http://localhost:9000".to_string()),
-                bucket: std::env::var("MINIO_BUCKET").unwrap_or_else(|_| "test-bucket".to_string()),
+                bucket: std::env::var("MINIO_BUCKET")
+                    .unwrap_or_else(|_| "test-fixtures".to_string()),
                 region: std::env::var("MINIO_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
             }
         }
     }
 
-    async fn minio_available() -> bool {
-        let config = MinIOConfig::default();
+    async fn s3_available() -> bool {
+        let config = S3Config::default();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(2))
             .danger_accept_invalid_certs(true)
@@ -1517,8 +1518,8 @@ mod minio_tests {
         client.head(&url).send().await.is_ok()
     }
 
-    async fn upload_to_minio(
-        config: &MinIOConfig,
+    async fn upload_to_s3(
+        config: &S3Config,
         key: &str,
         data: &[u8],
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1542,8 +1543,8 @@ mod minio_tests {
     }
 
     #[tokio::test]
-    async fn test_minio_docker_instructions() {
-        println!("\n==== MinIO Docker Setup Instructions ====");
+    async fn test_s3_docker_instructions() {
+        println!("\n==== S3 Docker Setup Instructions ====");
         println!("Using docker-compose (recommended):");
         println!("  docker compose up -d");
         println!();
@@ -1556,19 +1557,19 @@ mod minio_tests {
         println!("  ./scripts/upload-fixtures-to-minio.sh");
         println!();
         println!("Run tests:");
-        println!("  cargo test --features s3 minio_tests");
+        println!("  cargo test --features s3 s3_integration_tests");
         println!();
         println!("Web console: http://localhost:9001 (minioadmin/minioadmin)");
         println!("=========================================\n");
     }
 
     #[tokio::test]
-    async fn test_minio_read_mcap() {
-        if !minio_available().await {
+    async fn test_s3_read_mcap() {
+        if !s3_available().await {
             return;
         }
 
-        let config = MinIOConfig::default();
+        let config = S3Config::default();
         let fixture_path = fixture_path("robocodec_test_0.mcap");
 
         if !fixture_path.exists() {
@@ -1579,9 +1580,9 @@ mod minio_tests {
         let key = "test/robocodec_test_0.mcap";
 
         // Skip test if bucket doesn't exist (403 Forbidden)
-        if upload_to_minio(&config, key, &data).await.is_err() {
+        if upload_to_s3(&config, key, &data).await.is_err() {
             eprintln!(
-                "Skipping MinIO test: bucket '{}' does not exist or is not accessible",
+                "Skipping S3 test: bucket '{}' does not exist or is not accessible",
                 config.bucket
             );
             eprintln!(
@@ -1613,15 +1614,15 @@ mod minio_tests {
         assert!(FormatReader::file_size(&reader) > 0);
     }
 
-    /// Test full message streaming from MinIO.
+    /// Test full message streaming from S3.
     /// This verifies the complete S3 streaming read pipeline.
     #[tokio::test]
-    async fn test_minio_stream_messages() {
-        if !minio_available().await {
+    async fn test_s3_stream_messages() {
+        if !s3_available().await {
             return;
         }
 
-        let config = MinIOConfig::default();
+        let config = S3Config::default();
         let fixture_path = fixture_path("robocodec_test_0.mcap");
 
         if !fixture_path.exists() {
@@ -1632,9 +1633,9 @@ mod minio_tests {
         let key = "test/robocodec_test_0.mcap";
 
         // Skip test if bucket doesn't exist
-        if upload_to_minio(&config, key, &data).await.is_err() {
+        if upload_to_s3(&config, key, &data).await.is_err() {
             eprintln!(
-                "Skipping MinIO test: bucket '{}' does not exist. Create with: docker compose up -d",
+                "Skipping S3 test: bucket '{}' does not exist. Create with: docker compose up -d",
                 config.bucket
             );
             return;
@@ -1695,14 +1696,14 @@ mod minio_tests {
         );
     }
 
-    /// Test streaming a BAG file from MinIO.
+    /// Test streaming a BAG file from S3.
     #[tokio::test]
-    async fn test_minio_stream_bag() {
-        if !minio_available().await {
+    async fn test_s3_stream_bag() {
+        if !s3_available().await {
             return;
         }
 
-        let config = MinIOConfig::default();
+        let config = S3Config::default();
         let fixture_path = fixture_path("robocodec_test_15.bag");
 
         if !fixture_path.exists() {
@@ -1713,8 +1714,8 @@ mod minio_tests {
         let key = "test/robocodec_test_15.bag";
 
         // Skip test if bucket doesn't exist
-        if upload_to_minio(&config, key, &data).await.is_err() {
-            eprintln!("Skipping MinIO BAG test: bucket does not exist");
+        if upload_to_s3(&config, key, &data).await.is_err() {
+            eprintln!("Skipping S3 BAG test: bucket does not exist");
             return;
         }
 
@@ -1754,12 +1755,12 @@ mod minio_tests {
 
     /// Test chunk boundary handling by using a small max_chunk_size.
     #[tokio::test]
-    async fn test_minio_chunk_boundaries() {
-        if !minio_available().await {
+    async fn test_s3_chunk_boundaries() {
+        if !s3_available().await {
             return;
         }
 
-        let config = MinIOConfig::default();
+        let config = S3Config::default();
         let fixture_path = fixture_path("robocodec_test_0.mcap");
 
         if !fixture_path.exists() {
@@ -1769,8 +1770,8 @@ mod minio_tests {
         let data = std::fs::read(&fixture_path).unwrap();
         let key = "test/robocodec_test_0_chunked.mcap";
 
-        if upload_to_minio(&config, key, &data).await.is_err() {
-            eprintln!("Skipping MinIO chunk test: bucket does not exist");
+        if upload_to_s3(&config, key, &data).await.is_err() {
+            eprintln!("Skipping S3 chunk test: bucket does not exist");
             return;
         }
 
@@ -1811,19 +1812,19 @@ mod minio_tests {
         eprintln!("Streamed {} messages with 4KB chunks", message_count);
     }
 
-    /// Test RRD file streaming from MinIO.
+    /// Test RRD file streaming from S3.
     #[tokio::test]
-    async fn test_minio_stream_rrd() {
-        if !minio_available().await {
+    async fn test_s3_stream_rrd() {
+        if !s3_available().await {
             return;
         }
 
-        let config = MinIOConfig::default();
+        let config = S3Config::default();
 
         // Look for RRD fixture files
         let rrd_dir = fixture_path("rrd");
         if !rrd_dir.exists() {
-            eprintln!("Skipping MinIO RRD test: no RRD fixtures directory");
+            eprintln!("Skipping S3 RRD test: no RRD fixtures directory");
             return;
         }
 
@@ -1842,7 +1843,7 @@ mod minio_tests {
         let rrd_path = match rrd_file {
             Some(p) => p,
             None => {
-                eprintln!("Skipping MinIO RRD test: no RRD files found");
+                eprintln!("Skipping S3 RRD test: no RRD files found");
                 return;
             }
         };
@@ -1853,8 +1854,8 @@ mod minio_tests {
             rrd_path.file_name().unwrap().to_string_lossy()
         );
 
-        if upload_to_minio(&config, &key, &data).await.is_err() {
-            eprintln!("Skipping MinIO RRD test: bucket does not exist");
+        if upload_to_s3(&config, &key, &data).await.is_err() {
+            eprintln!("Skipping S3 RRD test: bucket does not exist");
             return;
         }
 
@@ -1897,14 +1898,14 @@ mod minio_tests {
         eprintln!("Streamed {} messages from RRD file", message_count);
     }
 
-    /// Test multipart upload workflow with MinIO.
+    /// Test multipart upload workflow with S3.
     #[tokio::test]
-    async fn test_minio_multipart_upload() {
-        if !minio_available().await {
+    async fn test_s3_multipart_upload() {
+        if !s3_available().await {
             return;
         }
 
-        let config = MinIOConfig::default();
+        let config = S3Config::default();
         let key = "test/multipart_upload.mcap";
 
         // Create a small MCAP file for upload
@@ -1967,14 +1968,14 @@ mod minio_tests {
         }
     }
 
-    /// Test multipart upload abort with MinIO.
+    /// Test multipart upload abort with S3.
     #[tokio::test]
-    async fn test_minio_multipart_abort() {
-        if !minio_available().await {
+    async fn test_s3_multipart_abort() {
+        if !s3_available().await {
             return;
         }
 
-        let config = MinIOConfig::default();
+        let config = S3Config::default();
         let key = "test/multipart_abort.mcap";
 
         let location = S3Location::new(&config.bucket, key)
@@ -1998,12 +1999,12 @@ mod minio_tests {
 
     /// Test S3 reader with different chunk sizes.
     #[tokio::test]
-    async fn test_minio_various_chunk_sizes() {
-        if !minio_available().await {
+    async fn test_s3_various_chunk_sizes() {
+        if !s3_available().await {
             return;
         }
 
-        let config = MinIOConfig::default();
+        let config = S3Config::default();
         let fixture_path = fixture_path("robocodec_test_0.mcap");
 
         if !fixture_path.exists() {
@@ -2013,7 +2014,7 @@ mod minio_tests {
         let data = std::fs::read(&fixture_path).unwrap();
         let key = "test/chunk_size_test.mcap";
 
-        if upload_to_minio(&config, key, &data).await.is_err() {
+        if upload_to_s3(&config, key, &data).await.is_err() {
             return;
         }
 
@@ -2060,12 +2061,12 @@ mod minio_tests {
 
     /// Test error handling when bucket doesn't exist.
     #[tokio::test]
-    async fn test_minio_bucket_not_found() {
-        if !minio_available().await {
+    async fn test_s3_bucket_not_found() {
+        if !s3_available().await {
             return;
         }
 
-        let config = MinIOConfig::default();
+        let config = S3Config::default();
         let key = "test/nonexistent.mcap";
 
         // Use a non-existent bucket
@@ -2079,12 +2080,12 @@ mod minio_tests {
 
     /// Test error handling when object doesn't exist.
     #[tokio::test]
-    async fn test_minio_object_not_found() {
-        if !minio_available().await {
+    async fn test_s3_object_not_found() {
+        if !s3_available().await {
             return;
         }
 
-        let config = MinIOConfig::default();
+        let config = S3Config::default();
         let key = "test/nonexistent_file_12345.mcap";
 
         let location = S3Location::new(&config.bucket, key)

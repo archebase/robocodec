@@ -1,7 +1,7 @@
 # S3 Integration Test Workflow
 #
-# This workflow sets up MinIO (S3-compatible server) and runs
-# integration tests for S3 streaming functionality.
+# This workflow uses docker-compose to set up MinIO, matching the local
+# development setup. This ensures "local pass means CI pass".
 
 name: S3 Integration Tests
 
@@ -13,26 +13,22 @@ on:
       - 'src/io/s3/**'
       - 'tests/s3_integration_test.rs'
       - 'tests/s3_tests.rs'
+      - 'docker-compose.yml'
       - '.github/workflows/test-s3.yml'
   workflow_dispatch:
 
 env:
   RUST_BACKTRACE: 1
+  MINIO_ENDPOINT: http://localhost:9000
+  MINIO_ACCESS_KEY: minioadmin
+  MINIO_SECRET_KEY: minioadmin
+  MINIO_BUCKET: test-fixtures
+  MINIO_REGION: us-east-1
 
 jobs:
   s3-integration-tests:
     name: S3 Integration Tests
     runs-on: ubuntu-latest
-
-    services:
-      minio:
-        image: quay.io/minio/minio:RELEASE.2024-01-16T16-07-38Z
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-          MINIO_DEFAULT_BUCKETS: robocodec-test
-        ports:
-          - 9000:9000
 
     steps:
       - name: Checkout code
@@ -57,75 +53,35 @@ jobs:
       - name: Build robocodec
         run: cargo build --release
 
-      - name: Wait for MinIO to be ready
+      - name: Start MinIO with docker-compose
+        run: docker compose up -d
+
+      - name: Wait for MinIO to be healthy (bucket created)
         run: |
-          for i in {1..60}; do
-            if curl -f http://127.0.0.1:9000/minio/health/live 2>/dev/null || wget -q --spider http://127.0.0.1:9000/minio/health/live 2>/dev/null; then
-              echo "MinIO is ready"
-              break
-            fi
-            echo "Waiting for MinIO... ($i/60)"
-            sleep 1
-          done
-
-      - name: Install MinIO client
-        run: |
-          curl -sLo /tmp/mc https://dl.min.io/client/mc/release/linux-amd64/mc
-          chmod +x /tmp/mc
-          sudo mv /tmp/mc /usr/local/bin/mc
-
-      - name: Configure MinIO and upload test fixtures
-        run: |
-          mc alias set s3 http://127.0.0.1:9000 minioadmin minioadmin
-          mc mb s3/robocodec-test --ignore-existing
-
-          # Upload MCAP test fixtures
-          for f in tests/fixtures/robocodec_test_*.mcap; do
-            if [ -f "$f" ]; then
-              mc cp "$f" s3/robocodec-test/fixtures/
-            fi
-          done
-
-          # Upload BAG test fixtures
-          for f in tests/fixtures/robocodec_test_*.bag; do
-            if [ -f "$f" ]; then
-              mc cp "$f" s3/robocodec-test/fixtures/
-            fi
-          done
-
-          # Upload RRD test fixtures
-          if [ -d tests/fixtures/rrd ]; then
-            mc mirror tests/fixtures/rrd s3/robocodec-test/fixtures/rrd/
+        # Wait for MinIO healthcheck to pass (this means bucket exists)
+        for i in {1..60}; do
+          if docker compose ps | grep "robocodec-minio" | grep -q "healthy"; then
+            echo "MinIO is healthy and bucket is ready"
+            docker compose ps
+            break
           fi
+          echo "Waiting for MinIO to be healthy... ($i/60)"
+          sleep 2
+        done
 
-          # List uploaded files
-          mc ls s3/robocodec-test/fixtures/
-
-      - name: Set S3 endpoint environment variables
-        run: |
-          echo "S3_ENDPOINT=http://127.0.0.1:9000" >> $GITHUB_ENV
-          echo "S3_ACCESS_KEY=minioadmin" >> $GITHUB_ENV
-          echo "S3_SECRET_KEY=minioadmin" >> $GITHUB_ENV
-          echo "S3_BUCKET=robocodec-test" >> $GITHUB_ENV
-          echo "S3_REGION=us-east-1" >> $GITHUB_ENV
-
-      - name: Run S3 integration tests
-        run: cargo test --test s3_integration -- --test-threads=1
-        env:
-          S3_ENDPOINT: http://127.0.0.1:9000
-          S3_ACCESS_KEY: minioadmin
-          S3_SECRET_KEY: minioadmin
-          S3_BUCKET: robocodec-test
-          S3_REGION: us-east-1
+        # Verify bucket exists
+        if ! curl -f http://localhost:9000/test-fixtures 2>/dev/null; then
+          echo "Bucket 'test-fixtures' not found"
+          docker compose logs minio minio-init
+          exit 1
+        fi
+        echo "Bucket 'test-fixtures' verified"
 
       - name: Run S3 unit tests
-        run: cargo test --package robocodec --lib io::s3 -- --test-threads=1
-        env:
-          S3_ENDPOINT: http://127.0.0.1:9000
-          S3_ACCESS_KEY: minioadmin
-          S3_SECRET_KEY: minioadmin
-          S3_BUCKET: robocodec-test
-          S3_REGION: us-east-1
+        run: cargo test --package robocodec --lib io::s3
+
+      - name: Run S3 integration tests (with live MinIO)
+        run: cargo test --test s3_tests s3_integration
 
       - name: Run clippy on S3 module
         run: cargo clippy --package robocodec -- -D warnings -D clippy::all
@@ -134,3 +90,7 @@ jobs:
       - name: Format check
         run: cargo fmt --package robocodec -- --check
         if: always()
+
+      - name: Cleanup docker-compose
+        if: always()
+        run: docker compose down -v
