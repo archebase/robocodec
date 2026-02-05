@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
-use crate::common::{Progress, Result, open_reader, parse_time_range};
+use robocodec::cli::{Progress, Result, open_reader, parse_time_range};
 use robocodec::{FormatReader, RoboRewriter};
 
 /// Extract subsets of data from files.

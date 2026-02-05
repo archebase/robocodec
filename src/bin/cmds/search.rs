@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
-use crate::common::{Result, open_reader};
 use robocodec::FormatReader;
+use robocodec::cli::{Result, open_reader};
 
 /// Search within files.
 #[derive(Subcommand, Clone, Debug)]
