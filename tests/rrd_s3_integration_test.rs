@@ -10,11 +10,10 @@
 use std::fs;
 use std::path::Path;
 
-use robocodec::io::s3::{
-    RRD_STREAM_MAGIC,
-    parser::StreamingParser,
-    rrd_stream::{MessageKind, StreamingRrdParser},
+use robocodec::io::formats::rrd::stream::{
+    MessageKind, RRD_STREAM_MAGIC, RrdMessageRecord, StreamingRrdParser,
 };
+use robocodec::io::s3::StreamingParser;
 
 /// Helper function to load a test fixture file.
 fn load_fixture(name: &str) -> Vec<u8> {
@@ -118,6 +117,7 @@ fn test_real_rrd_chunked_parsing() {
 
         match parser.parse_chunk(chunk) {
             Ok(messages) => {
+                let messages: Vec<RrdMessageRecord> = messages;
                 total_messages += messages.len() as u64;
             }
             Err(e) => {

@@ -22,6 +22,9 @@ pub use constants::{
 // Constants module (pub for format/writer/mcap.rs access)
 pub mod constants;
 
+// Internal types (private to mcap format)
+pub(crate) mod internal;
+
 // Parallel reader implementation
 pub mod parallel;
 

@@ -13,17 +13,6 @@
 //! - **MCAP**: Identified by magic number at start or end of file
 //! - **ROS1 Bag**: Identified by file header structure
 //! - **RRD**: Identified by RRD magic number
-//!
-//! # Example
-//!
-//! ```rust,no_run
-//! use robocodec::io::detection::detect_format;
-//! use robocodec::io::metadata::FileFormat;
-//!
-//! let format = detect_format("data.mcap")?;
-//! assert_eq!(format, FileFormat::Mcap);
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
 
 use std::fs::File;
 use std::io::Read;
@@ -42,29 +31,7 @@ use super::metadata::FileFormat;
 /// This function reads the file header and checks for magic numbers
 /// to identify the format, falling back to file extension if needed.
 ///
-/// # Arguments
-///
-/// * `path` - Path to the file to analyze
-///
-/// # Returns
-///
-/// The detected format, or `FileFormat::Unknown` if the format cannot be determined.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use robocodec::io::detection::detect_format;
-/// use robocodec::io::metadata::FileFormat;
-///
-/// let format = detect_format("data.mcap")?;
-/// match format {
-///     FileFormat::Mcap => println!("MCAP file detected"),
-///     FileFormat::Bag => println!("ROS1 bag file detected"),
-///     FileFormat::Rrd => println!("RRD file detected"),
-///     FileFormat::Unknown => println!("Unknown format"),
-/// }
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
+/// This is an internal function used by `RoboReader::open()` for format auto-detection.
 pub fn detect_format<P: AsRef<Path>>(path: P) -> Result<FileFormat, CodecError> {
     let path_ref = path.as_ref();
 

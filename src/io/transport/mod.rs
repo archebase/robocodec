@@ -29,9 +29,8 @@ use std::io;
 /// use robocodec::io::transport::{ByteStream, local};
 ///
 /// // Local file stream
-/// let stream = local::FileStream::open("data.mcap")?;
-/// let mut buffer = Vec::new();
-/// stream.read_to_end(&mut buffer)?;
+/// let mut stream = local::FileStream::open("data.mcap")?;
+/// let buffer = stream.read_to_end()?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub trait ByteStream: Send + Sync {

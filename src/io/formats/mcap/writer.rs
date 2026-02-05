@@ -32,9 +32,9 @@ use crate::io::formats::mcap::constants::{
     MCAP_MAGIC, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX, OP_DATA_END, OP_FOOTER, OP_HEADER,
     OP_MESSAGE, OP_SCHEMA, OP_STATISTICS, OP_SUMMARY_OFFSET,
 };
+use crate::io::formats::mcap::internal::CompressedChunk;
 use crate::io::metadata::RawMessage;
 use crate::io::traits::FormatWriter;
-use crate::types::chunk::CompressedChunk;
 
 /// MCAP compression identifiers.
 #[allow(dead_code)]
@@ -577,7 +577,7 @@ impl<W: Write> ParallelMcapWriter<W> {
     fn write_message_index(
         &mut self,
         channel_id: u16,
-        entries: &[crate::types::chunk::MessageIndexEntry],
+        entries: &[crate::io::formats::mcap::internal::MessageIndexEntry],
     ) -> Result<()> {
         const OP_MESSAGE_INDEX: u8 = 0x07;
 
@@ -646,7 +646,7 @@ impl<W: Write> ParallelMcapWriter<W> {
 
     /// Flush buffered messages as a compressed chunk.
     fn flush_message_buffer(&mut self) -> Result<()> {
-        use crate::types::chunk::MessageIndexEntry;
+        use crate::io::formats::mcap::internal::MessageIndexEntry;
 
         if self.message_buffer.is_empty() {
             return Ok(());
@@ -1438,7 +1438,7 @@ mod tests {
         let temp_file = create_temp_file();
         let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
 
-        use crate::types::chunk::CompressedChunk;
+        use crate::io::formats::mcap::internal::CompressedChunk;
 
         let message_indexes = BTreeMap::new();
 
@@ -1465,7 +1465,7 @@ mod tests {
         let temp_file = create_temp_file();
         let mut writer = ParallelMcapWriter::<File>::create(temp_file.path()).unwrap();
 
-        use crate::types::chunk::{CompressedChunk, MessageIndexEntry};
+        use crate::io::formats::mcap::internal::{CompressedChunk, MessageIndexEntry};
 
         let mut message_indexes = BTreeMap::new();
         message_indexes.insert(
@@ -1630,7 +1630,7 @@ mod tests {
 
         assert_eq!(writer.chunks_written(), 0);
 
-        use crate::types::chunk::CompressedChunk;
+        use crate::io::formats::mcap::internal::CompressedChunk;
 
         let chunk = CompressedChunk {
             sequence: 0,
