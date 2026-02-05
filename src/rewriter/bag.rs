@@ -227,11 +227,13 @@ impl BagRewriter {
                     match self.rewrite_cdr_message(&cdr_decoder, &raw_msg, schema) {
                         Ok(data) => {
                             // Write re-encoded message
-                            writer.write_message(&crate::bag::writer::BagMessage::from_raw(
-                                new_conn_id,
-                                raw_msg.log_time,
-                                data,
-                            ))?;
+                            writer.write_message(
+                                &crate::io::formats::bag::writer::BagMessage::from_raw(
+                                    new_conn_id,
+                                    raw_msg.log_time,
+                                    data,
+                                ),
+                            )?;
                             self.stats.reencoded_count += 1;
                         }
                         Err(e) => {
@@ -245,25 +247,29 @@ impl BagRewriter {
                                 continue;
                             }
                             // Pass through original data
-                            writer.write_message(&crate::bag::writer::BagMessage::from_raw(
-                                new_conn_id,
-                                raw_msg.log_time,
-                                raw_msg.data.clone(),
-                            ))?;
+                            writer.write_message(
+                                &crate::io::formats::bag::writer::BagMessage::from_raw(
+                                    new_conn_id,
+                                    raw_msg.log_time,
+                                    raw_msg.data.clone(),
+                                ),
+                            )?;
                         }
                     }
                 } else {
                     // No schema, pass through
-                    writer.write_message(&crate::bag::writer::BagMessage::from_raw(
-                        new_conn_id,
-                        raw_msg.log_time,
-                        raw_msg.data.clone(),
-                    ))?;
+                    writer.write_message(
+                        &crate::io::formats::bag::writer::BagMessage::from_raw(
+                            new_conn_id,
+                            raw_msg.log_time,
+                            raw_msg.data.clone(),
+                        ),
+                    )?;
                     self.stats.passthrough_count += 1;
                 }
             } else {
                 // Pass through original data
-                writer.write_message(&crate::bag::writer::BagMessage::from_raw(
+                writer.write_message(&crate::io::formats::bag::writer::BagMessage::from_raw(
                     new_conn_id,
                     raw_msg.log_time,
                     raw_msg.data.clone(),
@@ -279,7 +285,7 @@ impl BagRewriter {
     }
 
     /// Cache all schemas from the bag file, applying transformations if configured.
-    fn cache_schemas(&mut self, reader: &crate::bag::ParallelBagReader) -> Result<()> {
+    fn cache_schemas(&mut self, reader: &crate::io::formats::bag::ParallelBagReader) -> Result<()> {
         let pipeline = self.options.transforms.as_ref();
         let channels = FormatReader::channels(reader);
 

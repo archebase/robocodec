@@ -2,17 +2,17 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Streaming BAG parser for S3.
+//! Streaming BAG parser.
 //!
 //! This module provides a zero-copy streaming parser that can parse ROS1 bag records
-//! from byte chunks as they arrive from S3, without requiring the entire file
+//! from byte chunks as they arrive, without requiring the entire file
 //! to be available locally.
 
 use std::collections::HashMap;
 
 use crate::io::formats::bag::parser::BagConnection;
 use crate::io::metadata::ChannelInfo;
-use crate::io::s3::error::FatalError;
+use crate::io::s3::FatalError;
 
 /// BAG magic string prefix.
 pub const BAG_MAGIC_PREFIX: &[u8] = b"#ROSBAG V";

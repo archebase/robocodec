@@ -1820,4 +1820,147 @@ mod tests {
             let _ = count;
         }
     }
+
+    #[test]
+    fn test_parallel_bag_reader_all_available_fixtures() {
+        // Test opening all available bag fixtures
+        for i in 1..=30 {
+            let fixture_path = format!("tests/fixtures/robocodec_test_{}.bag", i);
+            if Path::new(&fixture_path).exists() {
+                let result = ParallelBagReader::open(&fixture_path);
+                if let Ok(reader) = result {
+                    // Verify basic functionality
+                    assert!(!reader.path().is_empty());
+                    assert_eq!(reader.format(), FileFormat::Bag);
+
+                    // Test we can create iterators
+                    let raw_iter = reader.iter_raw();
+                    assert!(raw_iter.is_ok());
+
+                    let decoded_iter = reader.decode_messages();
+                    assert!(decoded_iter.is_ok());
+
+                    let timestamped_iter = reader.decode_messages_with_timestamp();
+                    assert!(timestamped_iter.is_ok());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parallel_bag_reader_format_detection() {
+        // Test that format detection works correctly
+        let fixture_path = "tests/fixtures/robocodec_test_15.bag";
+        if Path::new(fixture_path).exists() {
+            let reader = ParallelBagReader::open(fixture_path).expect("Failed to open");
+            assert_eq!(reader.format(), FileFormat::Bag);
+        }
+    }
+
+    #[test]
+    fn test_bag_decoded_message_iter_stream_all_messages() {
+        // Test stream() method reads all messages
+        let fixture_path = "tests/fixtures/robocodec_test_17.bag";
+        if Path::new(fixture_path).exists() {
+            let reader = ParallelBagReader::open(fixture_path).expect("Failed to open");
+            let iter = reader.decode_messages().expect("Failed to create iterator");
+            let stream = iter.stream().expect("Failed to create stream");
+
+            let count = stream.take(20).filter_map(|r| r.ok()).count();
+            assert!(count > 0, "Should read some messages via stream");
+        }
+    }
+
+    #[test]
+    fn test_bag_decoded_message_timestamp_iter_stream_all_messages() {
+        // Test timestamp stream() method
+        let fixture_path = "tests/fixtures/robocodec_test_18.bag";
+        if Path::new(fixture_path).exists() {
+            let reader = ParallelBagReader::open(fixture_path).expect("Failed to open");
+            let iter = reader
+                .decode_messages_with_timestamp()
+                .expect("Failed to create iterator");
+            let stream = iter.stream().expect("Failed to create stream");
+
+            let count = stream.take(20).filter_map(|r| r.ok()).count();
+            assert!(count > 0, "Should read some timestamped messages");
+        }
+    }
+
+    #[test]
+    fn test_bag_raw_iter_exhaustion() {
+        // Test that iterator properly returns None after exhaustion
+        let fixture_path = "tests/fixtures/robocodec_test_15.bag";
+        if Path::new(fixture_path).exists() {
+            let reader = ParallelBagReader::open(fixture_path).expect("Failed to open");
+            let mut iter = reader.iter_raw().expect("Failed to create iterator");
+
+            // Exhaust the iterator
+            while iter.next().is_some() {
+                // Keep consuming until done
+            }
+
+            // Should return None after exhaustion
+            assert!(iter.next().is_none());
+            assert!(iter.next().is_none());
+        }
+    }
+
+    #[test]
+    fn test_parallel_bag_reader_connections_method() {
+        // Test connections() method
+        let fixture_path = "tests/fixtures/robocodec_test_15.bag";
+        if Path::new(fixture_path).exists() {
+            let reader = ParallelBagReader::open(fixture_path).expect("Failed to open");
+            let connections = reader.connections();
+
+            assert!(!connections.is_empty(), "Should have connections");
+            for _conn in connections.values() {
+                // Just verify we can access the connections map
+            }
+        }
+    }
+
+    #[test]
+    fn test_parallel_bag_reader_chunks_structure() {
+        // Test chunks() method structure
+        let fixture_path = "tests/fixtures/robocodec_test_18.bag";
+        if Path::new(fixture_path).exists() {
+            let reader = ParallelBagReader::open(fixture_path).expect("Failed to open");
+            let chunks = reader.chunks();
+
+            for (idx, chunk_info) in chunks.iter().enumerate() {
+                assert_eq!(chunk_info.sequence, idx as u64);
+                assert!(chunk_info.message_count > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_bag_decoded_message_iter_channels_accessor() {
+        // Test channels() accessor on decoded iterator
+        let fixture_path = "tests/fixtures/robocodec_test_15.bag";
+        if Path::new(fixture_path).exists() {
+            let reader = ParallelBagReader::open(fixture_path).expect("Failed to open");
+            let iter = reader.decode_messages().expect("Failed to create iterator");
+
+            let channels = iter.channels();
+            assert!(!channels.is_empty(), "Should have channels");
+        }
+    }
+
+    #[test]
+    fn test_bag_decoded_message_timestamp_iter_channels_accessor() {
+        // Test channels() accessor on timestamped iterator
+        let fixture_path = "tests/fixtures/robocodec_test_15.bag";
+        if Path::new(fixture_path).exists() {
+            let reader = ParallelBagReader::open(fixture_path).expect("Failed to open");
+            let iter = reader
+                .decode_messages_with_timestamp()
+                .expect("Failed to create iterator");
+
+            let channels = iter.channels();
+            assert!(!channels.is_empty(), "Should have channels");
+        }
+    }
 }

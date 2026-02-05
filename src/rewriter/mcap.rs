@@ -393,7 +393,7 @@ impl McapRewriter {
     fn rewrite_cdr_message(
         &mut self,
         mcap_writer: &mut ParallelMcapWriter<BufWriter<File>>,
-        msg: &crate::mcap::reader::RawMessage,
+        msg: &crate::io::formats::mcap::reader::RawMessage,
         schema: &MessageSchema,
         channel_id: u16,
         topic: &str,
@@ -455,7 +455,7 @@ impl McapRewriter {
     fn write_message_raw(
         &mut self,
         mcap_writer: &mut ParallelMcapWriter<BufWriter<File>>,
-        msg: &crate::mcap::reader::RawMessage,
+        msg: &crate::io::formats::mcap::reader::RawMessage,
         channel_id: u16,
     ) -> Result<()> {
         mcap_writer

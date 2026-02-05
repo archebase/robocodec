@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Streaming RRD parser for S3 (RRF2 format).
+//! Streaming RRD parser (RRF2 format).
 //!
 //! This module provides a streaming parser for Rerun RRD (RRF2) files that can parse
-//! RRD data from byte chunks as they arrive from S3, without requiring the
+//! RRD data from byte chunks as they arrive, without requiring the
 //! entire file to be available locally.
 //!
 //! The RRF2 format structure:
@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 
+use crate::io::formats::rrd::arrow_msg::ArrowMsg;
 use crate::io::formats::rrd::constants::{
     COMPRESSION_LZ4, COMPRESSION_OFF, DEFAULT_TOPIC, MESSAGE_HEADER_SIZE, MSG_KIND_ARROW_MSG,
     MSG_KIND_BLUEPRINT_ACTIVATION_COMMAND, MSG_KIND_END, MSG_KIND_SET_STORE_INFO, OLD_RRD_MAGIC,
@@ -22,8 +23,7 @@ use crate::io::formats::rrd::constants::{
     STREAM_HEADER_SIZE,
 };
 use crate::io::metadata::ChannelInfo;
-use crate::io::s3::error::FatalError;
-use crate::io::s3::parser::StreamingParser;
+use crate::io::s3::{FatalError, StreamingParser};
 
 /// RRD magic for streaming (RRF2).
 pub const RRD_STREAM_MAGIC: &[u8; 4] = RRD_MAGIC;
@@ -134,7 +134,7 @@ enum ParserState {
 /// Streaming RRD parser for RRF2 format.
 ///
 /// This parser maintains state across chunks and can parse RRD data
-/// incrementally as data arrives from S3.
+/// incrementally as data arrives.
 pub struct StreamingRrdParser {
     /// Parser state
     state: ParserState,
@@ -251,14 +251,27 @@ impl StreamingRrdParser {
         self.initialized = true;
     }
 
-    /// Decompress message payload if needed.
+    /// Decompress message payload.
     ///
-    /// NOTE: In RRF2, the compression flag in the stream header is effectively ignored.
-    /// Individual messages are stored as plain Protobuf, not compressed.
-    /// See: https://github.com/rerun-io/rerun/blob/main/crates/store/re_log_encoding/src/rrd/frames.rs
+    /// In RRF2, ArrowMsg payloads are LZ4 compressed at the message level.
+    /// The payload is an ArrowMsg protobuf (Rerun 0.27+ format) which contains:
+    /// - field 1: entity_path (bytes) - skipped
+    /// - field 2: compression (varint) - 0=Off, 2=LZ4
+    /// - field 3: uncompressed_size (varint)
+    /// - field 4: num_instances/flag (varint) - skipped
+    /// - field 5: payload (bytes) - Arrow IPC data, potentially LZ4 compressed
     fn decompress_payload(&self, payload: &[u8]) -> Result<Vec<u8>, FatalError> {
-        // RRF2 stores messages as plain Protobuf regardless of stream compression flag
-        Ok(payload.to_vec())
+        // Parse as ArrowMsg protobuf
+        let arrow_msg = ArrowMsg::from_bytes(payload).map_err(|e| FatalError::ConfigError {
+            message: format!("Failed to parse ArrowMsg protobuf: {e}"),
+        })?;
+
+        // Decompress the ArrowMsg payload if needed
+        arrow_msg
+            .decompress_payload()
+            .map_err(|e| FatalError::ConfigError {
+                message: format!("Failed to decompress ArrowMsg payload: {e}"),
+            })
     }
 
     /// Get the RRD stream header if parsed.
@@ -379,17 +392,27 @@ impl StreamingParser for StreamingRrdParser {
 
                     let payload = &self.buffer[self.buffer_pos..self.buffer_pos + len];
 
-                    // Decompress if needed
-                    let data = match self.decompress_payload(payload) {
-                        Ok(d) => d,
-                        Err(e) => {
-                            tracing::warn!("Failed to process RRD payload: {}", e);
-                            // Skip this message
-                            self.buffer_pos += len;
-                            self.state = ParserState::NeedMessageHeader;
-                            self.message_index += 1;
-                            continue;
+                    // Process payload based on message kind
+                    let data = match kind {
+                        MessageKind::ArrowMsg => {
+                            // ArrowMsg messages contain LZ4-compressed Arrow IPC data
+                            match self.decompress_payload(payload) {
+                                Ok(d) => d,
+                                Err(e) => {
+                                    tracing::warn!("Failed to decompress ArrowMsg payload: {}", e);
+                                    // Skip this message
+                                    self.buffer_pos += len;
+                                    self.state = ParserState::NeedMessageHeader;
+                                    self.message_index += 1;
+                                    continue;
+                                }
+                            }
                         }
+                        MessageKind::SetStoreInfo | MessageKind::BlueprintActivationCommand => {
+                            // These messages are plain protobuf, return as-is
+                            payload.to_vec()
+                        }
+                        MessageKind::End => unreachable!(), // handled above
                     };
 
                     // Determine topic based on message kind
@@ -609,6 +632,8 @@ mod tests {
 
     #[test]
     fn test_no_compression_decompress() {
+        use crate::io::formats::rrd::arrow_msg::ArrowMsg;
+
         let mut parser = StreamingRrdParser::new();
         parser.header = Some(RrdStreamHeader {
             magic: *RRD_MAGIC,
@@ -617,16 +642,23 @@ mod tests {
             serializer: SERIALIZER_PROTOBUF,
         });
 
-        let data = b"test data";
-        let result = parser.decompress_payload(data);
+        // Create a valid ArrowMsg protobuf with uncompressed data
+        let arrow_msg = ArrowMsg::new(b"test data".to_vec());
+        let payload = arrow_msg.to_bytes().unwrap();
+
+        let result = parser.decompress_payload(&payload);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), data);
+        assert_eq!(result.unwrap(), b"test data".to_vec());
     }
 
     #[test]
     fn test_decompress_passthrough() {
-        // RRF2 stores messages as plain Protobuf regardless of stream compression flag
-        // The decompress_payload function should pass through data unchanged
+        use crate::io::formats::rrd::arrow_msg::ArrowMsg;
+
+        // Create an ArrowMsg with LZ4 compression
+        let arrow_msg = ArrowMsg::with_lz4(b"test protobuf data".to_vec()).unwrap();
+        let payload = arrow_msg.to_bytes().unwrap();
+
         let mut parser = StreamingRrdParser::new();
         parser.header = Some(RrdStreamHeader {
             magic: *RRD_MAGIC,
@@ -635,14 +667,15 @@ mod tests {
             serializer: SERIALIZER_PROTOBUF,
         });
 
-        let data = b"test protobuf data";
-        let result = parser.decompress_payload(data);
+        let result = parser.decompress_payload(&payload);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), data);
+        assert_eq!(result.unwrap(), b"test protobuf data".to_vec());
     }
 
     #[test]
     fn test_parse_simple_message() {
+        use crate::io::formats::rrd::arrow_msg::ArrowMsg;
+
         let mut parser = StreamingRrdParser::new();
 
         // Create header
@@ -653,12 +686,16 @@ mod tests {
         data.push(SERIALIZER_PROTOBUF);
         data.extend_from_slice(&[0u8; 2]); // reserved
 
+        // Create ArrowMsg payload
+        let arrow_msg = ArrowMsg::new(b"hello".to_vec());
+        let payload = arrow_msg.to_bytes().unwrap();
+
         // Add message header (ArrowMsg)
         data.extend_from_slice(&2u64.to_le_bytes()); // kind = ArrowMsg
-        data.extend_from_slice(&5u64.to_le_bytes()); // len = 5
+        data.extend_from_slice(&(payload.len() as u64).to_le_bytes()); // len
 
-        // Add payload
-        data.extend_from_slice(b"hello");
+        // Add ArrowMsg payload
+        data.extend_from_slice(&payload);
 
         // Add end marker
         data.extend_from_slice(&0u64.to_le_bytes()); // kind = End
@@ -677,6 +714,418 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].kind, MessageKind::ArrowMsg);
         assert_eq!(messages[0].data, b"hello");
+    }
+
+    #[test]
+    fn test_parse_header_msgpack_serializer() {
+        // Test MsgPack serializer rejection
+        let mut header_data = vec![0u8; STREAM_HEADER_SIZE];
+        header_data[0..4].copy_from_slice(RRD_MAGIC);
+        header_data[8] = COMPRESSION_OFF;
+        header_data[9] = SERIALIZER_MSGPACK; // MsgPack - no longer supported
+
+        let result = StreamingRrdParser::parse_header(&header_data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("MsgPack"));
+    }
+
+    #[test]
+    fn test_parse_header_unknown_serializer() {
+        // Test unknown serializer
+        let mut header_data = vec![0u8; STREAM_HEADER_SIZE];
+        header_data[0..4].copy_from_slice(RRD_MAGIC);
+        header_data[8] = COMPRESSION_OFF;
+        header_data[9] = 0xFF; // Unknown serializer
+
+        let result = StreamingRrdParser::parse_header(&header_data);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown serializer")
+        );
+    }
+
+    #[test]
+    fn test_parse_header_reserved_bytes_not_zero() {
+        // Test non-zero reserved bytes
+        let mut header_data = vec![0u8; STREAM_HEADER_SIZE];
+        header_data[0..4].copy_from_slice(RRD_MAGIC);
+        header_data[8] = COMPRESSION_OFF;
+        header_data[9] = SERIALIZER_PROTOBUF;
+        header_data[10] = 0xFF; // non-zero reserved byte
+
+        let result = StreamingRrdParser::parse_header(&header_data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("reserved bytes"));
+    }
+
+    #[test]
+    fn test_parse_header_unknown_compression() {
+        // Test unknown compression type
+        let mut header_data = vec![0u8; STREAM_HEADER_SIZE];
+        header_data[0..4].copy_from_slice(RRD_MAGIC);
+        header_data[8] = 0xFF; // Unknown compression
+        header_data[9] = SERIALIZER_PROTOBUF;
+
+        let result = StreamingRrdParser::parse_header(&header_data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("compression"));
+    }
+
+    #[test]
+    fn test_message_kind_as_u64() {
+        assert_eq!(MessageKind::End.as_u64(), 0);
+        assert_eq!(MessageKind::SetStoreInfo.as_u64(), 1);
+        assert_eq!(MessageKind::ArrowMsg.as_u64(), 2);
+        assert_eq!(MessageKind::BlueprintActivationCommand.as_u64(), 3);
+    }
+
+    #[test]
+    fn test_compression_as_u8() {
+        assert_eq!(Compression::Off.as_u8(), COMPRESSION_OFF);
+        assert_eq!(Compression::Lz4.as_u8(), COMPRESSION_LZ4);
+    }
+
+    #[test]
+    fn test_parse_set_store_info_message() {
+        let mut parser = StreamingRrdParser::new();
+
+        // Create header
+        let mut data = Vec::new();
+        data.extend_from_slice(RRD_MAGIC);
+        data.extend_from_slice(&[0u8; 4]); // version
+        data.push(COMPRESSION_OFF);
+        data.push(SERIALIZER_PROTOBUF);
+        data.extend_from_slice(&[0u8; 2]); // reserved
+
+        // Add SetStoreInfo message (kind=1)
+        let payload = b"store_info_data";
+        data.extend_from_slice(&1u64.to_le_bytes()); // kind = SetStoreInfo
+        data.extend_from_slice(&(payload.len() as u64).to_le_bytes()); // len
+        data.extend_from_slice(payload); // payload
+
+        // Add end marker
+        data.extend_from_slice(&0u64.to_le_bytes()); // kind = End
+        data.extend_from_slice(&0u64.to_le_bytes()); // len = 0
+
+        // Parse header first
+        parser.parse_chunk(&data).unwrap();
+
+        assert!(parser.is_initialized());
+        assert_eq!(parser.message_count(), 1);
+    }
+
+    #[test]
+    fn test_parse_blueprint_message() {
+        let mut parser = StreamingRrdParser::new();
+
+        // Create header
+        let mut data = Vec::new();
+        data.extend_from_slice(RRD_MAGIC);
+        data.extend_from_slice(&[0u8; 4]); // version
+        data.push(COMPRESSION_OFF);
+        data.push(SERIALIZER_PROTOBUF);
+        data.extend_from_slice(&[0u8; 2]); // reserved
+
+        // Add BlueprintActivationCommand message (kind=3)
+        let payload = b"blueprint_data";
+        data.extend_from_slice(&3u64.to_le_bytes()); // kind = Blueprint
+        data.extend_from_slice(&(payload.len() as u64).to_le_bytes()); // len
+        data.extend_from_slice(payload); // payload
+
+        // Add end marker
+        data.extend_from_slice(&0u64.to_le_bytes()); // kind = End
+        data.extend_from_slice(&0u64.to_le_bytes()); // len = 0
+
+        // Parse
+        let result = parser.parse_chunk(&data);
+        assert!(result.is_ok());
+
+        let messages = result.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].kind, MessageKind::BlueprintActivationCommand);
+        assert_eq!(messages[0].data, payload);
+        assert_eq!(messages[0].topic, "/blueprint");
+    }
+
+    #[test]
+    fn test_parse_footer() {
+        let mut parser = StreamingRrdParser::new();
+
+        // First, initialize the parser with header
+        let mut header = Vec::new();
+        header.extend_from_slice(RRD_MAGIC);
+        header.extend_from_slice(&[0u8; 4]);
+        header.push(COMPRESSION_OFF);
+        header.push(SERIALIZER_PROTOBUF);
+        header.extend_from_slice(&[0u8; 2]);
+        parser.parse_chunk(&header).unwrap();
+
+        // Add a message
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&2u64.to_le_bytes()); // kind
+        msg.extend_from_slice(&4u64.to_le_bytes()); // len
+        msg.extend_from_slice(b"test");
+        parser.parse_chunk(&msg).unwrap();
+
+        // Add end marker
+        parser.parse_chunk(&0u64.to_le_bytes()).unwrap();
+        parser.parse_chunk(&0u64.to_le_bytes()).unwrap();
+
+        // Add footer
+        let mut footer = Vec::new();
+        footer.extend_from_slice(&[0u8; 20]); // entries
+        footer.extend_from_slice(RRD_MAGIC); // fourcc
+        footer.extend_from_slice(RRD_FOOTER_ID); // identifier
+        footer.extend_from_slice(&1u32.to_le_bytes()); // num_entries
+
+        let result = parser.parse_chunk(&footer);
+        assert!(result.is_ok());
+
+        // After footer, parser should be at EOF
+        let eof_result = parser.parse_chunk(b"extra data");
+        assert!(eof_result.is_ok());
+        assert_eq!(eof_result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_parse_footer_foot_marker() {
+        // Test parsing with FOOT marker at end (incomplete footer)
+        let mut parser = StreamingRrdParser::new();
+
+        // Initialize with header
+        let mut header = Vec::new();
+        header.extend_from_slice(RRD_MAGIC);
+        header.extend_from_slice(&[0u8; 4]);
+        header.push(COMPRESSION_OFF);
+        header.push(SERIALIZER_PROTOBUF);
+        header.extend_from_slice(&[0u8; 2]);
+        parser.parse_chunk(&header).unwrap();
+
+        // Add end marker
+        parser.parse_chunk(&0u64.to_le_bytes()).unwrap();
+        parser.parse_chunk(&0u64.to_le_bytes()).unwrap();
+
+        // Add partial footer ending with FOOT marker
+        let mut footer = vec![0u8; 8];
+        footer.extend_from_slice(RRD_FOOTER_ID);
+
+        let result = parser.parse_chunk(&footer);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_stream_header_size() {
+        assert_eq!(RrdStreamHeader::SIZE, STREAM_HEADER_SIZE);
+        assert_eq!(STREAM_HEADER_SIZE, 12);
+    }
+
+    #[test]
+    fn test_parse_chunk_incremental() {
+        // Test parsing data in small chunks
+        let mut parser = StreamingRrdParser::new();
+
+        // Create full message
+        let mut data = Vec::new();
+        data.extend_from_slice(RRD_MAGIC);
+        data.extend_from_slice(&[0u8; 4]); // version
+        data.push(COMPRESSION_OFF);
+        data.push(SERIALIZER_PROTOBUF);
+        data.extend_from_slice(&[0u8; 2]); // reserved
+
+        // Parse in 1-byte chunks
+        for byte in data {
+            let result = parser.parse_chunk(&[byte]);
+            if !parser.is_initialized() {
+                assert!(result.is_ok());
+            }
+        }
+
+        assert!(parser.is_initialized());
+    }
+
+    #[test]
+    fn test_decompress_invalid_arrowmsg() {
+        let mut parser = StreamingRrdParser::new();
+        parser.header = Some(RrdStreamHeader {
+            magic: *RRD_MAGIC,
+            version: [0, 0, 0, 1],
+            compression: Compression::Off,
+            serializer: SERIALIZER_PROTOBUF,
+        });
+
+        // Invalid ArrowMsg data
+        let result = parser.decompress_payload(b"invalid protobuf data");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to parse ArrowMsg")
+        );
+    }
+
+    #[test]
+    fn test_parse_unknown_message_kind() {
+        let mut parser = StreamingRrdParser::new();
+
+        // Initialize with header
+        let mut header = Vec::new();
+        header.extend_from_slice(RRD_MAGIC);
+        header.extend_from_slice(&[0u8; 4]);
+        header.push(COMPRESSION_OFF);
+        header.push(SERIALIZER_PROTOBUF);
+        header.extend_from_slice(&[0u8; 2]);
+        parser.parse_chunk(&header).unwrap();
+
+        // Try to parse message with unknown kind (999)
+        let mut msg = Vec::new();
+        msg.extend_from_slice(&999u64.to_le_bytes()); // unknown kind
+        msg.extend_from_slice(&4u64.to_le_bytes()); // len
+        msg.extend_from_slice(b"test");
+
+        let result = parser.parse_chunk(&msg);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown message kind")
+        );
+    }
+
+    #[test]
+    fn test_parser_state_eof() {
+        let mut parser = StreamingRrdParser::new();
+
+        // Parse a complete message to reach EOF
+        let mut data = Vec::new();
+        data.extend_from_slice(RRD_MAGIC);
+        data.extend_from_slice(&[0u8; 4]); // version
+        data.push(COMPRESSION_OFF);
+        data.push(SERIALIZER_PROTOBUF);
+        data.extend_from_slice(&[0u8; 2]); // reserved
+
+        // Add end marker
+        data.extend_from_slice(&0u64.to_le_bytes()); // kind = End
+        data.extend_from_slice(&0u64.to_le_bytes()); // len = 0
+
+        // Add footer
+        data.extend_from_slice(&[0u8; 20]);
+        data.extend_from_slice(RRD_MAGIC);
+        data.extend_from_slice(RRD_FOOTER_ID);
+        data.extend_from_slice(&1u32.to_le_bytes());
+
+        parser.parse_chunk(&data).unwrap();
+
+        // Parser should be in EOF state now
+        // Adding more data should not yield new messages
+        let result = parser.parse_chunk(b"more data");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_old_magic_detection_in_parser() {
+        let mut parser = StreamingRrdParser::new();
+
+        // Try to parse old RRF0 format
+        let result = parser.parse_chunk(b"RRF0");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Old RRD version"));
+    }
+
+    #[test]
+    fn test_multiple_messages() {
+        use crate::io::formats::rrd::arrow_msg::ArrowMsg;
+
+        let mut parser = StreamingRrdParser::new();
+
+        // Create header
+        let mut data = Vec::new();
+        data.extend_from_slice(RRD_MAGIC);
+        data.extend_from_slice(&[0u8; 4]);
+        data.push(COMPRESSION_OFF);
+        data.push(SERIALIZER_PROTOBUF);
+        data.extend_from_slice(&[0u8; 2]);
+
+        // Add multiple ArrowMsg messages
+        for i in 0..3 {
+            let arrow_msg = ArrowMsg::new(format!("msg{i}").into_bytes());
+            let payload = arrow_msg.to_bytes().unwrap();
+
+            data.extend_from_slice(&2u64.to_le_bytes()); // kind = ArrowMsg
+            data.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+            data.extend_from_slice(&payload);
+        }
+
+        // Add end marker
+        data.extend_from_slice(&0u64.to_le_bytes());
+        data.extend_from_slice(&0u64.to_le_bytes());
+
+        let result = parser.parse_chunk(&data);
+        assert!(result.is_ok());
+
+        let messages = result.unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(parser.message_count(), 3);
+    }
+
+    #[test]
+    fn test_header_after_magic() {
+        let mut parser = StreamingRrdParser::new();
+
+        // Parse magic first
+        parser.parse_chunk(RRD_MAGIC).unwrap();
+
+        // Then parse rest of header
+        let mut rest = Vec::new();
+        rest.extend_from_slice(&[0u8; 4]); // version
+        rest.push(COMPRESSION_OFF);
+        rest.push(SERIALIZER_PROTOBUF);
+        rest.extend_from_slice(&[0u8; 2]); // reserved
+
+        let result = parser.parse_chunk(&rest);
+        assert!(result.is_ok());
+        assert!(parser.is_initialized());
+    }
+
+    #[test]
+    fn test_message_record_index() {
+        let mut parser = StreamingRrdParser::new();
+
+        // Create header
+        let mut data = Vec::new();
+        data.extend_from_slice(RRD_MAGIC);
+        data.extend_from_slice(&[0u8; 4]);
+        data.push(COMPRESSION_OFF);
+        data.push(SERIALIZER_PROTOBUF);
+        data.extend_from_slice(&[0u8; 2]);
+
+        use crate::io::formats::rrd::arrow_msg::ArrowMsg;
+
+        // Add two messages
+        for i in 0..2 {
+            let arrow_msg = ArrowMsg::new(format!("msg{i}").into_bytes());
+            let payload = arrow_msg.to_bytes().unwrap();
+
+            data.extend_from_slice(&2u64.to_le_bytes());
+            data.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+            data.extend_from_slice(&payload);
+        }
+
+        // Add end marker
+        data.extend_from_slice(&0u64.to_le_bytes());
+        data.extend_from_slice(&0u64.to_le_bytes());
+
+        let result = parser.parse_chunk(&data);
+        let messages = result.unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].index, 0);
+        assert_eq!(messages[1].index, 1);
     }
 
     #[test]

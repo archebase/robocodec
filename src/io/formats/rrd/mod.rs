@@ -34,10 +34,13 @@
 //! // Open an RRD file
 //! let reader = RrdFormat::open("data.rrd")?;
 //!
-//! // Iterate over decoded messages
-//! for result in reader.decode_messages()? {
+//! // Iterate over decoded messages with timestamps
+//! let decoded_iter = reader.decode_messages_with_timestamp()?;
+//! let mut stream = decoded_iter.stream()?;
+//!
+//! while let Some(result) = stream.next() {
 //!     let (message, channel) = result?;
-//!     println!("Topic: {}, Data: {:?}", channel.topic, message);
+//!     println!("Topic: {}, Log Time: {:?}", channel.topic, message.log_time);
 //! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -45,12 +48,27 @@
 //! Constants for RRD file format.
 pub mod constants;
 
+/// ArrowMsg protobuf encoding/decoding with LZ4 compression.
+pub mod arrow_msg;
+
+/// Parallel reader implementation.
+pub mod parallel;
+
 /// Reader implementation.
 pub mod reader;
+
+/// Streaming parser (transport-agnostic).
+pub mod stream;
 
 /// Writer implementation.
 pub mod writer;
 
 // Re-exports
+pub use arrow_msg::{ArrowCompression, ArrowMsg};
+pub use parallel::{MessageIndex, ParallelRrdReader};
 pub use reader::{DecodedMessageWithTimestampStream, RrdFormat, RrdReader};
-pub use writer::RrdWriter;
+pub use stream::{
+    Compression, MessageKind, RRD_STREAM_MAGIC, RrdMessageRecord, RrdStreamHeader,
+    StreamingRrdParser,
+};
+pub use writer::{RrdCompression as WriterCompression, RrdWriter};

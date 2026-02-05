@@ -18,6 +18,9 @@ pub mod parser;
 // Sequential reader implementation
 pub mod sequential;
 
+// Streaming parser (transport-agnostic)
+pub mod stream;
+
 // Writer implementation
 pub mod writer;
 
@@ -27,4 +30,8 @@ pub use parallel::{
     BagDecodedMessageWithTimestampStream, BagFormat, BagRawIter, ParallelBagReader,
 };
 pub use sequential::{BagSequentialFormat, SequentialBagRawIter, SequentialBagReader};
+pub use stream::{
+    BAG_MAGIC_PREFIX, BagMessageRecord, BagRecord, BagRecordFields, BagRecordHeader,
+    StreamingBagParser,
+};
 pub use writer::{BagMessage, BagWriter};

@@ -4,71 +4,10 @@
 
 //! Tests for the unified I/O layer.
 //!
-//! Run with: cargo test --test io_tests
+//! These tests verify the public API only (RoboReader, RoboWriter, config types).
 
-use std::fs::File;
-use std::io::Write;
-use std::path::Path;
-
-use robocodec::io::ReaderConfig;
-use robocodec::io::detection::detect_format;
-use robocodec::io::formats::mcap::McapFormat;
-use robocodec::io::metadata::{ChannelInfo, FileFormat, RawMessage};
-
-#[test]
-fn test_detect_format_mcap_extension() {
-    std::fs::create_dir_all("/tmp/robocodec").ok();
-    let path = format!(
-        "/tmp/robocodec/robocodec_test_mcap_{}.mcap",
-        std::process::id()
-    );
-    let mut temp_file = File::create(&path).unwrap();
-    temp_file.write_all(b"dummy content").unwrap();
-    temp_file.sync_all().unwrap();
-
-    let path_buf: &Path = path.as_ref();
-    let format = detect_format(path_buf).unwrap();
-    // The magic number detection may not work without a real MCAP file,
-    // but extension detection should work
-    let is_mcap_by_extension = path_buf.extension().and_then(|e| e.to_str()) == Some("mcap");
-    assert!(is_mcap_by_extension || matches!(format, FileFormat::Mcap));
-
-    let _ = std::fs::remove_file(&path);
-}
-
-#[test]
-fn test_detect_format_bag_extension() {
-    std::fs::create_dir_all("/tmp/robocodec").ok();
-    let path = format!(
-        "/tmp/robocodec/robocodec_test_bag_{}.bag",
-        std::process::id()
-    );
-    let mut temp_file = File::create(&path).unwrap();
-    temp_file.write_all(b"#ROSBAG V2.0").unwrap();
-    temp_file.sync_all().unwrap();
-
-    let format = detect_format(&path).unwrap();
-    assert_eq!(format, FileFormat::Bag);
-
-    let _ = std::fs::remove_file(&path);
-}
-
-#[test]
-fn test_detect_format_unknown() {
-    std::fs::create_dir_all("/tmp/robocodec").ok();
-    let path = format!(
-        "/tmp/robocodec/robocodec_test_xyz_{}.xyz",
-        std::process::id()
-    );
-    let mut temp_file = File::create(&path).unwrap();
-    temp_file.write_all(b"unknown content").unwrap();
-    temp_file.sync_all().unwrap();
-
-    let format = detect_format(&path).unwrap();
-    assert_eq!(format, FileFormat::Unknown);
-
-    let _ = std::fs::remove_file(&path);
-}
+use robocodec::io::metadata::{ChannelInfo, RawMessage};
+use robocodec::io::{ReaderConfig, RoboReader};
 
 #[test]
 fn test_reader_config_default() {
@@ -131,13 +70,8 @@ fn test_raw_message() {
 }
 
 #[test]
-fn test_mcap_format_exists() {
-    let _ = McapFormat;
-}
-
-#[test]
 fn test_robo_reader_auto_config() {
-    let result = robocodec::io::RoboReader::open_with_config(
+    let result = RoboReader::open_with_config(
         "/tmp/claude/nonexistent_file_xYz123.mcap",
         ReaderConfig::default(),
     );

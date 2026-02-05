@@ -19,15 +19,13 @@ use crate::io::formats::mcap::constants::{
 };
 use crate::io::metadata::ChannelInfo;
 use crate::io::s3::{
-    bag_stream::{BagMessageRecord, StreamingBagParser},
-    client::S3Client,
-    config::S3ReaderConfig,
-    error::FatalError,
-    location::S3Location,
-    mcap_stream::{MessageRecord, StreamingMcapParser},
-    parser::StreamingParser,
-    rrd_stream::{RrdMessageRecord, StreamingRrdParser},
+    client::S3Client, config::S3ReaderConfig, error::FatalError, location::S3Location,
 };
+// Re-export streaming parsers from format modules
+use crate::io::formats::bag::stream::{BagMessageRecord, StreamingBagParser};
+use crate::io::formats::mcap::stream::{MessageRecord, StreamingMcapParser};
+use crate::io::formats::rrd::stream::{RrdMessageRecord, StreamingRrdParser};
+use crate::io::s3::StreamingParser;
 use crate::io::traits::FormatReader;
 
 /// State machine for S3 streaming reader.
@@ -619,7 +617,7 @@ impl S3Reader {
         &self,
         data: &[u8],
     ) -> Result<(HashMap<u16, ChannelInfo>, u64), FatalError> {
-        use crate::io::s3::bag_stream::BAG_MAGIC_PREFIX;
+        use crate::io::formats::bag::stream::BAG_MAGIC_PREFIX;
 
         // BAG magic: #ROSBAG V
         if data.len() < BAG_MAGIC_PREFIX.len() {
@@ -1182,9 +1180,9 @@ mod tests {
 
     #[test]
     fn test_parsed_message_log_time() {
-        use crate::io::s3::bag_stream::BagMessageRecord;
-        use crate::io::s3::mcap_stream::MessageRecord;
-        use crate::io::s3::rrd_stream::{MessageKind, RrdMessageRecord};
+        use crate::io::formats::bag::stream::BagMessageRecord;
+        use crate::io::formats::mcap::stream::MessageRecord;
+        use crate::io::formats::rrd::stream::{MessageKind, RrdMessageRecord};
 
         // MCAP message has timestamp
         let mcap_msg = MessageRecord {
@@ -1778,9 +1776,9 @@ mod tests {
 
     #[test]
     fn test_parsed_message_channel_id() {
-        use crate::io::s3::bag_stream::BagMessageRecord;
-        use crate::io::s3::mcap_stream::MessageRecord;
-        use crate::io::s3::rrd_stream::{MessageKind, RrdMessageRecord};
+        use crate::io::formats::bag::stream::BagMessageRecord;
+        use crate::io::formats::mcap::stream::MessageRecord;
+        use crate::io::formats::rrd::stream::{MessageKind, RrdMessageRecord};
 
         let mcap_msg = ParsedMessage::Mcap(MessageRecord {
             channel_id: 42,
@@ -1809,9 +1807,9 @@ mod tests {
 
     #[test]
     fn test_parsed_message_data() {
-        use crate::io::s3::bag_stream::BagMessageRecord;
-        use crate::io::s3::mcap_stream::MessageRecord;
-        use crate::io::s3::rrd_stream::{MessageKind, RrdMessageRecord};
+        use crate::io::formats::bag::stream::BagMessageRecord;
+        use crate::io::formats::mcap::stream::MessageRecord;
+        use crate::io::formats::rrd::stream::{MessageKind, RrdMessageRecord};
 
         let mcap_msg = ParsedMessage::Mcap(MessageRecord {
             channel_id: 1,

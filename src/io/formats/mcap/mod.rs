@@ -22,6 +22,9 @@ pub use constants::{
 // Constants module (pub for format/writer/mcap.rs access)
 pub mod constants;
 
+// Internal types (private to mcap format)
+pub(crate) mod internal;
+
 // Parallel reader implementation
 pub mod parallel;
 
@@ -31,6 +34,9 @@ pub mod sequential;
 // Two-pass reader for files without summary
 pub mod two_pass;
 
+// Streaming parser (transport-agnostic)
+pub mod stream;
+
 // High-level API (auto-decoding reader + custom writer)
 pub mod reader;
 pub mod writer;
@@ -39,6 +45,9 @@ pub mod writer;
 pub use parallel::{ChunkIndex, ParallelMcapReader};
 pub use reader::{McapFormat, McapReader, RawMessage};
 pub use sequential::{SequentialMcapReader, SequentialRawIter};
+pub use stream::{
+    ChannelRecordInfo, McapRecord, McapRecordHeader, MessageRecord, SchemaInfo, StreamingMcapParser,
+};
 pub use two_pass::TwoPassMcapReader;
 pub use writer::ParallelMcapWriter;
 

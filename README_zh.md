@@ -6,89 +6,83 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
-**Robocodec** 是一个高性能机器人数据格式库，用于读写 MCAP 和 ROS bag 文件。它提供了以格式为核心的架构，具有并行处理能力、高效的内存管理以及对多种消息编码的支持。
+**Robocodec** 是一个机器人数据格式库，用于读取、写入和转换 MCAP 和 ROS1 bag 文件。它提供统一的 API，支持自动格式检测、并行处理，以及多种消息编码（CDR、Protobuf、JSON）和模式类型（ROS .msg、ROS2 IDL、OMG IDL）。
 
-## 功能特性
+## 为什么选择 Robocodec？
 
-- **多格式支持**：读写 MCAP 和 ROS1 bag 文件
-- **消息编解码**：CDR（ROS1/ROS2）、Protobuf 和 JSON 编码/解码
-- **模式解析**：解析 ROS `.msg` 文件、ROS2 IDL 和 OMG IDL 格式
-- **高性能 I/O**：支持内存映射的并行和顺序读取策略
-- **以格式为核心的架构**：每种格式都有独立的模块，包含读取器、写入器和高级 API
-- **数据转换**：内置支持主题重命名、类型归一化和格式转换
-- **内存高效**：Arena 分配和零拷贝操作
-- **Python 绑定**：通过 PyO3 提供全功能 Python API（可选功能）
+- **简洁的 API** - 仅在顶层暴露 `RoboReader`、`RoboWriter`、`RoboRewriter`
+- **自动检测** - 从文件扩展名或 URL scheme 自动检测格式
+- **高性能** - 使用 rayon 并行处理，零拷贝内存映射文件
+- **原生 S3 支持** - 对 `s3://` URL 的一流支持（AWS S3、MinIO、阿里云 OSS 等）
+- **数据转换** - 内置主题/类型重命名和格式转换功能
 
-## 安装
+## 快速开始
 
-### 前置要求
-
-- Rust 1.70 或更高版本
-- Python 3.11+（用于 Python 绑定）
-- maturin（用于构建 Python 包）
-
-### 从源码构建
-
-```bash
-# 克隆仓库
-git clone https://github.com/archebase/robocodec.git
-cd robocodec
-
-# 构建库
-cargo build --release
-
-# 运行测试
-cargo test
-
-# 构建 Python 包（可选）
-make build-python-dev
-```
-
-> **注意：** Python 绑定的 PyPI 发布即将推出。目前请使用 `make build-python-dev` 从源码构建。
-
-### 作为 Rust 依赖使用
-
-在 `Cargo.toml` 中添加：
+### Rust
 
 ```toml
+# Cargo.toml
 [dependencies]
 robocodec = "0.1"
 ```
 
-根据需要启用可选功能：
+```rust
+use robocodec::RoboReader;
 
-```toml
-robocodec = { version = "0.1", features = ["python", "jemalloc"] }
+// 格式从扩展名自动检测
+let reader = RoboReader::open("data.mcap")?;
+println!("找到 {} 个通道", reader.channels().len());
 ```
 
-### 可选功能
+### Python（从源码构建）
 
-| 功能 | 描述 | 默认启用 |
-|---------|-------------|----------|
-| `s3` | 支持 S3 兼容存储（AWS S3、MinIO 等） | ✅ 是 |
-| `python` | 通过 PyO3 提供 Python 绑定 | ❌ 否 |
-| `jemalloc` | 使用 jemalloc 分配器（仅 Linux） | ❌ 否 |
+Python 绑定可用，但需要从源码构建：
 
-## 快速开始
+```bash
+git clone https://github.com/archebase/robocodec.git
+cd robocodec
+make build-python-dev
+```
 
-### 读取消息并解码
+```python
+from robocodec import RoboReader
+
+reader = RoboReader("data.mcap")
+print(f"找到 {len(reader.channels)} 个通道")
+```
+
+> **注意：** PyPI 发布即将推出。目前请按照上述说明从源码构建。
+
+## 常见任务
+
+### 读取文件中的消息
 
 ```rust
 use robocodec::RoboReader;
 
-// 支持 BAG 和 MCAP 格式，自动检测
-let reader = RoboReader::open("data.mcap")?;
-let mut iter = reader.decoded()?;
+let reader = RoboReader::open("file.mcap")?;
 
-while let Some(result) = iter.next() {
-    let msg = result?;
-    println!("Topic: {}", msg.channel.topic);
-    println!("Data: {:?}", msg.message);
-    println!("Log time: {:?}", msg.log_time);
+// 列出所有通道
+for channel in reader.channels() {
+    println!("{}: {} 条消息", channel.topic, channel.message_count);
 }
+
+// 获取消息总数
+println!("总消息数: {}", reader.message_count());
 ```
 
-或使用迭代器直接遍历：
+### 写入消息到文件
+
+```rust
+use robocodec::RoboWriter;
+
+let mut writer = RoboWriter::create("output.mcap")?;
+let channel_id = writer.add_channel("/topic", "MessageType", "cdr", None)?;
+// ... 写入消息 ...
+writer.finish()?;
+```
+
+### 读取解码后的消息
 
 ```rust
 use robocodec::RoboReader;
@@ -97,7 +91,9 @@ let reader = RoboReader::open("file.mcap")?;
 
 for result in reader.decoded()? {
     let msg = result?;
-    // 访问 msg.message, msg.channel, msg.log_time, msg.publish_time, msg.sequence
+    println!("主题: {}", msg.topic());
+    println!("数据: {:?}", msg.message);
+    println!("日志时间: {:?}", msg.log_time);
 }
 ```
 
@@ -121,38 +117,36 @@ export AWS_ACCESS_KEY_ID="your-access-key"
 export AWS_SECRET_ACCESS_KEY="your-secret-key"
 export AWS_REGION="us-east-1"  # 可选，默认为 us-east-1
 
-# 阿里云 OSS、MinIO 或其他兼容 S3 的服务
-# 使用相同的环境变量 - robocodec 可与任何兼容 S3 的 API 配合使用
+# 对于阿里云 OSS、MinIO 或其他兼容 S3 的服务
 export AWS_ACCESS_KEY_ID="your-oss-access-key"
 export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
 ```
 
-> **注意：** 虽然我们使用 AWS 标准的环境变量名称以确保兼容性，但 robocodec 可以与任何兼容 S3 的存储服务（阿里云 OSS、MinIO、Wasabi 等）配合使用，只需配置相应的端点即可。
+> **注意：** 虽然我们使用 AWS 标准的环境变量名称以确保兼容性，但 robocodec 可与任何兼容 S3 的存储服务配合使用。
 
 ### 写入到 S3
 
 ```rust
 use robocodec::RoboWriter;
 
-// 从 .mcap 扩展名自动检测格式，从 s3:// URL 检测 S3
+// 格式从 .mcap 扩展名检测，S3 从 s3:// URL 检测
 let mut writer = RoboWriter::create("s3://my-bucket/output.mcap")?;
 let channel_id = writer.add_channel("/topic", "MessageType", "cdr", None)?;
 // ... 写入消息 ...
 writer.finish()?;
 ```
 
-### 自定义 S3 端点（MinIO、阿里云 OSS 等）
+### 自定义 S3 端点
 
-对于具有自定义端点的兼容 S3 服务，有两种配置方式：
+对于具有自定义端点的兼容 S3 服务：
 
-**方式 1：环境变量**（全局应用）
+**方式 1：环境变量**（全局）
 ```bash
-# 为所有 s3:// URL 设置自定义端点
 export S3_ENDPOINT="http://localhost:9000"  # MinIO
 export S3_ENDPOINT="https://oss-cn-hangzhou.aliyuncs.com"  # 阿里云 OSS
 ```
 
-**方式 2：URL 查询参数**（按请求配置）
+**方式 2：URL 查询参数**（按请求）
 ```rust
 use robocodec::RoboReader;
 
@@ -165,30 +159,57 @@ let reader = RoboReader::open(
 )?;
 ```
 
-### 写入消息到文件
+### 格式之间转换
 
 ```rust
-use robocodec::RoboWriter;
+use robocodec::RoboRewriter;
 
-let mut writer = RoboWriter::create("output.mcap")?;
-let channel_id = writer.add_channel("/topic", "MessageType", "cdr", None)?;
-// ... 写入消息 ...
-writer.finish()?;
-```
-
-### 使用自动检测重写
-
-```rust
-use robocodec::rewriter::RoboRewriter;
-
-// 格式从文件扩展名自动检测
-let mut rewriter = RoboRewriter::open("input.mcap")?;
+let rewriter = RoboRewriter::open("input.bag")?;
 rewriter.rewrite("output.mcap")?;
 ```
 
-### Python API（从源码构建）
+### 转换时重命名主题
 
-Python 绑定需要从源码构建：
+```rust
+use robocodec::{RoboRewriter, TransformBuilder};
+
+let transform = TransformBuilder::new()
+    .with_topic_rename("/old/topic", "/new/topic")
+    .build();
+
+let rewriter = RoboRewriter::with_options(
+    "input.mcap",
+    robocodec::RewriteOptions::default().with_transforms(transform)
+)?;
+rewriter.rewrite("output.mcap")?;
+```
+
+## 安装
+
+### Rust 用户
+
+添加到 `Cargo.toml`：
+
+```toml
+[dependencies]
+robocodec = "0.1"
+```
+
+可选功能：
+
+```toml
+robocodec = { version = "0.1", features = ["jemalloc"] }
+```
+
+| 功能 | 描述 | 默认 |
+|---------|-------------|---------|
+| `s3` | 支持 S3 兼容存储（AWS S3、MinIO 等） | ✅ 是 |
+| `python` | Python 绑定 | ❌ 否 |
+| `jemalloc` | 使用 jemalloc 分配器（仅 Linux） | ❌ 否 |
+
+### Python 用户
+
+从源码构建（PyPI 发布即将推出）：
 
 ```bash
 git clone https://github.com/archebase/robocodec.git
@@ -196,72 +217,23 @@ cd robocodec
 make build-python-dev
 ```
 
-```python
-from robocodec import RoboReader
-
-# 读取 MCAP 文件
-reader = RoboReader("data.mcap")
-for channel in reader.channels:
-    print(f"Topic: {channel.topic}, Messages: {channel.message_count}")
-```
-
-> **注意：** PyPI 发布即将推出。目前请使用上述说明从源码构建。
-
-详细的使用示例和 API 参考，请参阅 [examples/python/README.md](examples/python/README.md)。
-
-## 架构
-
-Robocodec 是一个**以格式为核心**的库，每个机器人数据格式都有独立的模块，包含所有相关功能（读取器、写入器、高级 API）。
-
-### 分层架构
-
-```
-┌─────────────────────────────────────────────┐
-│  用户层 (lib.rs 重新导出)                    │
-│  - McapReader, BagWriter, 等                │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│  高级 API 层                                │
-│  - io/formats/mcap/reader.rs (自动解码)     │
-│  - io/formats/mcap/writer.rs (自定义)       │
-│  - io/formats/bag/writer.rs (高级)          │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│  底层 I/O 层                                │
-│  - io/formats/mcap/parallel.rs, reader.rs   │
-│  - io/formats/bag/parallel.rs, reader.rs    │
-│  - io/ (统一 trait)                         │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│  基础层                                     │
-│  - core/ (错误、类型)                       │
-│  - encoding/ (编解码器)                     │
-│  - schema/ (解析)                           │
-└─────────────────────────────────────────────┘
-```
-
-### 核心原则
-
-1. **以格式为核心的组织**：每个格式（MCAP、ROS1 bag）都有独立的模块，包含底层 I/O 操作、特定格式的读取器和写入器以及高级便利 API。
-
-2. **分层架构**：用户 API、高级操作、底层 I/O 和基础层之间有清晰的分离。
-
-3. **统一的重写器接口**：从文件扩展名自动检测格式并委托给特定格式的重写器。
-
-更多详情请参阅 [ARCHITECTURE.md](ARCHITECTURE.md)。
-
 ## 支持的格式
 
-| 格式 | 读取 | 写入 | 备注 |
-|--------|------|-------|-------|
-| MCAP | ✅ | ✅ | 针对追加优化的通用数据格式 |
-| ROS1 Bag | ✅ | ✅ | ROS1 rosbag 格式 |
-| CDR | ✅ | ✅ | 通用数据表示（ROS1/ROS2） |
-| Protobuf | ✅ | ✅ | Protocol Buffers |
-| JSON | ✅ | ✅ | JSON 序列化 |
+| 格式 | 读取 | 写入 |
+|--------|-----|-------|
+| MCAP | ✅ | ✅ |
+| ROS1 Bag | ✅ | ✅ |
+| RRF2 (Rerun) | ✅ | ✅ |
+
+> **注意：** RRF2 支持兼容 Rerun **0.27+** 版本。更早版本使用不同的格式，暂不支持。
+
+## 消息编码
+
+| 编码 | 描述 |
+|---------|-------------|
+| CDR | 通用数据表示（ROS1/ROS2） |
+| Protobuf | Protocol Buffers |
+| JSON | JSON 编码 |
 
 ## 模式支持
 
@@ -269,52 +241,11 @@ Robocodec 是一个**以格式为核心**的库，每个机器人数据格式都
 - ROS2 IDL（接口定义语言）
 - OMG IDL（对象管理组织）
 
-## 开发
-
-### 构建
-
-```bash
-# 构建库
-cargo build --release
-
-# 运行测试
-cargo test
-
-# 使用特定功能构建
-cargo build --features python
-```
-
-### 运行示例
-
-```bash
-# 读取 MCAP 文件
-cargo run --example read_mcap -- data.mcap
-
-# 在格式之间转换
-cargo run --example convert -- input.bag output.mcap
-```
-
-## 贡献
-
-我们欢迎贡献！请参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解指南。
-
 ## 许可证
 
-本项目在 MulanPSL v2 下许可 - 详见 [LICENSE](LICENSE) 文件。
-
-## 相关项目
-
-- [Roboflow](https://github.com/archebase/roboflow) - 基于 robocodec 构建的高级流水线和转换工具
-- [MCAP](https://mcap.dev/) - 针对机器人社区追加优化的通用数据格式
-- [ROS](https://www.ros.org/) - 机器人操作系统
-
-## 文档
-
-- [架构](ARCHITECTURE.md) - 高层系统设计
-- [Python 示例](examples/python/README.md) - Python API 使用示例
+MulanPSL v2 - 详见 [LICENSE](LICENSE)
 
 ## 链接
 
 - [问题追踪器](https://github.com/archebase/robocodec/issues)
-- [行为准则](CODE_OF_CONDUCT_zh.md)
-- [安全策略](SECURITY_zh.md)
+- [安全策略](SECURITY.md)

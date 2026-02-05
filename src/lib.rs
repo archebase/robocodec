@@ -66,26 +66,33 @@ pub mod core;
 // Re-export core types for convenience
 pub use core::{CodecError, CodecValue, DecodedMessage, Encoding, PrimitiveType, Result};
 
-// Encoding/decoding
+// Encoding/decoding (hidden from docs but available for advanced use)
+#[doc(hidden)]
 pub mod encoding;
 
-// Schema parsing
+// Schema parsing (hidden from docs but available for advanced use)
+#[doc(hidden)]
 pub mod schema;
 
 // Message transformations
 pub mod transform;
 
-// Pipeline types (arena, chunk, buffer pool)
-pub mod types;
-
-// I/O types (arena, metadata, traits, reader/writer strategies, etc.)
+// I/O types (private implementation, but accessible for testing/advanced use)
+#[doc(hidden)]
 pub mod io;
 
-// Re-export key I/O types
-pub use io::metadata::{ChannelInfo, DecodedMessageResult, FileFormat, FileInfo, MessageMetadata};
-pub use io::reader::{DecodedMessageIter, ReaderConfig, ReaderConfigBuilder};
-pub use io::traits::{FormatReader, FormatWriter};
-pub use io::{MmapArena, MmapArenaRef, RoboReader, RoboWriter};
+// Re-export key public API types at top level
+pub use io::RoboReader;
+pub use io::metadata::{ChannelInfo, DecodedMessageResult};
+pub use io::reader::{DecodedMessageIter, ReaderConfig};
+pub use io::writer::{RoboWriter, WriterConfig};
+
+// Format traits are available but hidden from documentation
+// Users don't need to import these - methods work directly on RoboReader/RoboWriter
+#[doc(hidden)]
+pub use io::traits::FormatReader;
+#[doc(hidden)]
+pub use io::traits::FormatWriter;
 
 // Rewriter support (shared types and traits)
 pub mod rewriter;
@@ -97,10 +104,8 @@ pub use transform::{
     TypeNormalization, TypeRenameTransform,
 };
 
-// Format-specific modules (available but not re-exported at top level)
+// Format-specific modules are private implementation details
 // Use RoboReader/RoboWriter for a unified interface
-pub use io::formats::bag;
-pub use io::formats::mcap;
 
 /// Decoder trait for generic decoding operations.
 pub trait Decoder: Send + Sync {

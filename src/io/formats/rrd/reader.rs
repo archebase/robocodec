@@ -6,6 +6,8 @@
 //!
 //! This module provides `RrdReader` for reading Rerun RRD files with support for
 //! various encodings used by Rerun.
+//!
+//! For parallel reading support, see `ParallelRrdReader` in the `parallel` module.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -20,7 +22,9 @@ use crate::io::traits::FormatReader;
 use crate::io::writer::WriterConfig;
 use crate::io::{ChannelInfo, FormatWriter, TimestampedDecodedMessage};
 
+use super::arrow_msg::ArrowMsg;
 use super::constants::*;
+use super::parallel::ParallelRrdReader;
 
 /// RRD format type.
 ///
@@ -28,9 +32,12 @@ use super::constants::*;
 pub struct RrdFormat;
 
 impl RrdFormat {
-    /// Create an RRD reader with decoding support.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<RrdReader> {
-        RrdReader::open(path)
+    /// Create an RRD reader with parallel reading support.
+    ///
+    /// The reader uses memory-mapping and processes messages in parallel
+    /// using the Rayon thread pool.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<ParallelRrdReader> {
+        ParallelRrdReader::open(path)
     }
 
     /// Create an RRD writer with the given configuration.
@@ -206,12 +213,16 @@ impl RrdReader {
         let mut reader = BufReader::new(file);
         let header = RrdHeader::read(&mut reader)?;
 
-        // Validate version (RRF2 version is [0, 0, 0, 1])
-        // For now, we accept any version that starts with 0.0.0.x
-        if header.version[0] != 0 || header.version[1] != 0 || header.version[2] != 0 {
+        // Validate version - Rerun encodes its semver in the version field
+        // e.g., [0, 27, 0, 193] = Rerun 0.27.0
+        // For now, we accept any 0.x.x.x version (all Rerun 0.x releases)
+        if header.version[0] != 0 {
             return Err(CodecError::parse(
                 "RRD",
-                format!("Unsupported version: {:?}", header.version),
+                format!(
+                    "Unsupported version: {:?} (only Rerun 0.x supported)",
+                    header.version
+                ),
             ));
         }
 
@@ -446,7 +457,24 @@ impl<'a> DecodedMessageIter<'a> {
             // Read payload if we have data
             if pos + len <= data_buf.len() {
                 let payload = data_buf[pos..pos + len].to_vec();
-                messages.push((payload, topic));
+
+                // Only ArrowMsg messages use the ArrowMsg protobuf format
+                // SetStoreInfo and BlueprintActivationCommand are different protobufs
+                let data = if kind == MSG_KIND_ARROW_MSG {
+                    // Parse ArrowMsg protobuf and decompress
+                    let arrow_msg = ArrowMsg::from_bytes(&payload).map_err(|e| {
+                        CodecError::parse("RRD", format!("Failed to parse ArrowMsg: {e}"))
+                    })?;
+
+                    arrow_msg.decompress_payload().map_err(|e| {
+                        CodecError::parse("RRD", format!("Failed to decompress ArrowMsg: {e}"))
+                    })?
+                } else {
+                    // Other message types are returned as-is
+                    payload
+                };
+
+                messages.push((data, topic));
                 pos += len;
             } else {
                 break;
@@ -589,7 +617,24 @@ impl<'a> DecodedMessageWithTimestampIter<'a> {
             // Read payload if we have data
             if pos + len <= data_buf.len() {
                 let payload = data_buf[pos..pos + len].to_vec();
-                messages.push((payload, topic));
+
+                // Only ArrowMsg messages use the ArrowMsg protobuf format
+                // SetStoreInfo and BlueprintActivationCommand are different protobufs
+                let data = if kind == MSG_KIND_ARROW_MSG {
+                    // Parse ArrowMsg protobuf and decompress
+                    let arrow_msg = ArrowMsg::from_bytes(&payload).map_err(|e| {
+                        CodecError::parse("RRD", format!("Failed to parse ArrowMsg: {e}"))
+                    })?;
+
+                    arrow_msg.decompress_payload().map_err(|e| {
+                        CodecError::parse("RRD", format!("Failed to decompress ArrowMsg: {e}"))
+                    })?
+                } else {
+                    // Other message types are returned as-is
+                    payload
+                };
+
+                messages.push((data, topic));
                 pos += len;
             } else {
                 break;
@@ -986,6 +1031,633 @@ mod tests {
         // Test as_any_mut
         let mut reader_mut = RrdReader::open(&temp_path).unwrap();
         let _any_mut: &mut dyn std::any::Any = reader_mut.as_any_mut();
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    // =======================================================================
+    // Tests with real RRD fixture files
+    // =======================================================================
+
+    fn get_fixture_path(name: &str) -> String {
+        format!("tests/fixtures/rrd/{}", name)
+    }
+
+    #[test]
+    fn test_open_real_rrd_files() {
+        // Test opening multiple real RRD files
+        for i in 1..=20 {
+            let path = get_fixture_path(&format!("file{i}.rrd"));
+            if std::path::Path::new(&path).exists() {
+                let result = RrdReader::open(&path);
+                assert!(
+                    result.is_ok(),
+                    "Should open file{i}.rrd: {:?}",
+                    result.err()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_messages_real_file() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = RrdReader::open(&path).expect("Failed to open file1.rrd");
+            let iter = reader.decode_messages().expect("Failed to create iterator");
+
+            // Should have messages from real file
+            let count = iter.count();
+            assert!(count > 0, "Real RRD file should have messages");
+        }
+    }
+
+    #[test]
+    fn test_decode_messages_with_timestamp_real_file() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = RrdReader::open(&path).expect("Failed to open file1.rrd");
+            let iter = reader
+                .decode_messages_with_timestamp()
+                .expect("Failed to create iterator");
+
+            let count = iter.count();
+            assert!(count > 0, "Real RRD file should have messages");
+        }
+    }
+
+    #[test]
+    fn test_stream_method_real_file() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = RrdReader::open(&path).expect("Failed to open file1.rrd");
+            let iter = reader
+                .decode_messages_with_timestamp()
+                .expect("Failed to create iterator");
+
+            // Test the stream() method
+            let stream = iter.stream().expect("Failed to create stream");
+            let results: Vec<_> = stream.collect();
+
+            assert!(!results.is_empty(), "Stream should yield messages");
+
+            // Verify each result has proper structure
+            for result in results.iter().take(5) {
+                assert!(result.is_ok(), "Each result should be Ok: {:?}", result);
+                let (msg, channel) = result.as_ref().unwrap();
+                assert!(!msg.message.is_empty(), "Message should have data");
+                assert_eq!(channel.id, 0);
+                assert!(!channel.topic.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn test_reader_real_file_properties() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = RrdReader::open(&path).expect("Failed to open file1.rrd");
+
+            // Test various reader properties
+            assert!(reader.file_size() > 0);
+            assert!(!reader.path().is_empty());
+            assert!(!reader.channels().is_empty());
+
+            let header = reader.header();
+            assert_eq!(&header.magic, RRD_MAGIC);
+        }
+    }
+
+    #[test]
+    fn test_real_file_header_compression() {
+        // Check compression type in real files
+        for i in 1..=5 {
+            let path = get_fixture_path(&format!("file{i}.rrd"));
+            if std::path::Path::new(&path).exists() {
+                let reader = RrdReader::open(&path).expect("Failed to open file{i}.rrd");
+                let header = reader.header();
+
+                // Should have valid compression value
+                assert!(
+                    header.compression == COMPRESSION_OFF || header.compression == COMPRESSION_LZ4,
+                    "Compression should be 0 (off) or 1 (lz4)"
+                );
+
+                // Should have valid serializer
+                assert!(
+                    header.serializer == SERIALIZER_MSGPACK
+                        || header.serializer == SERIALIZER_PROTOBUF,
+                    "Serializer should be msgpack or protobuf"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_stream_timestamps_increment() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = RrdReader::open(&path).expect("Failed to open file1.rrd");
+            let iter = reader
+                .decode_messages_with_timestamp()
+                .expect("Failed to create iterator");
+            let stream = iter.stream().expect("Failed to create stream");
+
+            let results: Vec<_> = stream
+                .take(10)
+                .collect::<Result<Vec<_>>>()
+                .expect("Should collect results");
+
+            assert!(!results.is_empty());
+
+            // Verify timestamps increment
+            for i in 1..results.len() {
+                let curr_log = results[i].0.log_time;
+                let prev_log = results[i - 1].0.log_time;
+                assert!(curr_log > prev_log, "Timestamps should increment");
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_messages_iterator_behavior() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = RrdReader::open(&path).expect("Failed to open file1.rrd");
+            let iter = reader.decode_messages().expect("Failed to create iterator");
+
+            // Consume some messages and verify structure
+            let mut count = 0;
+            for result in iter.take(10) {
+                assert!(result.is_ok(), "Should decode message: {:?}", result.err());
+                let (msg, channel) = result.unwrap();
+                assert!(!msg.is_empty(), "Message should have data");
+                assert_eq!(channel.id, 0);
+                count += 1;
+            }
+
+            assert!(count > 0, "Should decode at least one message");
+        }
+    }
+
+    #[test]
+    fn test_incompatible_version_zero() {
+        // Test version [0, 0, 0, 0] which indicates incompatible file
+        let temp_path = std::env::temp_dir().join("test_incompatible_version.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&[0, 0, 0, 0]).unwrap(); // incompatible version
+            file.write_all(&0u32.to_le_bytes()).unwrap(); // options
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let result = RrdReader::open(&temp_path);
+        assert!(result.is_err(), "Should reject version [0,0,0,0]");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_non_zero_reserved_bytes() {
+        // Test header with non-zero reserved bytes (should warn but not error)
+        let temp_path = std::env::temp_dir().join("test_reserved_bytes.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            // options with non-zero reserved bytes
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0xFF, 0xFF])
+                .unwrap();
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let result = RrdReader::open(&temp_path);
+        assert!(
+            result.is_ok(),
+            "Should accept file with non-zero reserved bytes"
+        );
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_msgpack_serializer() {
+        // Test header with msgpack serializer
+        let temp_path = std::env::temp_dir().join("test_msgpack.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_MSGPACK, 0, 0])
+                .unwrap();
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        assert_eq!(reader.header().serializer, SERIALIZER_MSGPACK);
+        assert_eq!(reader.header().serializer_name(), "msgpack");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_lz4_compression() {
+        // Test header with LZ4 compression
+        let temp_path = std::env::temp_dir().join("test_lz4.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_LZ4, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        assert_eq!(reader.header().compression, COMPRESSION_LZ4);
+        assert_eq!(reader.header().compression_name(), "lz4");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_unusual_version_warning() {
+        // Test version significantly different from current (should warn but not error)
+        let temp_path = std::env::temp_dir().join("test_unusual_version.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&[0, 0, 255, 255]).unwrap(); // unusual version
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let result = RrdReader::open(&temp_path);
+        assert!(result.is_ok(), "Should accept unusual version with warning");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_rrd_format_factory_methods() {
+        // Test RrdFormat factory methods
+        let temp_path = std::env::temp_dir().join("test_factory.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        // Test open method (returns ParallelRrdReader)
+        let result = RrdFormat::open(&temp_path);
+        assert!(result.is_ok(), "RrdFormat::open should succeed");
+
+        // Test create_writer method
+        let temp_path_out = std::env::temp_dir().join("test_factory_out.rrd");
+        let writer_result = RrdFormat::create_writer(&temp_path_out, &WriterConfig::default());
+        assert!(
+            writer_result.is_ok(),
+            "RrdFormat::create_writer should succeed"
+        );
+
+        std::fs::remove_file(&temp_path).ok();
+        std::fs::remove_file(&temp_path_out).ok();
+    }
+
+    #[test]
+    fn test_file_too_small_for_header() {
+        // Test file that's too small to contain a valid header
+        let temp_path = std::env::temp_dir().join("test_too_small.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            file.write_all(b"RRF").unwrap(); // Only 3 bytes
+        }
+
+        let result = RrdReader::open(&temp_path);
+        assert!(result.is_err(), "Should fail for file too small");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_truncated_header() {
+        // Test file with partial header (only magic, no version/options)
+        let temp_path = std::env::temp_dir().join("test_truncated.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            file.write_all(RRD_MAGIC).unwrap(); // 4 bytes, but need 12 total
+        }
+
+        let result = RrdReader::open(&temp_path);
+        assert!(result.is_err(), "Should fail for truncated header");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_decode_multiple_rrd_files() {
+        // Test decoding messages from multiple different RRD files
+        for i in 1..=10 {
+            let path = get_fixture_path(&format!("file{i}.rrd"));
+            if std::path::Path::new(&path).exists() {
+                let reader =
+                    RrdReader::open(&path).unwrap_or_else(|_| panic!("Failed to open file{i}.rrd"));
+
+                // Test decode_messages
+                let iter1 = reader.decode_messages();
+                assert!(iter1.is_ok(), "Should create decode_messages iterator");
+
+                // Test decode_messages_with_timestamp
+                let reader2 = RrdReader::open(&path)
+                    .unwrap_or_else(|_| panic!("Failed to open file{i}.rrd again"));
+                let iter2 = reader2.decode_messages_with_timestamp();
+                assert!(
+                    iter2.is_ok(),
+                    "Should create decode_messages_with_timestamp iterator"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_reader_properties_multiple_files() {
+        // Test reader properties across multiple files
+        for i in 1..=10 {
+            let path = get_fixture_path(&format!("file{i}.rrd"));
+            if std::path::Path::new(&path).exists() {
+                let reader =
+                    RrdReader::open(&path).unwrap_or_else(|_| panic!("Failed to open file{i}.rrd"));
+
+                // All files should have positive size
+                assert!(
+                    reader.file_size() > 0,
+                    "File {} should have positive size",
+                    i
+                );
+
+                // All files should have channels
+                assert!(
+                    !reader.channels().is_empty(),
+                    "File {} should have channels",
+                    i
+                );
+
+                // All should be RRD format
+                assert_eq!(reader.format(), crate::io::metadata::FileFormat::Rrd);
+
+                // All should have chunk count of 0
+                assert_eq!(reader.chunk_count(), 0);
+
+                // Header should be valid
+                let header = reader.header();
+                assert_eq!(&header.magic, RRD_MAGIC);
+            }
+        }
+    }
+
+    #[test]
+    fn test_format_reader_trait() {
+        // Test FormatReader trait implementation
+        let temp_path = std::env::temp_dir().join("test_trait.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+
+        // Test all FormatReader trait methods
+        let _channels: &HashMap<u16, ChannelInfo> = reader.channels();
+        let _count = reader.message_count();
+        let _start = reader.start_time();
+        let _end = reader.end_time();
+        let _path = reader.path();
+        let _format = reader.format();
+        let _size = reader.file_size();
+        let _any: &dyn std::any::Any = reader.as_any();
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_invalid_compression_value() {
+        // Test with invalid compression value (should show "unknown")
+        let temp_path = std::env::temp_dir().join("test_bad_compression.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[0xFF, SERIALIZER_PROTOBUF, 0, 0]).unwrap(); // invalid compression
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        assert_eq!(reader.header().compression_name(), "unknown");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_invalid_serializer_value() {
+        // Test with invalid serializer value (should show "unknown")
+        let temp_path = std::env::temp_dir().join("test_bad_serializer.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, 0xFF, 0, 0]).unwrap(); // invalid serializer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        assert_eq!(reader.header().serializer_name(), "unknown");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_iterator_empty_messages() {
+        // Test iterator behavior when there are no messages
+        let temp_path = std::env::temp_dir().join("test_empty_iter.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages().unwrap();
+        assert_eq!(iter.count(), 0, "Empty file should yield 0 messages");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_timestamp_iterator_empty_messages() {
+        // Test timestamp iterator behavior when there are no messages
+        let temp_path = std::env::temp_dir().join("test_empty_timestamp_iter.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        assert_eq!(
+            iter.count(),
+            0,
+            "Empty file should yield 0 timestamped messages"
+        );
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_default_topic_constant() {
+        // Verify DEFAULT_TOPIC is the expected value
+        assert_eq!(DEFAULT_TOPIC, "/");
+    }
+
+    #[test]
+    fn test_min_version_constant() {
+        // Verify RRD_MIN_VERSION
+        assert_eq!(RRD_MIN_VERSION, [0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn test_channel_by_topic_with_real_file() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = RrdReader::open(&path).expect("Failed to open file1.rrd");
+
+            // Should find the default topic
+            let channel = reader.channel_by_topic(DEFAULT_TOPIC);
+            assert!(channel.is_some(), "Should find default topic");
+
+            // Should not find non-existent topic
+            let nonexistent = reader.channel_by_topic("/nonexistent");
+            assert!(nonexistent.is_none());
+        }
+    }
+
+    #[test]
+    fn test_decode_messages_iter_stream_method() {
+        // Test the stream() method of the timestamp iterator
+        let temp_path = std::env::temp_dir().join("test_stream_method.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        let stream = iter
+            .stream()
+            .expect("Stream should be created even for empty file");
+
+        let results: Vec<_> = stream.collect();
+        // Empty file should yield no messages
+        assert_eq!(results.len(), 0);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_decode_messages_iter_stream_empty_file() {
+        // Test stream() method on empty file
+        let temp_path = std::env::temp_dir().join("test_stream_empty.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        let stream = iter
+            .stream()
+            .expect("Stream should be created even for empty file");
+
+        let results: Vec<_> = stream.collect();
+        assert_eq!(results.len(), 0, "Empty file should yield no messages");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_set_store_info_topic() {
+        // Test that MSG_KIND_SET_STORE_INFO gets the "/store/info" topic
+        // Note: Non-ArrowMsg messages are returned as-is without decompression
+        let temp_path = std::env::temp_dir().join("test_store_info_topic.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // SetStoreInfo message (kind=1, non-ArrowMsg)
+            file.write_all(&MSG_KIND_SET_STORE_INFO.to_le_bytes())
+                .unwrap();
+            file.write_all(&4u64.to_le_bytes()).unwrap();
+            file.write_all(b"info").unwrap();
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages().unwrap();
+
+        // SetStoreInfo is not an ArrowMsg, so it gets returned as raw bytes
+        let count = iter.count();
+        // The message should be parsed but might fail ArrowMsg decoding
+        assert!(count > 0, "Should process the message");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_unknown_message_kind_topic() {
+        // Test that unknown message kind gets default "/" topic
+        // Note: Non-ArrowMsg messages are returned as-is
+        let temp_path = std::env::temp_dir().join("test_unknown_topic.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // Unknown message kind (999)
+            file.write_all(&999u64.to_le_bytes()).unwrap();
+            file.write_all(&4u64.to_le_bytes()).unwrap();
+            file.write_all(b"data").unwrap();
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages().unwrap();
+        let count = iter.count();
+        // Unknown kind should get "/" topic but may fail ArrowMsg decoding
+        assert!(count > 0, "Should process unknown message kind");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_iterator_consumes_all_messages() {
+        // Test that iterator properly consumes and counts messages
+        // Using empty test file since ArrowMsg protobuf parsing requires valid format
+        let temp_path = std::env::temp_dir().join("test_consume.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = RrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        let count = iter.count();
+        assert_eq!(count, 0, "Empty file should have 0 messages");
 
         std::fs::remove_file(&temp_path).ok();
     }
