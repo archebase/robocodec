@@ -98,7 +98,7 @@ mod tests {
     fn test_s3_reader_state_display() {
         // Note: S3ReaderState is in the old s3/reader module
         // This test will be moved when reader is refactored
-        assert!(true); // Placeholder
+        // Placeholder test - currently does nothing
     }
 
     #[test]

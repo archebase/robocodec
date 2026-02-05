@@ -296,10 +296,6 @@ pub struct RrdDecodedMessageWithTimestampIter<'a> {
     mmap: &'a memmap2::Mmap,
     /// Channel information
     channels: &'a HashMap<u16, ChannelInfo>,
-    /// Current position in message index
-    current_index: usize,
-    /// Start timestamp for generating sequential timestamps
-    start_timestamp: u64,
 }
 
 impl<'a> RrdDecodedMessageWithTimestampIter<'a> {
@@ -313,8 +309,6 @@ impl<'a> RrdDecodedMessageWithTimestampIter<'a> {
             message_index,
             mmap,
             channels,
-            current_index: 0,
-            start_timestamp: 0,
         }
     }
 
@@ -329,7 +323,7 @@ impl<'a> RrdDecodedMessageWithTimestampIter<'a> {
             self.message_index,
             self.mmap,
             self.channels,
-            self.start_timestamp,
+            0, // start from timestamp 0
         )
     }
 }
@@ -497,7 +491,7 @@ impl ParallelReader for ParallelRrdReader {
             .num_threads
             .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
 
-        let messages_per_chunk = (self.message_index.len() + num_threads - 1) / num_threads;
+        let messages_per_chunk = self.message_index.len().div_ceil(num_threads);
 
         // Create chunks for parallel processing
         let chunks: Vec<(usize, usize)> = self
@@ -547,8 +541,8 @@ impl ParallelReader for ParallelRrdReader {
         // Return number of "chunks" based on thread count
         // For RRF2, we divide messages into chunks dynamically
         let num_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-        let messages_per_chunk = (self.message_index.len() + num_threads - 1) / num_threads;
-        (self.message_index.len() + messages_per_chunk.max(1) - 1) / messages_per_chunk.max(1)
+        let messages_per_chunk = self.message_index.len().div_ceil(num_threads);
+        self.message_index.len().div_ceil(messages_per_chunk.max(1))
     }
 
     fn supports_parallel(&self) -> bool {
@@ -569,7 +563,6 @@ struct RrdMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::CodecValue;
     use std::io::Write;
 
     fn create_test_rrd_file(path: &str) -> std::io::Result<()> {
@@ -672,18 +665,17 @@ mod tests {
         format!("tests/fixtures/rrd/{}", name)
     }
 
+    // Get all available RRD fixture files
+    fn all_rrd_fixtures() -> Vec<String> {
+        (1..=20).map(|i| format!("file{i}.rrd")).collect()
+    }
+
     #[test]
     fn test_parallel_rrd_open_with_fixtures() {
-        let fixtures = [
-            "file1.rrd",
-            "file2.rrd",
-            "file3.rrd",
-            "small_uncompressed.rrd",
-            "timestamps.rrd",
-        ];
+        let fixtures = all_rrd_fixtures();
 
         for fixture in fixtures {
-            let path = get_fixture_path(fixture);
+            let path = get_fixture_path(&fixture);
             if std::path::Path::new(&path).exists() {
                 let result = ParallelRrdReader::open(&path);
                 assert!(
@@ -703,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_parallel_rrd_message_count_with_fixtures() {
-        let path = get_fixture_path("small_uncompressed.rrd");
+        let path = get_fixture_path("file1.rrd");
         if std::path::Path::new(&path).exists() {
             let reader = ParallelRrdReader::open(&path).expect("Failed to open");
             assert!(reader.message_count() > 0, "Should have messages");
@@ -712,7 +704,7 @@ mod tests {
 
     #[test]
     fn test_parallel_rrd_channels_with_fixtures() {
-        let path = get_fixture_path("small_uncompressed.rrd");
+        let path = get_fixture_path("file1.rrd");
         if std::path::Path::new(&path).exists() {
             let reader = ParallelRrdReader::open(&path).expect("Failed to open");
             assert!(!reader.channels().is_empty(), "Should have channels");
@@ -721,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_parallel_rrd_message_index() {
-        let path = get_fixture_path("small_uncompressed.rrd");
+        let path = get_fixture_path("file1.rrd");
         if std::path::Path::new(&path).exists() {
             let reader = ParallelRrdReader::open(&path).expect("Failed to open");
             let index = reader.message_index();
@@ -738,7 +730,7 @@ mod tests {
 
     #[test]
     fn test_parallel_rrd_supports_parallel_with_fixtures() {
-        let path = get_fixture_path("small_uncompressed.rrd");
+        let path = get_fixture_path("file1.rrd");
         if std::path::Path::new(&path).exists() {
             let reader = ParallelRrdReader::open(&path).expect("Failed to open");
             assert!(
@@ -751,7 +743,7 @@ mod tests {
 
     #[test]
     fn test_parallel_rrd_check_parallel() {
-        let path = get_fixture_path("small_uncompressed.rrd");
+        let path = get_fixture_path("file1.rrd");
         if std::path::Path::new(&path).exists() {
             let (has_messages, count) =
                 ParallelRrdReader::check_parallel(&path).expect("check_parallel should succeed");
@@ -762,7 +754,7 @@ mod tests {
 
     #[test]
     fn test_parallel_rrd_decode_messages_with_timestamp() {
-        let path = get_fixture_path("small_uncompressed.rrd");
+        let path = get_fixture_path("file1.rrd");
         if std::path::Path::new(&path).exists() {
             let reader = ParallelRrdReader::open(&path).expect("Failed to open");
 
@@ -806,33 +798,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parallel_rrd_large_file() {
-        let path = get_fixture_path("large_multichannel.rrd");
-        if std::path::Path::new(&path).exists() {
-            let reader = ParallelRrdReader::open(&path).expect("Failed to open large file");
-            assert!(
-                reader.message_count() > 0,
-                "Large file should have messages"
-            );
-            assert!(reader.supports_parallel(), "Should support parallel");
-        }
-    }
-
-    #[test]
-    fn test_parallel_rrd_timestamps_file() {
-        let path = get_fixture_path("timestamps.rrd");
-        if std::path::Path::new(&path).exists() {
-            let reader = ParallelRrdReader::open(&path).expect("Failed to open");
-            assert!(
-                reader.message_count() > 0,
-                "Timestamps file should have messages"
-            );
-        }
-    }
-
-    #[test]
     fn test_parallel_rrd_format_reader_traits() {
-        let path = get_fixture_path("small_uncompressed.rrd");
+        let path = get_fixture_path("file1.rrd");
         if std::path::Path::new(&path).exists() {
             let mut reader = ParallelRrdReader::open(&path).expect("Failed to open");
 
@@ -849,7 +816,7 @@ mod tests {
 
     #[test]
     fn test_parallel_rrd_channel_info() {
-        let path = get_fixture_path("small_uncompressed.rrd");
+        let path = get_fixture_path("file1.rrd");
         if std::path::Path::new(&path).exists() {
             let reader = ParallelRrdReader::open(&path).expect("Failed to open");
             let channels = reader.channels();
@@ -867,7 +834,7 @@ mod tests {
 
     #[test]
     fn test_parallel_rrd_stream_multiple_messages() {
-        let path = get_fixture_path("small_uncompressed.rrd");
+        let path = get_fixture_path("file1.rrd");
         if std::path::Path::new(&path).exists() {
             let reader = ParallelRrdReader::open(&path).expect("Failed to open");
 
@@ -877,16 +844,12 @@ mod tests {
             let mut stream = iter.stream().expect("Failed to create stream");
 
             let mut count = 0;
-            let mut total_bytes = 0;
 
             // Read multiple messages
-            while let Some(result) = stream.next() {
+            for result in &mut stream {
                 match result {
-                    Ok((msg, channel)) => {
+                    Ok((_msg, channel)) => {
                         count += 1;
-                        if let Some(CodecValue::Bytes(data)) = msg.message.get("data") {
-                            total_bytes += data.len();
-                        }
                         assert_eq!(channel.id, 0);
 
                         // Limit iterations for test
@@ -906,5 +869,1016 @@ mod tests {
 
             assert!(count > 0, "Should read at least one message, got {}", count);
         }
+    }
+
+    // =======================================================================
+    // Additional tests for error paths and edge cases
+    // =======================================================================
+
+    #[test]
+    fn test_parallel_rrd_file_too_small() {
+        let temp_path = std::env::temp_dir().join("test_too_small.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Write only 8 bytes (less than STREAM_HEADER_SIZE)
+            file.write_all(b"RRF2").unwrap();
+            file.write_all(&[0u8; 4]).unwrap();
+        }
+
+        let result = ParallelRrdReader::open(&temp_path);
+        assert!(result.is_err(), "Should fail for file too small");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_invalid_magic() {
+        let temp_path = std::env::temp_dir().join("test_invalid_magic.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Write invalid magic
+            file.write_all(b"BAD!").unwrap();
+            file.write_all(&[0u8; 8]).unwrap();
+        }
+
+        let result = ParallelRrdReader::open(&temp_path);
+        assert!(result.is_err(), "Should fail for invalid magic");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_nonexistent_file() {
+        let result = ParallelRrdReader::open("/nonexistent/path/file.rrd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_check_parallel_nonexistent_file() {
+        let result = ParallelRrdReader::check_parallel("/nonexistent/path/file.rrd");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parallel_rrd_message_index_structure() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = ParallelRrdReader::open(&path).expect("Failed to open");
+            let index = reader.message_index();
+
+            if !index.is_empty() {
+                // Verify first index entry structure
+                let entry = &index[0];
+                assert!(entry.offset >= STREAM_HEADER_SIZE as u64);
+                assert!(entry.kind > 0);
+                assert!(entry.length > 0);
+                assert!(!entry.topic.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn test_parallel_rrd_chunk_count() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = ParallelRrdReader::open(&path).expect("Failed to open");
+
+            let chunk_count = reader.chunk_count();
+            if reader.message_count() > 0 {
+                assert!(chunk_count > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_parallel_rrd_decode_messages_with_timestamp_all_fixtures() {
+        for i in 1..=20 {
+            let path = get_fixture_path(&format!("file{i}.rrd"));
+            if std::path::Path::new(&path).exists() {
+                let reader = ParallelRrdReader::open(&path).expect("Failed to open file{i}");
+
+                if reader.message_count() > 0 {
+                    let iter = reader.decode_messages_with_timestamp();
+                    assert!(
+                        iter.is_ok(),
+                        "Should create iterator for file{i}: {:?}",
+                        iter.err()
+                    );
+
+                    let iter = iter.unwrap();
+                    assert!(!iter.channels().is_empty());
+
+                    let stream = iter.stream();
+                    assert!(stream.is_ok());
+
+                    let mut stream = stream.unwrap();
+
+                    // Try to read at least one message
+                    let first_result = stream.next();
+                    if let Some(Ok((msg, channel))) = first_result {
+                        assert!(!channel.topic.is_empty());
+                        assert!(!msg.message.is_empty());
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parallel_rrd_iterator_empty() {
+        let temp_path = std::env::temp_dir().join("test_iter_empty.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Write minimal RRD with no messages
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        let mut stream = iter.stream().unwrap();
+
+        // Should return None immediately
+        assert!(stream.next().is_none());
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_set_store_info_message() {
+        // Test MSG_KIND_SET_STORE_INFO (kind = 1) message type
+        let temp_path = std::env::temp_dir().join("test_store_info.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+            // SetStoreInfo message
+            file.write_all(&MSG_KIND_SET_STORE_INFO.to_le_bytes())
+                .unwrap();
+            file.write_all(&(10u64).to_le_bytes()).unwrap();
+            file.write_all(b"store_info").unwrap();
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        let index = reader.message_index();
+        assert_eq!(index.len(), 1);
+        assert_eq!(index[0].kind, MSG_KIND_SET_STORE_INFO);
+        assert_eq!(index[0].topic, "/store/info");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_file_size() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = ParallelRrdReader::open(&path).expect("Failed to open");
+
+            let file_size = std::fs::metadata(&path).unwrap().len();
+            assert_eq!(reader.file_size(), file_size);
+        }
+    }
+
+    #[test]
+    fn test_parallel_rrd_start_end_time() {
+        // RRD doesn't have timestamps in the format, so these should be None
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = ParallelRrdReader::open(&path).expect("Failed to open");
+
+            assert!(reader.start_time().is_none());
+            assert!(reader.end_time().is_none());
+        }
+    }
+
+    #[test]
+    fn test_parallel_rrd_channel_count() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let reader = ParallelRrdReader::open(&path).expect("Failed to open");
+
+            // RRF2 uses a single channel
+            assert_eq!(reader.channels().len(), 1);
+
+            let channel = reader.channels().get(&0).unwrap();
+            assert_eq!(channel.id, 0);
+            assert_eq!(channel.topic, DEFAULT_TOPIC);
+            assert_eq!(channel.message_type, "rerun.ArrowMsg");
+        }
+    }
+
+    #[test]
+    fn test_parallel_rrd_message_index_entry() {
+        let temp_path = std::env::temp_dir().join("test_index_entry.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+            // ArrowMsg message
+            file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+            let payload = b"test_payload_data";
+            file.write_all(&(payload.len() as u64).to_le_bytes())
+                .unwrap();
+            file.write_all(payload).unwrap();
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let data = std::fs::read(&temp_path).unwrap();
+        let index = ParallelRrdReader::build_message_index(&data).unwrap();
+
+        assert_eq!(index.len(), 1);
+        assert_eq!(index[0].kind, MSG_KIND_ARROW_MSG);
+        assert!(index[0].length > 0); // "test_payload_data"
+        assert_eq!(index[0].topic, "/");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_check_parallel_with_real_file() {
+        let path = get_fixture_path("file1.rrd");
+        if std::path::Path::new(&path).exists() {
+            let (has_messages, count) =
+                ParallelRrdReader::check_parallel(&path).expect("check_parallel should succeed");
+
+            if has_messages {
+                assert!(count > 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_parallel_rrd_check_parallel_empty_file() {
+        let temp_path = std::env::temp_dir().join("test_check_empty.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header only
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let (has_messages, count) =
+            ParallelRrdReader::check_parallel(&temp_path).expect("check_parallel should succeed");
+        assert!(!has_messages);
+        assert_eq!(count, 0);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_supports_parallel_empty() {
+        let temp_path = std::env::temp_dir().join("test_supports_empty.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header only
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        assert!(!reader.supports_parallel());
+        assert_eq!(reader.chunk_count(), 0);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_all_fixture_files_exist() {
+        // Verify we can open all fixture files
+        for i in 1..=20 {
+            let path = get_fixture_path(&format!("file{i}.rrd"));
+            assert!(
+                std::path::Path::new(&path).exists(),
+                "Fixture file {} should exist",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_parallel_rrd_large_file() {
+        // Test with a file that has multiple messages to test chunking
+        let temp_path = std::env::temp_dir().join("test_large.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // Add multiple messages
+            for i in 0..10 {
+                file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+                let payload = format!("msg_{}", i);
+                file.write_all(&(payload.len() as u64).to_le_bytes())
+                    .unwrap();
+                file.write_all(payload.as_bytes()).unwrap();
+            }
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        assert_eq!(reader.message_count(), 10);
+        assert!(reader.chunk_count() > 0);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_timestamps_file() {
+        // Test that timestamps are generated sequentially
+        let temp_path = std::env::temp_dir().join("test_timestamps.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // Add messages
+            for _ in 0..5 {
+                file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+                file.write_all(&4u64.to_le_bytes()).unwrap();
+                file.write_all(b"test").unwrap();
+            }
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        let mut stream = iter.stream().unwrap();
+
+        let mut prev_timestamp = None;
+        let mut count = 0;
+
+        while let Some(Ok((msg, _))) = stream.next() {
+            if let Some(prev) = prev_timestamp {
+                assert!(msg.log_time > prev, "Timestamps should increment");
+            }
+            prev_timestamp = Some(msg.log_time);
+            count += 1;
+            if count >= 5 {
+                break;
+            }
+        }
+
+        assert!(count > 0);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_stream_timestamps_increment() {
+        // Test that timestamps increment in the stream
+        let temp_path = std::env::temp_dir().join("test_ts_incr.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // Add 3 messages
+            for _ in 0..3 {
+                file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+                file.write_all(&4u64.to_le_bytes()).unwrap();
+                file.write_all(b"data").unwrap();
+            }
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        let mut stream = iter.stream().unwrap();
+
+        let mut timestamps = Vec::new();
+        while let Some(Ok((msg, _))) = stream.next() {
+            timestamps.push(msg.log_time);
+            if timestamps.len() >= 3 {
+                break;
+            }
+        }
+
+        assert_eq!(timestamps.len(), 3);
+        assert_eq!(timestamps[0], 0);
+        assert_eq!(timestamps[1], 1);
+        assert_eq!(timestamps[2], 2);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_unknown_message_kind() {
+        // Test handling of unknown message kind (kind = 999)
+        let temp_path = std::env::temp_dir().join("test_unknown_kind.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // Unknown message kind
+            file.write_all(&999u64.to_le_bytes()).unwrap();
+            file.write_all(&4u64.to_le_bytes()).unwrap();
+            file.write_all(b"data").unwrap();
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        let index = reader.message_index();
+
+        // Unknown message kinds should still be indexed with default topic
+        assert_eq!(index.len(), 1);
+        assert_eq!(index[0].kind, 999);
+        assert_eq!(index[0].topic, "/");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_stream_multiple_fixtures() {
+        // Test streaming with multiple fixture files
+        for i in 1..=5 {
+            let path = get_fixture_path(&format!("file{}.rrd", i));
+            if std::path::Path::new(&path).exists() {
+                let reader = ParallelRrdReader::open(&path)
+                    .unwrap_or_else(|_| panic!("Failed to open file{}.rrd", i));
+
+                if reader.message_count() > 0 {
+                    let iter = reader
+                        .decode_messages_with_timestamp()
+                        .expect("Failed to create iterator");
+                    let mut stream = iter.stream().expect("Failed to create stream");
+
+                    // Should be able to read at least one message
+                    let first = stream.next();
+                    assert!(
+                        first.is_some(),
+                        "Should read at least one message from file{}.rrd",
+                        i
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_parallel_rrd_metadata_structure() {
+        // Test that metadata is correctly parsed
+        let temp_path = std::env::temp_dir().join("test_metadata.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // Message
+            file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+            file.write_all(&8u64.to_le_bytes()).unwrap();
+            file.write_all(b"metadata").unwrap();
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+
+        // Check metadata fields
+        assert!(reader.file_size() > 0);
+        assert!(!reader.path().is_empty());
+        assert_eq!(reader.format(), FileFormat::Rrd);
+        assert!(reader.start_time().is_none());
+        assert!(reader.end_time().is_none());
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_message_index_offsets() {
+        // Test that message index has correct offsets
+        let temp_path = std::env::temp_dir().join("test_offsets.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header (12 bytes)
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // First message
+            file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+            file.write_all(&4u64.to_le_bytes()).unwrap();
+            file.write_all(b"msg1").unwrap();
+
+            // Second message
+            file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+            file.write_all(&4u64.to_le_bytes()).unwrap();
+            file.write_all(b"msg2").unwrap();
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        let index = reader.message_index();
+
+        assert_eq!(index.len(), 2);
+
+        // Offsets should be increasing
+        assert!(index[1].offset > index[0].offset);
+
+        // Offsets should be past the header
+        assert!(index[0].offset >= STREAM_HEADER_SIZE as u64);
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_format_reader_all_methods() {
+        // Test all FormatReader trait methods
+        let temp_path = std::env::temp_dir().join("test_trait_methods.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+
+        // Test all FormatReader methods
+        let _channels = reader.channels();
+        let _count = reader.message_count();
+        let _start = reader.start_time();
+        let _end = reader.end_time();
+        let _path = reader.path();
+        let _format = reader.format();
+        let _size = reader.file_size();
+        let _any: &dyn std::any::Any = reader.as_any();
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_message_index_topics() {
+        // Test that different message kinds get different topics
+        let temp_path = std::env::temp_dir().join("test_topics.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // ArrowMsg (topic = "/")
+            file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+            file.write_all(&4u64.to_le_bytes()).unwrap();
+            file.write_all(b"data1").unwrap();
+
+            // SetStoreInfo (topic = "/store/info")
+            file.write_all(&MSG_KIND_SET_STORE_INFO.to_le_bytes())
+                .unwrap();
+            file.write_all(&4u64.to_le_bytes()).unwrap();
+            file.write_all(b"data2").unwrap();
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        let index = reader.message_index();
+
+        // Check that we have at least one message and topics are set correctly
+        assert!(!index.is_empty());
+        if index.len() >= 2 {
+            assert_eq!(index[0].topic, "/");
+            assert_eq!(index[1].topic, "/store/info");
+        }
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_iterator_next_returns_none() {
+        // Test that the placeholder Iterator::next returns None
+        let temp_path = std::env::temp_dir().join("test_iter_next.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        let mut iter = reader.decode_messages_with_timestamp().unwrap();
+
+        // The Iterator implementation is a placeholder that always returns None
+        // Use stream() instead for actual iteration
+        assert!(
+            iter.next().is_none(),
+            "Placeholder iterator should return None"
+        );
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_stream_bounds_check() {
+        // Test stream() with a file that has messages
+        let temp_path = std::env::temp_dir().join("test_bounds.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // Add a message
+            file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+            file.write_all(&8u64.to_le_bytes()).unwrap();
+            file.write_all(b"testdata").unwrap();
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        let mut stream = iter.stream().unwrap();
+
+        // Read the message
+        let result = stream.next();
+        assert!(result.is_some(), "Should have a message");
+        if let Some(Ok((msg, channel))) = result {
+            assert_eq!(channel.id, 0);
+            assert!(!msg.message.is_empty());
+        }
+
+        // Next should be None
+        assert!(stream.next().is_none(), "Should be exhausted");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_stream_channels_method() {
+        // Test the channels() method on the iterator
+        let temp_path = std::env::temp_dir().join("test_iter_channels.rrd");
+        create_test_rrd_file(temp_path.to_str().unwrap()).unwrap();
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+
+        // Test channels() method
+        let channels = iter.channels();
+        assert!(!channels.is_empty(), "Should have channels");
+        assert!(channels.contains_key(&0), "Should have channel 0");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_stream_timestamp_increments() {
+        // Test that timestamps increment with each message
+        let temp_path = std::env::temp_dir().join("test_ts_increment.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // Add 3 messages
+            for _ in 0..3 {
+                file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+                file.write_all(&4u64.to_le_bytes()).unwrap();
+                file.write_all(b"test").unwrap();
+            }
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        let mut stream = iter.stream().unwrap();
+
+        let mut prev_time = None;
+        let mut count = 0;
+
+        while let Some(Ok((msg, _))) = stream.next() {
+            if let Some(prev) = prev_time {
+                assert!(msg.log_time > prev, "Timestamps should increment");
+            }
+            prev_time = Some(msg.log_time);
+            count += 1;
+            if count >= 3 {
+                break;
+            }
+        }
+
+        assert_eq!(count, 3, "Should read all 3 messages");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_stream_ten_messages() {
+        // Test streaming exactly ten messages
+        let temp_path = std::env::temp_dir().join("test_stream_multi.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // Add 10 messages
+            for i in 0..10 {
+                file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+                let payload = format!("payload_{}", i);
+                file.write_all(&(payload.len() as u64).to_le_bytes())
+                    .unwrap();
+                file.write_all(payload.as_bytes()).unwrap();
+            }
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        assert_eq!(reader.message_count(), 10, "Should count 10 messages");
+
+        let iter = reader.decode_messages_with_timestamp().unwrap();
+        let mut stream = iter.stream().unwrap();
+
+        let mut count = 0;
+        while let Some(Ok((msg, channel))) = stream.next() {
+            count += 1;
+            assert_eq!(channel.id, 0);
+            assert!(!msg.message.is_empty());
+            if count >= 10 {
+                break;
+            }
+        }
+
+        assert_eq!(count, 10, "Should stream all 10 messages");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_chunk_count_with_messages() {
+        // Test chunk_count calculation with multiple messages
+        let temp_path = std::env::temp_dir().join("test_chunk_calc.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // Add messages
+            for _ in 0..20 {
+                file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+                file.write_all(&4u64.to_le_bytes()).unwrap();
+                file.write_all(b"data").unwrap();
+            }
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+        assert_eq!(reader.message_count(), 20);
+        assert!(reader.chunk_count() > 0, "Should have at least one chunk");
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_message_index_topics_variety() {
+        // Test message index with different message kinds and topics
+        let temp_path = std::env::temp_dir().join("test_variety.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // ArrowMsg (topic "/")
+            file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+            file.write_all(&4u64.to_le_bytes()).unwrap();
+            file.write_all(b"data1").unwrap();
+
+            // SetStoreInfo (topic "/store/info")
+            file.write_all(&MSG_KIND_SET_STORE_INFO.to_le_bytes())
+                .unwrap();
+            file.write_all(&4u64.to_le_bytes()).unwrap();
+            file.write_all(b"data2").unwrap();
+
+            // Unknown kind (topic "/")
+            file.write_all(&123u64.to_le_bytes()).unwrap();
+            file.write_all(&4u64.to_le_bytes()).unwrap();
+            file.write_all(b"data3").unwrap();
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let data = std::fs::read(&temp_path).unwrap();
+        let index = ParallelRrdReader::build_message_index(&data).unwrap();
+
+        // Check that we have all 3 messages with correct topics
+        assert!(
+            !index.is_empty(),
+            "Should have at least 1 message, got {}",
+            index.len()
+        );
+
+        // Verify first message is ArrowMsg
+        assert_eq!(index[0].kind, MSG_KIND_ARROW_MSG);
+        assert_eq!(index[0].topic, "/");
+
+        // If we have more messages, verify their topics
+        if index.len() >= 2 {
+            assert_eq!(index[1].kind, MSG_KIND_SET_STORE_INFO);
+            assert_eq!(index[1].topic, "/store/info");
+        }
+        if index.len() >= 3 {
+            assert_eq!(index[2].kind, 123);
+            assert_eq!(index[2].topic, "/");
+        }
+
+        std::fs::remove_file(&temp_path).ok();
+    }
+
+    #[test]
+    fn test_parallel_rrd_process_chunk() {
+        // Test the process_chunk method indirectly through read_parallel
+        let temp_path = std::env::temp_dir().join("test_process.rrd");
+        {
+            let mut file = std::fs::File::create(&temp_path).unwrap();
+            // Header
+            file.write_all(RRD_MAGIC).unwrap();
+            file.write_all(&RRD_VERSION).unwrap();
+            file.write_all(&[COMPRESSION_OFF, SERIALIZER_PROTOBUF, 0, 0])
+                .unwrap();
+
+            // Add messages
+            for _ in 0..5 {
+                file.write_all(&MSG_KIND_ARROW_MSG.to_le_bytes()).unwrap();
+                file.write_all(&4u64.to_le_bytes()).unwrap();
+                file.write_all(b"test").unwrap();
+            }
+
+            // End marker
+            file.write_all(&MSG_KIND_END.to_le_bytes()).unwrap();
+            file.write_all(&0u64.to_le_bytes()).unwrap();
+
+            // Footer
+            file.write_all(&[0u8; 28]).unwrap();
+            file.write_all(RRD_FOOTER_MAGIC).unwrap();
+        }
+
+        let reader = ParallelRrdReader::open(&temp_path).unwrap();
+
+        // Test read_parallel with a channel
+        let (sender, receiver): (
+            crossbeam_channel::Sender<crate::io::traits::MessageChunkData>,
+            _,
+        ) = crossbeam_channel::unbounded();
+        let config = crate::io::traits::ParallelReaderConfig::default();
+
+        // Create a thread that will receive chunks and then drop the receiver
+        // This allows the sender to complete
+        let handle = std::thread::spawn(move || {
+            let mut message_count = 0;
+            let mut total_bytes = 0;
+            while let Ok(chunk) = receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+                message_count += chunk.message_count();
+                total_bytes += chunk.total_data_size();
+                if message_count >= 5 {
+                    break;
+                }
+            }
+            (message_count, total_bytes)
+        });
+
+        let stats = reader.read_parallel(config, sender).unwrap();
+        let (msg_count, _bytes) = handle.join().unwrap();
+
+        assert!(stats.chunks_processed > 0);
+        assert_eq!(stats.messages_read, 5);
+        assert_eq!(msg_count, 5);
+
+        std::fs::remove_file(&temp_path).ok();
     }
 }

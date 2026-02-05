@@ -56,7 +56,7 @@ pub trait ByteStream: Send + Sync {
 
     /// Check if the stream is empty.
     fn is_empty(&self) -> bool {
-        self.len().map_or(false, |l| l == 0)
+        self.len() == Some(0)
     }
 
     /// Check if this stream supports seeking.

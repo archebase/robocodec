@@ -163,6 +163,7 @@ fn detect_from_extension(path: &Path) -> FileFormat {
 /// Format detector with caching capabilities.
 ///
 /// This trait can be implemented for custom format detection logic.
+#[allow(dead_code)]
 pub trait FormatDetector: Send + Sync {
     /// Detect the format of a file.
     fn detect(&self, path: &Path) -> Result<FileFormat, CodecError>;
@@ -170,8 +171,10 @@ pub trait FormatDetector: Send + Sync {
 
 /// Default format detector implementation.
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct DefaultFormatDetector;
 
+#[allow(dead_code)]
 impl FormatDetector for DefaultFormatDetector {
     fn detect(&self, path: &Path) -> Result<FileFormat, CodecError> {
         detect_format(path)
@@ -181,6 +184,7 @@ impl FormatDetector for DefaultFormatDetector {
 /// Check if a file is likely an MCAP file.
 ///
 /// This is a convenience function that only checks for MCAP format.
+#[allow(dead_code)]
 pub fn is_mcap_file<P: AsRef<Path>>(path: P) -> bool {
     matches!(detect_format(path), Ok(FileFormat::Mcap))
 }
@@ -188,6 +192,7 @@ pub fn is_mcap_file<P: AsRef<Path>>(path: P) -> bool {
 /// Check if a file is likely a ROS1 bag file.
 ///
 /// This is a convenience function that only checks for bag format.
+#[allow(dead_code)]
 pub fn is_bag_file<P: AsRef<Path>>(path: P) -> bool {
     matches!(detect_format(path), Ok(FileFormat::Bag))
 }
@@ -195,6 +200,7 @@ pub fn is_bag_file<P: AsRef<Path>>(path: P) -> bool {
 /// Check if a file is likely an RRD file.
 ///
 /// This is a convenience function that only checks for RRD format.
+#[allow(dead_code)]
 pub fn is_rrd_file<P: AsRef<Path>>(path: P) -> bool {
     matches!(detect_format(path), Ok(FileFormat::Rrd))
 }

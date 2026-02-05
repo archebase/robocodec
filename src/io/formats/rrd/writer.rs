@@ -23,9 +23,10 @@ use super::constants::{
 };
 
 /// Compression option for RRD writer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RrdCompression {
     Off,
+    #[default]
     Lz4,
 }
 
@@ -36,12 +37,6 @@ impl RrdCompression {
             Self::Off => COMPRESSION_OFF,
             Self::Lz4 => COMPRESSION_LZ4,
         }
-    }
-}
-
-impl Default for RrdCompression {
-    fn default() -> Self {
-        Self::Lz4 // Use LZ4 compression by default to match Rerun
     }
 }
 

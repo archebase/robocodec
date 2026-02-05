@@ -25,8 +25,6 @@ pub mod s3;
 
 // Re-exports
 pub use arena::{MmapArena, MmapArenaRef};
-// Format detection is internal - users use auto-detection via RoboReader
-pub(crate) use detection::{FormatDetector, detect_format, is_bag_file, is_mcap_file, is_rrd_file};
 pub use metadata::{
     ChannelInfo, FileFormat, FileInfo, MessageMetadata, RawMessage, TimestampedDecodedMessage,
 };

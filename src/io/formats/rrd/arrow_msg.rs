@@ -421,15 +421,15 @@ impl ArrowMsg {
         }
 
         // Write compression field (field 2, varint)
-        write_varint(&mut buf, (2 << 3) | 0); // tag
+        write_varint(&mut buf, 2 << 3); // tag
         write_varint(&mut buf, self.compression.as_u32() as u64);
 
         // Write uncompressed_size field (field 3, varint)
-        write_varint(&mut buf, (3 << 3) | 0); // tag
+        write_varint(&mut buf, 3 << 3); // tag
         write_varint(&mut buf, self.uncompressed_size);
 
         // Write encoding field (field 4, varint) - must be ArrowIpc=1
-        write_varint(&mut buf, (4 << 3) | 0); // tag
+        write_varint(&mut buf, 4 << 3); // tag
         write_varint(&mut buf, self.encoding.as_u32() as u64);
 
         // Write payload field (field 5, length-delimited)
@@ -439,7 +439,7 @@ impl ArrowMsg {
 
         // Write is_static field (field 7) if present
         if let Some(is_static) = self.is_static {
-            write_varint(&mut buf, (7 << 3) | 0); // tag
+            write_varint(&mut buf, 7 << 3); // tag
             write_varint(&mut buf, is_static as u64);
         }
 
@@ -609,7 +609,7 @@ fn write_store_id(buf: &mut Vec<u8>, store_id: &StoreId) -> Result<()> {
     let mut store_id_buf = Vec::new();
 
     // Write kind (field 1, varint)
-    write_varint(&mut store_id_buf, (1 << 3) | 0);
+    write_varint(&mut store_id_buf, 1 << 3);
     write_varint(&mut store_id_buf, store_id.kind.as_u32() as u64);
 
     // Write recording_id (field 2, string)
@@ -916,5 +916,502 @@ mod tests {
         // Parse back and verify encoding is ArrowIpc
         let decoded = ArrowMsg::from_bytes(&bytes).unwrap();
         assert_eq!(decoded.encoding, ArrowEncoding::ArrowIpc);
+    }
+
+    // ===== Edge Case Tests =====
+
+    #[test]
+    fn test_empty_payload() {
+        let payload = vec![];
+        let msg = ArrowMsg::new(payload.clone());
+        assert_eq!(msg.uncompressed_size, 0);
+        assert!(msg.payload.is_empty());
+
+        let bytes = msg.to_bytes().unwrap();
+        let decoded = ArrowMsg::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded.payload, payload);
+    }
+
+    #[test]
+    fn test_compression_is_none() {
+        assert!(ArrowCompression::None.is_none());
+        assert!(!ArrowCompression::Lz4.is_none());
+        assert!(!ArrowCompression::Unspecified.is_none());
+    }
+
+    #[test]
+    fn test_compression_unspecified_round_trip() {
+        let msg = ArrowMsg {
+            store_id: None,
+            compression: ArrowCompression::Unspecified,
+            uncompressed_size: 100,
+            encoding: ArrowEncoding::ArrowIpc,
+            payload: vec![1, 2, 3],
+            chunk_id: None,
+            is_static: None,
+        };
+
+        let bytes = msg.to_bytes().unwrap();
+        let decoded = ArrowMsg::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded.compression, ArrowCompression::Unspecified);
+    }
+
+    #[test]
+    fn test_encoding_unspecified_defaults_to_arrowipc() {
+        // Create bytes with encoding=0 (Unspecified)
+        let mut buf = Vec::new();
+        // compression field (field 2)
+        write_varint(&mut buf, 2 << 3);
+        write_varint(&mut buf, 1u64); // None
+        // uncompressed_size (field 3)
+        write_varint(&mut buf, 3 << 3);
+        write_varint(&mut buf, 3u64);
+        // encoding field (field 4) - set to Unspecified (0)
+        write_varint(&mut buf, 4 << 3);
+        write_varint(&mut buf, 0u64);
+        // payload (field 5)
+        write_varint(&mut buf, (5 << 3) | 2);
+        write_varint(&mut buf, 3u64);
+        buf.extend_from_slice(&[1, 2, 3]);
+
+        let decoded = ArrowMsg::from_bytes(&buf).unwrap();
+        // Should default to ArrowIpc
+        assert_eq!(decoded.encoding, ArrowEncoding::ArrowIpc);
+    }
+
+    #[test]
+    fn test_is_static_false() {
+        let original = ArrowMsg::new(vec![1, 2, 3]).with_is_static(false);
+
+        let bytes = original.to_bytes().unwrap();
+        let decoded = ArrowMsg::from_bytes(&bytes).unwrap();
+
+        assert_eq!(decoded.is_static, Some(false));
+        assert!(!decoded.is_static_flag());
+    }
+
+    #[test]
+    fn test_is_static_none() {
+        let msg = ArrowMsg::new(vec![1, 2, 3]);
+        assert_eq!(msg.is_static, None);
+        assert!(!msg.is_static_flag());
+    }
+
+    #[test]
+    fn test_blueprint_store_kind() {
+        let store_id = StoreId {
+            kind: StoreKind::Blueprint,
+            recording_id: "blueprint-123".to_string(),
+            application_id: String::new(),
+        };
+
+        let original = ArrowMsg::new(vec![1, 2, 3]).with_store_id(store_id);
+
+        let bytes = original.to_bytes().unwrap();
+        let decoded = ArrowMsg::from_bytes(&bytes).unwrap();
+
+        assert_eq!(decoded.store_id.unwrap().kind, StoreKind::Blueprint);
+    }
+
+    #[test]
+    fn test_store_id_with_application_id() {
+        let store_id = StoreId {
+            kind: StoreKind::Recording,
+            recording_id: "rec-123".to_string(),
+            application_id: "my-app-v1.0".to_string(),
+        };
+
+        let original = ArrowMsg::new(vec![1, 2, 3]).with_store_id(store_id.clone());
+
+        let bytes = original.to_bytes().unwrap();
+        let decoded = ArrowMsg::from_bytes(&bytes).unwrap();
+
+        let decoded_store_id = decoded.store_id.unwrap();
+        assert_eq!(decoded_store_id.recording_id, "rec-123");
+        assert_eq!(decoded_store_id.application_id, "my-app-v1.0");
+    }
+
+    #[test]
+    fn test_compression_ratio_zero_uncompressed_size() {
+        let mut msg = ArrowMsg::new(vec![1, 2, 3]);
+        msg.compression = ArrowCompression::Lz4;
+        msg.uncompressed_size = 0;
+
+        // Should return None when uncompressed_size is 0
+        assert!(msg.compression_ratio().is_none());
+    }
+
+    #[test]
+    fn test_with_compression_unspecified() {
+        let payload = vec![1, 2, 3];
+        let msg =
+            ArrowMsg::with_compression(payload.clone(), ArrowCompression::Unspecified).unwrap();
+
+        // Unspecified should be treated as None
+        assert_eq!(msg.compression, ArrowCompression::None);
+        assert_eq!(msg.payload, payload);
+    }
+
+    #[test]
+    fn test_store_id_empty() {
+        let store_id = StoreId::empty();
+        assert_eq!(store_id.kind, StoreKind::Recording);
+        assert!(store_id.recording_id.is_empty());
+        assert!(store_id.application_id.is_empty());
+    }
+
+    // ===== Error Path Tests =====
+
+    #[test]
+    fn test_invalid_wire_type_for_store_id() {
+        let mut buf = Vec::new();
+        // Field 1 with wire type 0 (varint) instead of 2 (length-delimited)
+        write_varint(&mut buf, 1 << 3);
+        write_varint(&mut buf, 123u64);
+
+        let result = ArrowMsg::from_bytes(&buf);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid wire type for store_id"));
+    }
+
+    #[test]
+    fn test_invalid_wire_type_for_compression() {
+        let mut buf = Vec::new();
+        // Field 2 with wire type 2 (length-delimited) instead of 0 (varint)
+        write_varint(&mut buf, (2 << 3) | 2);
+        write_varint(&mut buf, 4u64);
+        buf.extend_from_slice(&[1, 2, 3, 4]);
+
+        let result = ArrowMsg::from_bytes(&buf);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid wire type for compression"));
+    }
+
+    #[test]
+    fn test_invalid_wire_type_for_uncompressed_size() {
+        let mut buf = Vec::new();
+        // Field 3 with wire type 2 (length-delimited) instead of 0 (varint)
+        write_varint(&mut buf, (3 << 3) | 2);
+        write_varint(&mut buf, 4u64);
+        buf.extend_from_slice(&[1, 2, 3, 4]);
+
+        let result = ArrowMsg::from_bytes(&buf);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid wire type for uncompressed_size"));
+    }
+
+    #[test]
+    fn test_invalid_wire_type_for_encoding() {
+        let mut buf = Vec::new();
+        // Field 4 with wire type 2 (length-delimited) instead of 0 (varint)
+        write_varint(&mut buf, (4 << 3) | 2);
+        write_varint(&mut buf, 4u64);
+        buf.extend_from_slice(&[1, 2, 3, 4]);
+
+        let result = ArrowMsg::from_bytes(&buf);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid wire type for encoding"));
+    }
+
+    #[test]
+    fn test_invalid_wire_type_for_payload() {
+        let mut buf = Vec::new();
+        // Field 5 with wire type 0 (varint) instead of 2 (length-delimited)
+        write_varint(&mut buf, 5 << 3);
+        write_varint(&mut buf, 123u64);
+
+        let result = ArrowMsg::from_bytes(&buf);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid wire type for payload"));
+    }
+
+    #[test]
+    fn test_invalid_wire_type_for_is_static() {
+        let mut buf = Vec::new();
+        // Field 7 with wire type 2 (length-delimited) instead of 0 (varint)
+        write_varint(&mut buf, (7 << 3) | 2);
+        write_varint(&mut buf, 4u64);
+        buf.extend_from_slice(&[1, 2, 3, 4]);
+
+        let result = ArrowMsg::from_bytes(&buf);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Invalid wire type for is_static"));
+    }
+
+    #[test]
+    fn test_payload_length_exceeds_data() {
+        let mut buf = Vec::new();
+        // compression field
+        write_varint(&mut buf, 2 << 3);
+        write_varint(&mut buf, 1u64);
+        // uncompressed_size
+        write_varint(&mut buf, 3 << 3);
+        write_varint(&mut buf, 100u64);
+        // encoding
+        write_varint(&mut buf, 4 << 3);
+        write_varint(&mut buf, 1u64);
+        // payload with length exceeding remaining data
+        write_varint(&mut buf, (5 << 3) | 2);
+        write_varint(&mut buf, 1000u64); // Claim 1000 bytes but only 0 available
+        // No actual payload data
+
+        let result = ArrowMsg::from_bytes(&buf);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("exceeds remaining data") || err_msg.contains("UnexpectedEof"));
+    }
+
+    #[test]
+    fn test_lz4_decompress_failure_corrupted_data() {
+        let msg = ArrowMsg {
+            store_id: None,
+            compression: ArrowCompression::Lz4,
+            uncompressed_size: 1000,
+            encoding: ArrowEncoding::ArrowIpc,
+            payload: vec![1, 2, 3, 4, 5], // Invalid LZ4 data
+            chunk_id: None,
+            is_static: None,
+        };
+
+        let result = msg.decompress_payload();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("LZ4 decompression failed") || err_msg.contains("decompression"));
+    }
+
+    #[test]
+    fn test_read_varint_empty_data() {
+        let data: &[u8] = &[];
+        let mut slice = data;
+        let result = read_varint(&mut slice);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Unexpected end") || err_msg.contains("varint"));
+    }
+
+    #[test]
+    fn test_read_varint_incomplete() {
+        // Varint with continuation bit set but no following byte
+        let data = [0x80]; // Continuation bit set but no more data
+        let mut slice = &data[..];
+        let result = read_varint(&mut slice);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_skip_field_varint() {
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 150u64);
+        let mut slice = buf.as_slice();
+        let result = skip_field(&mut slice, 0);
+        assert!(result.is_ok());
+        assert!(slice.is_empty());
+    }
+
+    #[test]
+    fn test_skip_field_64bit() {
+        let data = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // 8 bytes for field + extra
+        let mut slice = &data[..];
+        let result = skip_field(&mut slice, 1);
+        assert!(result.is_ok());
+        assert_eq!(slice.len(), 2); // 8 bytes skipped, 2 remaining
+    }
+
+    #[test]
+    fn test_skip_field_64bit_insufficient_data() {
+        let data = [1, 2, 3]; // Less than 8 bytes
+        let mut slice = &data[..];
+        let result = skip_field(&mut slice, 1);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Unexpected end") || err_msg.contains("64-bit"));
+    }
+
+    #[test]
+    fn test_skip_field_length_delimited() {
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 5u64);
+        buf.extend_from_slice(&[1, 2, 3, 4, 5]);
+        buf.extend_from_slice(&[9, 10]); // Extra data
+
+        let mut slice = buf.as_slice();
+        let result = skip_field(&mut slice, 2);
+        assert!(result.is_ok());
+        assert_eq!(slice, &[9, 10]); // 5 bytes skipped
+    }
+
+    #[test]
+    fn test_skip_field_length_delimited_insufficient_data() {
+        let mut buf = Vec::new();
+        write_varint(&mut buf, 10u64);
+        buf.extend_from_slice(&[1, 2, 3]); // Only 3 bytes, claimed 10
+
+        let mut slice = buf.as_slice();
+        let result = skip_field(&mut slice, 2);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Unexpected end") || err_msg.contains("length-delimited"));
+    }
+
+    #[test]
+    fn test_skip_field_32bit() {
+        let data = [1, 2, 3, 4, 5, 6]; // 4 bytes for field + extra
+        let mut slice = &data[..];
+        let result = skip_field(&mut slice, 5);
+        assert!(result.is_ok());
+        assert_eq!(slice.len(), 2); // 4 bytes skipped, 2 remaining
+    }
+
+    #[test]
+    fn test_skip_field_32bit_insufficient_data() {
+        let data = [1, 2]; // Less than 4 bytes
+        let mut slice = &data[..];
+        let result = skip_field(&mut slice, 5);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Unexpected end") || err_msg.contains("32-bit"));
+    }
+
+    #[test]
+    fn test_skip_field_unknown_wire_type() {
+        let data = [1, 2, 3];
+        let mut slice = &data[..];
+        let result = skip_field(&mut slice, 7); // Invalid wire type
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Unknown wire type") || err_msg.contains("Invalid"));
+    }
+
+    #[test]
+    fn test_unknown_field_skipped() {
+        let mut buf = Vec::new();
+        // Known fields
+        write_varint(&mut buf, 2 << 3); // compression
+        write_varint(&mut buf, 1u64);
+        write_varint(&mut buf, 3 << 3); // uncompressed_size
+        write_varint(&mut buf, 0u64);
+        write_varint(&mut buf, 4 << 3); // encoding
+        write_varint(&mut buf, 1u64);
+        write_varint(&mut buf, (5 << 3) | 2); // payload
+        write_varint(&mut buf, 0u64);
+        // Unknown field (field 99)
+        write_varint(&mut buf, 99 << 3);
+        write_varint(&mut buf, 999u64);
+
+        let result = ArrowMsg::from_bytes(&buf);
+        assert!(result.is_ok(), "Unknown field should be skipped");
+    }
+
+    #[test]
+    fn test_store_id_length_exceeds_data() {
+        let mut buf = Vec::new();
+        // Field 1 (store_id) with length exceeding remaining data
+        write_varint(&mut buf, (1 << 3) | 2);
+        write_varint(&mut buf, 1000u64); // Claim 1000 bytes
+        buf.extend_from_slice(&[1, 2, 3]); // Only 3 bytes available
+
+        let result = ArrowMsg::from_bytes(&buf);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("exceeds remaining data") || err_msg.contains("UnexpectedEof"));
+    }
+
+    #[test]
+    fn test_decompressed_size_mismatch() {
+        // Create valid LZ4 data but lie about uncompressed_size
+        let payload = b"test data for compression".to_vec();
+        let compressed = lz4_flex::block::compress(&payload);
+
+        let msg = ArrowMsg {
+            store_id: None,
+            compression: ArrowCompression::Lz4,
+            uncompressed_size: 9999, // Wrong size
+            encoding: ArrowEncoding::ArrowIpc,
+            payload: compressed,
+            chunk_id: None,
+            is_static: None,
+        };
+
+        let result = msg.decompress_payload();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("size mismatch"));
+    }
+
+    #[test]
+    fn test_chunk_id_field_is_skipped() {
+        let mut buf = Vec::new();
+        // Known fields
+        write_varint(&mut buf, 2 << 3); // compression
+        write_varint(&mut buf, 1u64);
+        write_varint(&mut buf, 3 << 3); // uncompressed_size
+        write_varint(&mut buf, 0u64);
+        write_varint(&mut buf, 4 << 3); // encoding
+        write_varint(&mut buf, 1u64);
+        write_varint(&mut buf, (5 << 3) | 2); // payload
+        write_varint(&mut buf, 0u64);
+        // chunk_id (field 6) - should be skipped
+        write_varint(&mut buf, (6 << 3) | 2);
+        write_varint(&mut buf, 16u64); // 16-byte TUID
+        buf.extend_from_slice(&[1; 16]);
+
+        let result = ArrowMsg::from_bytes(&buf);
+        assert!(result.is_ok());
+        let decoded = result.unwrap();
+        assert!(decoded.chunk_id.is_none()); // chunk_id is skipped and remains None
+    }
+
+    #[test]
+    fn test_arrow_encoding_as_u32() {
+        assert_eq!(ArrowEncoding::Unspecified.as_u32(), 0);
+        assert_eq!(ArrowEncoding::ArrowIpc.as_u32(), 1);
+    }
+
+    #[test]
+    fn test_store_kind_as_u32() {
+        assert_eq!(StoreKind::Unspecified.as_u32(), 0);
+        assert_eq!(StoreKind::Recording.as_u32(), 1);
+        assert_eq!(StoreKind::Blueprint.as_u32(), 2);
+    }
+
+    #[test]
+    fn test_has_store_id_true() {
+        let store_id = StoreId::new_recording("test");
+        let msg = ArrowMsg::new(vec![1, 2, 3]).with_store_id(store_id);
+        assert!(msg.has_store_id());
+    }
+
+    #[test]
+    fn test_roundtrip_with_all_fields() {
+        let store_id = StoreId {
+            kind: StoreKind::Recording,
+            recording_id: "rec-123".to_string(),
+            application_id: "app-456".to_string(),
+        };
+
+        let original = ArrowMsg {
+            store_id: Some(store_id),
+            compression: ArrowCompression::None,
+            uncompressed_size: 42,
+            encoding: ArrowEncoding::ArrowIpc,
+            payload: vec![1, 2, 3, 4, 5],
+            chunk_id: None,
+            is_static: Some(true),
+        };
+
+        let bytes = original.to_bytes().unwrap();
+        let decoded = ArrowMsg::from_bytes(&bytes).unwrap();
+
+        assert_eq!(decoded.store_id.as_ref().unwrap().recording_id, "rec-123");
+        assert_eq!(decoded.store_id.as_ref().unwrap().application_id, "app-456");
+        assert_eq!(decoded.uncompressed_size, 42);
+        assert_eq!(decoded.payload, vec![1, 2, 3, 4, 5]);
+        assert_eq!(decoded.is_static, Some(true));
     }
 }

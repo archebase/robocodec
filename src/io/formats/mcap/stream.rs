@@ -695,4 +695,915 @@ mod tests {
             "Should fail when name_len exceeds body length"
         );
     }
+
+    #[test]
+    fn test_channel_record_body() {
+        // Test parsing a complete Channel record body
+        let channel_body = [
+            0x01, 0x00, // id = 1
+            0x03, 0x00, // topic_len = 3
+            b'/', b'c', b'h', // topic = "/ch"
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding = "cdr"
+            0x00, 0x00, // schema_id = 0
+        ];
+
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_CHANNEL, 14, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&channel_body);
+        assert!(result.is_ok());
+        assert!(parser.has_channels());
+    }
+
+    #[test]
+    fn test_message_record_body() {
+        // Test parsing a complete Message record body
+        let message_body = [
+            0x01, 0x00, // channel_id = 1
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sequence = 0
+            0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // log_time = 16
+            0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // publish_time = 17
+            b'd', b'a', b't', b'a', // data
+        ];
+
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        // Add channel first
+        let channel_body = [
+            0x01, 0x00, 0x03, 0x00, b'/', b'c', b'h', 0x03, 0x00, b'c', b'd', b'r', 0x00, 0x00,
+        ];
+        parser
+            .parse_chunk(&[OP_CHANNEL, 14, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&channel_body).unwrap();
+
+        // Add message
+        parser
+            .parse_chunk(&[OP_MESSAGE, 30, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&message_body);
+        assert!(result.is_ok());
+        assert_eq!(parser.message_count(), 1);
+    }
+
+    #[test]
+    fn test_schema_too_short() {
+        // Test schema record with < 6 bytes
+        let schema_body = [0x01, 0x00, 0x03, 0x00]; // only 4 bytes
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_SCHEMA, 4, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&schema_body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_schema_incomplete_name() {
+        // Test schema where name_len says 5 but only 3 bytes available
+        let schema_body = [
+            0x01, 0x00, // id
+            0x05, 0x00, // name_len = 5
+            b'F', b'o', b'o', // only 3 bytes of name
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_SCHEMA, 7, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&schema_body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_schema_invalid_utf8_name() {
+        // Test schema with invalid UTF-8 in name
+        let schema_body = [
+            0x01, 0x00, // id
+            0x03, 0x00, // name_len = 3
+            0xFF, 0xFE, 0xFD, // invalid UTF-8
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            b'#', b'd', // data (2 bytes to make body 14 bytes total)
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_SCHEMA, 14, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&schema_body);
+        assert!(result.is_err(), "Should fail for invalid UTF-8 in name");
+    }
+
+    #[test]
+    fn test_schema_incomplete_encoding() {
+        // Test schema where encoding_len says 5 but only 2 bytes available
+        let schema_body = [
+            0x01, 0x00, // id
+            0x03, 0x00, // name_len = 3
+            b'F', b'o', b'o', // name
+            0x05, 0x00, // encoding_len = 5
+            b'c', b'd', // only 2 bytes
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_SCHEMA, 10, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&schema_body);
+        assert!(result.is_err(), "Should fail for incomplete encoding");
+    }
+
+    #[test]
+    fn test_schema_invalid_utf8_encoding() {
+        // Test schema with invalid UTF-8 in encoding
+        let schema_body = [
+            0x01, 0x00, // id
+            0x03, 0x00, // name_len = 3
+            b'F', b'o', b'o', // name
+            0x03, 0x00, // encoding_len = 3
+            0xFF, 0xFE, 0xFD, // invalid UTF-8
+            b'#', // data (1 byte to make body 13 bytes total)
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_SCHEMA, 13, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&schema_body);
+        assert!(result.is_err(), "Should fail for invalid UTF-8 in encoding");
+    }
+
+    #[test]
+    fn test_channel_too_short() {
+        // Test channel record with < 6 bytes
+        let channel_body = [0x01, 0x00, 0x03]; // only 3 bytes
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_CHANNEL, 3, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&channel_body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_channel_incomplete_topic() {
+        // Test channel where topic_len says 5 but only 2 bytes available
+        let channel_body = [
+            0x01, 0x00, // id
+            0x05, 0x00, // topic_len = 5
+            b'/', b'c', // only 2 bytes of topic
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_CHANNEL, 6, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&channel_body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_channel_invalid_utf8_topic() {
+        // Test channel with invalid UTF-8 in topic
+        let channel_body = [
+            0x01, 0x00, // id
+            0x03, 0x00, // topic_len = 3
+            0xFF, 0xFE, 0xFD, // invalid UTF-8
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            0x00, 0x00, // schema_id
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_CHANNEL, 14, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&channel_body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_channel_incomplete_encoding() {
+        // Test channel where encoding_len says 5 but only 2 bytes available
+        let channel_body = [
+            0x01, 0x00, // id
+            0x03, 0x00, // topic_len = 3
+            b'/', b'c', b'h', // topic
+            0x05, 0x00, // encoding_len = 5
+            b'c', b'd', // only 2 bytes of encoding
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_CHANNEL, 10, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&channel_body);
+        assert!(result.is_err(), "Should fail for incomplete encoding");
+    }
+
+    #[test]
+    fn test_channel_invalid_utf8_encoding() {
+        // Test channel with invalid UTF-8 in encoding
+        let channel_body = [
+            0x01, 0x00, // id
+            0x03, 0x00, // topic_len = 3
+            b'/', b'c', b'h', // topic
+            0x03, 0x00, // encoding_len = 3
+            0xFF, 0xFE, 0xFD, // invalid UTF-8
+            0x00, 0x00, // schema_id
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_CHANNEL, 14, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&channel_body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_channel_incomplete_schema_id() {
+        // Test channel where schema_id is incomplete (only 1 byte available)
+        let channel_body = [
+            0x01, 0x00, // id
+            0x03, 0x00, // topic_len = 3
+            b'/', b'c', b'h', // topic
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            0x00, // only 1 byte of schema_id
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_CHANNEL, 13, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&channel_body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_message_too_short() {
+        // Test message record with < 20 bytes
+        let message_body = [0x01, 0x00, 0x00]; // only 3 bytes
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_MESSAGE, 3, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&message_body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_invalid_magic() {
+        // Test with invalid magic bytes
+        let invalid_magic = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let mut parser = StreamingMcapParser::new();
+        let result = parser.parse_chunk(&invalid_magic);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unknown_opcode() {
+        // Test with unknown opcode (0xFF)
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser.parse_chunk(&[0xFF, 2, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+        let result = parser.parse_chunk(&[0, 0]);
+        assert!(result.is_err(), "Should fail for unknown opcode");
+    }
+
+    #[test]
+    fn test_header_too_short() {
+        // Test Header record with < 4 bytes
+        let header_body = [0x01, 0x02]; // only 2 bytes
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_HEADER, 2, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&header_body);
+        assert!(result.is_err(), "Should fail for short header");
+    }
+
+    #[test]
+    fn test_chunk_compaction() {
+        // Test buffer compaction when buffer_pos > 1MB
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        // Add enough data to trigger compaction (need >1MB after magic + headers)
+        // After magic (8 bytes) + header (9 bytes) = 17 bytes consumed
+        // Need to add >1MB more data to trigger compaction
+        let large_data = vec![0u8; 2 * 1024 * 1024];
+        let len_bytes = (large_data.len() as u64).to_le_bytes();
+        let mut header = [OP_HEADER; 9];
+        header[1..].copy_from_slice(&len_bytes);
+        parser.parse_chunk(&header).unwrap();
+        let result = parser.parse_chunk(&large_data);
+        assert!(result.is_ok(), "Should handle large data chunks");
+    }
+
+    #[test]
+    fn test_all_opcodes_accepted() {
+        // Test that various opcodes are accepted without error
+        let opcodes = [
+            OP_FOOTER,
+            OP_DATA_END,
+            OP_CHUNK,
+            OP_CHUNK_INDEX,
+            OP_MESSAGE_INDEX,
+            OP_ATTACHMENT,
+            OP_ATTACHMENT_INDEX,
+            OP_STATISTICS,
+            OP_METADATA,
+            OP_METADATA_INDEX,
+            OP_SUMMARY_OFFSET,
+        ];
+
+        for opcode in opcodes {
+            let mut parser = StreamingMcapParser::new();
+            parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+            parser
+                .parse_chunk(&[opcode, 4, 0, 0, 0, 0, 0, 0, 0])
+                .unwrap();
+            let result = parser.parse_chunk(&[0, 0, 0, 0]);
+            assert!(result.is_ok(), "Opcode 0x{:02x} should be accepted", opcode);
+        }
+    }
+
+    #[test]
+    fn test_parser_message_count() {
+        // Test message_count() method
+        let mut parser = StreamingMcapParser::new();
+        assert_eq!(parser.message_count(), 0);
+
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        assert_eq!(parser.message_count(), 0);
+    }
+
+    #[test]
+    fn test_partial_data_waiting() {
+        // Test that partial data is buffered correctly
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        // Send only 4 bytes of the 9-byte header
+        let partial_header = &[OP_CHANNEL, 13, 0, 0];
+        let result = parser.parse_chunk(partial_header);
+        assert!(result.is_ok()); // Should succeed but return no messages
+
+        // Send rest of header
+        let rest_header = &[0, 0, 0, 0, 0];
+        let result = parser.parse_chunk(rest_header);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_channels_empty_initially() {
+        // Test that channels() is empty initially
+        let parser = StreamingMcapParser::new();
+        assert!(parser.channels().is_empty());
+    }
+
+    #[test]
+    fn test_empty_schema_encoding() {
+        // Test schema with 0-length encoding (covered in existing test but let's be explicit)
+        let schema_body = [
+            0x01, 0x00, // id = 1
+            0x03, 0x00, // name_len = 3
+            b'F', b'o', b'o', // name
+            0x00, 0x00, // encoding_len = 0
+            // No encoding bytes
+            b'#', b't', b'e', b's', b't', // data
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_SCHEMA, 13, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&schema_body);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_record_too_large() {
+        // Test record length > 100MB validation
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        // Send header with length > 100MB (101 * 1024 * 1024)
+        let large_len = (101 * 1024 * 1024u64).to_le_bytes();
+        let mut header = [OP_HEADER; 9];
+        header[1..].copy_from_slice(&large_len);
+        let result = parser.parse_chunk(&header);
+        assert!(result.is_err(), "Should reject record > 100MB");
+    }
+
+    #[test]
+    fn test_channel_schema_info_methods() {
+        // Test ChannelRecordInfo fields
+        let channel = ChannelRecordInfo {
+            id: 42,
+            topic: "/test/topic".to_string(),
+            message_encoding: "cdr".to_string(),
+            schema_id: 1,
+        };
+        assert_eq!(channel.id, 42);
+        assert_eq!(channel.topic, "/test/topic");
+        assert_eq!(channel.message_encoding, "cdr");
+        assert_eq!(channel.schema_id, 1);
+    }
+
+    #[test]
+    fn test_schema_info_methods() {
+        // Test SchemaInfo fields
+        let schema = SchemaInfo {
+            id: 10,
+            name: "TestMsg".to_string(),
+            encoding: "ros2msg".to_string(),
+            data: vec![1, 2, 3],
+        };
+        assert_eq!(schema.id, 10);
+        assert_eq!(schema.name, "TestMsg");
+        assert_eq!(schema.encoding, "ros2msg");
+        assert_eq!(schema.data, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_message_record_methods() {
+        // Test MessageRecord fields
+        let msg = MessageRecord {
+            channel_id: 5,
+            log_time: 1000,
+            publish_time: 900,
+            data: vec![b'x', b'y', b'z'],
+            sequence: 123,
+        };
+        assert_eq!(msg.channel_id, 5);
+        assert_eq!(msg.log_time, 1000);
+        assert_eq!(msg.publish_time, 900);
+        assert_eq!(msg.data, vec![b'x', b'y', b'z']);
+        assert_eq!(msg.sequence, 123);
+    }
+
+    #[test]
+    fn test_mcap_record_header() {
+        // Test McapRecordHeader fields
+        let header = McapRecordHeader {
+            opcode: 0x05,
+            length: 42,
+        };
+        assert_eq!(header.opcode, 0x05);
+        assert_eq!(header.length, 42);
+    }
+
+    #[test]
+    fn test_empty_channel_topic() {
+        // Test channel with 0-length topic
+        let channel_body = [
+            0x01, 0x00, // id
+            0x00, 0x00, // topic_len = 0
+            // No topic bytes
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            0x00, 0x00, // schema_id
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_CHANNEL, 11, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&channel_body);
+        assert!(result.is_ok());
+        assert!(parser.has_channels());
+    }
+
+    #[test]
+    fn test_empty_channel_encoding() {
+        // Test channel with 0-length encoding
+        let channel_body = [
+            0x01, 0x00, // id
+            0x03, 0x00, // topic_len = 3
+            b'/', b't', b't', // topic
+            0x00, 0x00, // encoding_len = 0
+            // No encoding bytes
+            0x00, 0x00, // schema_id
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_CHANNEL, 11, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&channel_body);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_message_with_empty_data() {
+        // Test message with 0-length data
+        let message_body = [
+            0x01, 0x00, // channel_id = 1
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sequence = 0
+            0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // log_time = 16
+            0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, // publish_time = 17
+                  // No data bytes
+        ];
+
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        // Add channel first
+        let channel_body = [
+            0x01, 0x00, 0x03, 0x00, b'/', b'c', b'h', 0x03, 0x00, b'c', b'd', b'r', 0x00, 0x00,
+        ];
+        parser
+            .parse_chunk(&[OP_CHANNEL, 14, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&channel_body).unwrap();
+
+        // Add message with empty data (26 bytes = no data after timestamps)
+        parser
+            .parse_chunk(&[OP_MESSAGE, 26, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&message_body);
+        assert!(result.is_ok());
+        assert_eq!(parser.message_count(), 1);
+    }
+
+    #[test]
+    fn test_empty_schema_name() {
+        // Test schema with 0-length name
+        let schema_body = [
+            0x01, 0x00, // id = 1
+            0x00, 0x00, // name_len = 0
+            // No name bytes
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+                  // No data bytes
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_SCHEMA, 10, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&schema_body);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_partial_header_then_more_data() {
+        // Test sending header byte by byte
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        // Send header one byte at a time (total 9 bytes: 1 opcode + 8 length)
+        parser.parse_chunk(&[OP_CHANNEL]).unwrap();
+        parser.parse_chunk(&[14, 0]).unwrap(); // body_len = 14
+        parser.parse_chunk(&[0, 0, 0, 0, 0]).unwrap();
+        parser.parse_chunk(&[0]).unwrap();
+
+        // Now send the body (14 bytes)
+        let channel_body = [
+            0x01, 0x00, 0x03, 0x00, b'/', b'c', b'h', 0x03, 0x00, b'c', b'd', b'r', 0x00, 0x00,
+        ];
+        let result = parser.parse_chunk(&channel_body);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_need_record_body_waiting_state() {
+        // Test parser waiting for more data in NeedRecordBody state
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        // Send header
+        parser
+            .parse_chunk(&[OP_CHANNEL, 20, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+
+        // Send only partial body (less than 20 bytes)
+        let partial_body = [0x01, 0x00, 0x03, 0x00, b'/']; // 5 bytes
+        let result = parser.parse_chunk(&partial_body);
+        assert!(result.is_ok()); // Should succeed but return no messages
+
+        // Send rest of body
+        let rest_body = [
+            b'c', b'h', 0x03, 0x00, b'c', b'd', b'r', 0x00, 0x00, // 9 bytes
+            b'x', b'x', b'x', b'x', b'x', b'x',
+        ]; // 6 extra bytes for total 20
+        let result = parser.parse_chunk(&rest_body);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multiple_schemas_and_channels() {
+        // Test multiple schemas and channels
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        // Add schema 1 (id=1, name="Sch1"(4), encoding="cdr"(3), data="#"(1))
+        // Total: 2 + 2 + 4 + 2 + 3 + 1 = 14 bytes
+        let schema1_body = [
+            0x01, 0x00, // id = 1
+            0x04, 0x00, // name_len = 4
+            b'S', b'c', b'h', b'1', // name
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            b'#', // data
+        ];
+        parser
+            .parse_chunk(&[OP_SCHEMA, 14, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&schema1_body).unwrap();
+
+        // Add schema 2 (id=2, name="Sch2"(4), encoding="cdr"(3), data="#"(1))
+        let schema2_body = [
+            0x02, 0x00, // id = 2
+            0x04, 0x00, // name_len = 4
+            b'S', b'c', b'h', b'2', // name
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            b'#', // data
+        ];
+        parser
+            .parse_chunk(&[OP_SCHEMA, 14, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&schema2_body).unwrap();
+
+        // Add channel 1 (id=1, topic="/ch1"(4), encoding="cdr"(3), schema_id=1)
+        let channel1_body = [
+            0x01, 0x00, // id = 1
+            0x04, 0x00, // topic_len = 4
+            b'/', b'c', b'h', b'1', // topic
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            0x01, 0x00, // schema_id = 1
+        ];
+        parser
+            .parse_chunk(&[OP_CHANNEL, 15, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&channel1_body).unwrap();
+
+        // Add channel 2 (id=2, topic="/ch2"(4), encoding="cdr"(3), schema_id=2)
+        let channel2_body = [
+            0x02, 0x00, // id = 2
+            0x04, 0x00, // topic_len = 4
+            b'/', b'c', b'h', b'2', // topic
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            0x02, 0x00, // schema_id = 2
+        ];
+        parser
+            .parse_chunk(&[OP_CHANNEL, 15, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&channel2_body).unwrap();
+
+        assert_eq!(parser.channels().len(), 2);
+        assert!(parser.channels().contains_key(&1));
+        assert!(parser.channels().contains_key(&2));
+    }
+
+    #[test]
+    fn test_state_transitions() {
+        // Test state transitions through the parser lifecycle
+        let parser = StreamingMcapParser::new();
+        assert!(!parser.is_initialized());
+
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        assert!(parser.is_initialized());
+
+        // After magic, parser should be in NeedRecordHeader state
+        // (we can't directly check state but we can verify behavior)
+    }
+
+    #[test]
+    fn test_channel_info_conversion() {
+        // Test that channels() properly converts to ChannelInfo
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        // Add schema with valid UTF-8 data
+        // Total: 2 + 2 + 11 + 2 + 3 + 6 = 26 bytes
+        let schema_body = [
+            0x01, 0x00, // id = 1
+            0x0B, 0x00, // name_len = 11
+            b'T', b'e', b's', b't', b'M', b's', b'g', b'T', b'y', b'p', b'e', // name
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            b'#', b' ', b't', b'e', b's', b't', // data (valid UTF-8)
+        ];
+        parser
+            .parse_chunk(&[OP_SCHEMA, 26, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&schema_body).unwrap();
+
+        // Add channel referencing the schema
+        // Total: 2 + 2 + 5 + 2 + 3 + 2 = 16 bytes
+        let channel_body = [
+            0x01, 0x00, // id = 1
+            0x05, 0x00, // topic_len = 5
+            b'/', b't', b'e', b's', b't', // topic
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            0x01, 0x00, // schema_id = 1
+        ];
+        parser
+            .parse_chunk(&[OP_CHANNEL, 16, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&channel_body).unwrap();
+
+        // Check channels() output
+        let channels = parser.channels();
+        assert_eq!(channels.len(), 1);
+        let channel = channels.get(&1).unwrap();
+        assert_eq!(channel.id, 1);
+        assert_eq!(channel.topic, "/test");
+        assert_eq!(channel.message_type, "TestMsgType");
+        assert_eq!(channel.encoding, "cdr");
+        assert_eq!(channel.schema, Some("# test".to_string()));
+        assert_eq!(channel.schema_encoding, Some("cdr".to_string()));
+    }
+
+    #[test]
+    fn test_channel_without_schema() {
+        // Test channel with schema_id=0 (no schema)
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        let channel_body = [
+            0x01, 0x00, // id = 1
+            0x05, 0x00, // topic_len = 5
+            b'/', b't', b'e', b's', b't', // topic
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            0x00, 0x00, // schema_id = 0 (no schema)
+        ];
+        parser
+            .parse_chunk(&[OP_CHANNEL, 16, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&channel_body).unwrap();
+
+        let channels = parser.channels();
+        assert_eq!(channels.len(), 1);
+        let channel = channels.get(&1).unwrap();
+        assert_eq!(channel.message_type, ""); // Default when no schema
+        assert_eq!(channel.schema, None);
+        assert_eq!(channel.schema_encoding, None);
+    }
+
+    #[test]
+    fn test_schema_with_non_utf8_data() {
+        // Test schema where data is not valid UTF-8
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        // Total: 2 + 2 + 3 + 2 + 3 + 3 = 15 bytes
+        let schema_body = [
+            0x01, 0x00, // id = 1
+            0x03, 0x00, // name_len = 3
+            b'F', b'o', b'o', // name
+            0x03, 0x00, // encoding_len = 3
+            b'c', b'd', b'r', // encoding
+            0xFF, 0xFE, 0xFD, // data (invalid UTF-8)
+        ];
+        parser
+            .parse_chunk(&[OP_SCHEMA, 15, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&schema_body).unwrap();
+
+        let channel_body = [
+            0x01, 0x00, 0x03, 0x00, b'/', b'c', b'h', 0x03, 0x00, b'c', b'd', b'r', 0x01, 0x00,
+        ];
+        parser
+            .parse_chunk(&[OP_CHANNEL, 14, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&channel_body).unwrap();
+
+        let channels = parser.channels();
+        // Channel should exist since we added it
+        assert!(channels.contains_key(&1));
+        let channel = channels.get(&1).unwrap();
+        assert_eq!(channel.schema, None); // Non-UTF8 data returns None
+        assert!(channel.schema_data.is_some()); // But raw data is still available
+    }
+
+    #[test]
+    fn test_channel_record_info_display() {
+        // Test ChannelRecordInfo can be displayed/printed
+        let info = ChannelRecordInfo {
+            id: 1,
+            topic: "/test".to_string(),
+            message_encoding: "cdr".to_string(),
+            schema_id: 0,
+        };
+        // Just verify the struct works - the Debug trait should work
+        assert!(format!("{:?}", info).contains("ChannelRecordInfo"));
+    }
+
+    #[test]
+    fn test_mcap_record_display() {
+        // Test McapRecord can be displayed/printed
+        let record = McapRecord {
+            header: McapRecordHeader {
+                opcode: 0x05,
+                length: 42,
+            },
+            body: vec![1, 2, 3, 4],
+        };
+        assert!(format!("{:?}", record).contains("McapRecord"));
+    }
+
+    #[test]
+    fn test_message_record_creation() {
+        // Test MessageRecord creation and field access
+        let msg = MessageRecord {
+            channel_id: 100,
+            log_time: 999999,
+            publish_time: 888888,
+            data: vec![0xAB, 0xCD],
+            sequence: 42,
+        };
+        assert_eq!(msg.channel_id, 100);
+        assert_eq!(msg.log_time, 999999);
+        assert_eq!(msg.publish_time, 888888);
+        assert_eq!(msg.data, vec![0xAB, 0xCD]);
+        assert_eq!(msg.sequence, 42);
+    }
+
+    #[test]
+    fn test_schema_info_creation() {
+        // Test SchemaInfo creation
+        let schema = SchemaInfo {
+            id: 5,
+            name: "TestType".to_string(),
+            encoding: "protobuf".to_string(),
+            data: vec![0x10, 0x20, 0x30],
+        };
+        assert_eq!(schema.id, 5);
+        assert_eq!(schema.name, "TestType");
+        assert_eq!(schema.encoding, "protobuf");
+        assert_eq!(schema.data, vec![0x10, 0x20, 0x30]);
+    }
+
+    #[test]
+    fn test_channel_with_max_schema_id() {
+        // Test channel with maximum schema_id (u16::MAX = 65535)
+        let channel_body = [
+            0x01, 0x00, // id = 1
+            0x01, 0x00, // topic_len = 1
+            b'/', // topic
+            0x01, 0x00, // encoding_len = 1
+            b'x', // encoding
+            0xFF, 0xFF, // schema_id = 65535 (max u16)
+        ];
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+        parser
+            .parse_chunk(&[OP_CHANNEL, 10, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&channel_body);
+        assert!(result.is_ok());
+        let channels = parser.channels();
+        let ch = channels.get(&1).unwrap();
+        // Schema won't exist, so message_type will be empty
+        assert_eq!(ch.message_type, "");
+    }
+
+    #[test]
+    fn test_message_with_max_channel_id() {
+        // Test message with maximum channel_id
+        let message_body = [
+            0xFF, 0xFF, // channel_id = 65535 (max u16)
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // sequence = 0
+            0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // log_time = 16
+            0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // publish_time = 17
+        ];
+
+        let mut parser = StreamingMcapParser::new();
+        parser.parse_chunk(&MCAP_MAGIC[..]).unwrap();
+
+        // Add channel first
+        let channel_body = [0xFF, 0xFF, 0x01, 0x00, b'/', 0x01, 0x00, b'x', 0x00, 0x00];
+        parser
+            .parse_chunk(&[OP_CHANNEL, 10, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        parser.parse_chunk(&channel_body).unwrap();
+
+        // Add message
+        parser
+            .parse_chunk(&[OP_MESSAGE, 26, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap();
+        let result = parser.parse_chunk(&message_body);
+        assert!(result.is_ok());
+    }
 }

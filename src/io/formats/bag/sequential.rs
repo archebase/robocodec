@@ -765,4 +765,158 @@ mod tests {
             }
         }
     }
+
+    /// Test with all available bag fixtures
+    #[test]
+    fn test_sequential_bag_all_fixtures() {
+        // Try various bag fixture indices
+        for i in 1..=30 {
+            let path = fixture_path(&format!("robocodec_test_{}.bag", i));
+            if !path.exists() {
+                continue;
+            }
+
+            let result = SequentialBagReader::open(&path);
+            if let Ok(reader) = result {
+                // Verify basic properties
+                assert!(!reader.path().is_empty());
+                assert_eq!(reader.format(), FileFormat::Bag);
+                assert!(reader.file_size() > 0);
+
+                // Test we can create an iterator
+                let iter = reader.iter_raw();
+                assert!(iter.is_ok(), "iter_raw should succeed for {}", i);
+            }
+        }
+    }
+
+    /// Test empty connection map handling
+    #[test]
+    fn test_sequential_bag_empty_conn_map() {
+        let path = fixture_path("robocodec_test_15.bag");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialBagReader::open(&path).unwrap();
+
+        // conn_id_map should not be empty for valid bag files
+        let conn_map = reader.conn_id_map();
+        assert!(!conn_map.is_empty(), "conn_id_map should have entries");
+    }
+
+    /// Test SequentialBagRawIter::new directly
+    #[test]
+    fn test_sequential_bag_raw_iter_new() {
+        let path = fixture_path("robocodec_test_15.bag");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialBagReader::open(&path).unwrap();
+
+        // Create iterator directly
+        let result =
+            SequentialBagRawIter::new(reader.path(), reader.channels(), reader.conn_id_map());
+        assert!(result.is_ok(), "SequentialBagRawIter::new should succeed");
+    }
+
+    /// Test load_next_chunk called multiple times
+    #[test]
+    fn test_sequential_bag_load_chunks() {
+        let path = fixture_path("robocodec_test_15.bag");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialBagReader::open(&path).unwrap();
+        let mut iter = reader.iter_raw().unwrap();
+
+        // Read multiple messages to test chunk loading
+        let mut count = 0;
+        while let Some(Ok(_)) = iter.next() {
+            count += 1;
+            if count >= 50 {
+                break;
+            }
+        }
+        assert!(count > 0, "should read multiple messages");
+    }
+
+    /// Test message timestamps
+    #[test]
+    fn test_sequential_bag_timestamps() {
+        let path = fixture_path("robocodec_test_15.bag");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialBagReader::open(&path).unwrap();
+        let mut iter = reader.iter_raw().unwrap();
+
+        let mut prev_time = None;
+        let mut count = 0;
+
+        while let Some(Ok((msg, _))) = iter.next() {
+            if let Some(prev) = prev_time {
+                // Timestamps should be non-decreasing
+                assert!(msg.log_time >= prev, "timestamps should be non-decreasing");
+            }
+            prev_time = Some(msg.log_time);
+            count += 1;
+            if count >= 20 {
+                break;
+            }
+        }
+
+        assert!(count > 0, "should have messages with timestamps");
+    }
+
+    /// Test channel_id mapping consistency
+    #[test]
+    fn test_sequential_bag_channel_id_mapping() {
+        let path = fixture_path("robocodec_test_15.bag");
+        if !path.exists() {
+            return;
+        }
+
+        let reader = SequentialBagReader::open(&path).unwrap();
+        let mut iter = reader.iter_raw().unwrap();
+
+        // Collect all channel IDs from messages
+        let mut message_channel_ids = std::collections::HashSet::new();
+        let mut count = 0;
+
+        while let Some(Ok((msg, _))) = iter.next() {
+            message_channel_ids.insert(msg.channel_id);
+            count += 1;
+            if count >= 20 {
+                break;
+            }
+        }
+
+        // All channel IDs should be valid keys in channels
+        for channel_id in message_channel_ids {
+            assert!(
+                reader.channels().contains_key(&channel_id),
+                "channel_id {} should exist in channels",
+                channel_id
+            );
+        }
+    }
+
+    /// Test as_any_mut returns correct type
+    #[test]
+    fn test_sequential_bag_as_any_mut_type() {
+        let path = fixture_path("robocodec_test_15.bag");
+        if !path.exists() {
+            return;
+        }
+
+        let mut reader = SequentialBagReader::open(&path).unwrap();
+        let any_mut = reader.as_any_mut();
+
+        assert!(any_mut.is::<SequentialBagReader>());
+        assert!(!any_mut.is::<String>());
+    }
 }

@@ -13,7 +13,7 @@ use std::path::Path;
 use robocodec::io::formats::rrd::stream::{MessageKind, RRD_STREAM_MAGIC, StreamingRrdParser};
 use robocodec::io::formats::rrd::{RrdReader, RrdWriter};
 use robocodec::io::s3::StreamingParser;
-use robocodec::io::{FormatReader, FormatWriter, RawMessage};
+use robocodec::io::{FormatWriter, RawMessage};
 
 /// Helper function to load a test fixture file.
 fn load_fixture(name: &str) -> Vec<u8> {
@@ -92,14 +92,16 @@ fn test_read_all_rerun_rrd_files() {
             continue;
         }
 
-        let reader = RrdReader::open(&path).expect(&format!("Failed to open {}", filename));
+        let reader =
+            RrdReader::open(&path).unwrap_or_else(|_| panic!("Failed to open {}", filename));
         let iter = reader
             .decode_messages()
-            .expect(&format!("Failed to get decoded iterator for {}", filename));
+            .unwrap_or_else(|_| panic!("Failed to get decoded iterator for {}", filename));
 
         let mut count = 0;
         for result in iter {
-            let _msg = result.expect(&format!("Failed to read message from {}", filename));
+            let _msg =
+                result.unwrap_or_else(|_| panic!("Failed to read message from {}", filename));
             count += 1;
         }
 
@@ -192,18 +194,18 @@ fn test_round_trip_rerun_file() {
 
     // Write messages
     for (decoded, _channel) in &messages {
-        if let Some(data_value) = decoded.get("data") {
-            if let Some(bytes) = data_value.as_bytes() {
-                let data = bytes.to_vec();
-                let raw_msg = RawMessage {
-                    channel_id,
-                    log_time: 0,
-                    publish_time: 0,
-                    data,
-                    sequence: None,
-                };
-                writer.write(&raw_msg).expect("Failed to write message");
-            }
+        if let Some(data_value) = decoded.get("data")
+            && let Some(bytes) = data_value.as_bytes()
+        {
+            let data = bytes.to_vec();
+            let raw_msg = RawMessage {
+                channel_id,
+                log_time: 0,
+                publish_time: 0,
+                data,
+                sequence: None,
+            };
+            writer.write(&raw_msg).expect("Failed to write message");
         }
     }
 
@@ -265,8 +267,6 @@ fn test_rerun_file_message_kinds() {
 /// Test that written RRD file has correct structure.
 #[test]
 fn test_written_rrd_structure() {
-    use tempfile::NamedTempFile;
-
     let temp = tempfile::NamedTempFile::new().expect("Failed to create temp file");
     let path = temp.path().to_str().unwrap().to_string();
 
