@@ -254,10 +254,12 @@ impl StreamingRrdParser {
     /// Decompress message payload.
     ///
     /// In RRF2, ArrowMsg payloads are LZ4 compressed at the message level.
-    /// The payload is an ArrowMsg protobuf which contains:
-    /// - compression field (i32)
-    /// - uncompressed_size field (u64)
-    /// - payload field (bytes) - the actual Arrow IPC data, potentially LZ4 compressed
+    /// The payload is an ArrowMsg protobuf (Rerun 0.27+ format) which contains:
+    /// - field 1: entity_path (bytes) - skipped
+    /// - field 2: compression (varint) - 0=Off, 2=LZ4
+    /// - field 3: uncompressed_size (varint)
+    /// - field 4: num_instances/flag (varint) - skipped
+    /// - field 5: payload (bytes) - Arrow IPC data, potentially LZ4 compressed
     fn decompress_payload(&self, payload: &[u8]) -> Result<Vec<u8>, FatalError> {
         // Parse as ArrowMsg protobuf
         let arrow_msg = ArrowMsg::from_bytes(payload).map_err(|e| FatalError::ConfigError {
