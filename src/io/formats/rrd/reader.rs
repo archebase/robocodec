@@ -6,6 +6,8 @@
 //!
 //! This module provides `RrdReader` for reading Rerun RRD files with support for
 //! various encodings used by Rerun.
+//!
+//! For parallel reading support, see `ParallelRrdReader` in the `parallel` module.
 #![allow(dead_code)]
 
 use std::collections::HashMap;
@@ -21,6 +23,7 @@ use crate::io::writer::WriterConfig;
 use crate::io::{ChannelInfo, FormatWriter, TimestampedDecodedMessage};
 
 use super::constants::*;
+use super::parallel::ParallelRrdReader;
 
 /// RRD format type.
 ///
@@ -28,9 +31,12 @@ use super::constants::*;
 pub struct RrdFormat;
 
 impl RrdFormat {
-    /// Create an RRD reader with decoding support.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<RrdReader> {
-        RrdReader::open(path)
+    /// Create an RRD reader with parallel reading support.
+    ///
+    /// The reader uses memory-mapping and processes messages in parallel
+    /// using the Rayon thread pool.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<ParallelRrdReader> {
+        ParallelRrdReader::open(path)
     }
 
     /// Create an RRD writer with the given configuration.

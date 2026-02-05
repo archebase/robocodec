@@ -34,16 +34,22 @@
 //! // Open an RRD file
 //! let reader = RrdFormat::open("data.rrd")?;
 //!
-//! // Iterate over decoded messages
-//! for result in reader.decode_messages()? {
+//! // Iterate over decoded messages with timestamps
+//! let decoded_iter = reader.decode_messages_with_timestamp()?;
+//! let mut stream = decoded_iter.stream()?;
+//!
+//! while let Some(result) = stream.next() {
 //!     let (message, channel) = result?;
-//!     println!("Topic: {}, Data: {:?}", channel.topic, message);
+//!     println!("Topic: {}, Log Time: {:?}", channel.topic, message.log_time);
 //! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 //! Constants for RRD file format.
 pub mod constants;
+
+/// Parallel reader implementation.
+pub mod parallel;
 
 /// Reader implementation.
 pub mod reader;
@@ -55,6 +61,7 @@ pub mod stream;
 pub mod writer;
 
 // Re-exports
+pub use parallel::{MessageIndex, ParallelRrdReader};
 pub use reader::{DecodedMessageWithTimestampStream, RrdFormat, RrdReader};
 pub use stream::{
     Compression, MessageKind, RRD_STREAM_MAGIC, RrdMessageRecord, RrdStreamHeader,

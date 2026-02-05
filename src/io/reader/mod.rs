@@ -54,6 +54,7 @@ enum DecodedMessageIterInner<'a> {
     Mcap(McapTimestampedStream<'a>),
     Bag(crate::io::formats::bag::BagDecodedMessageWithTimestampStream<'a>),
     Rrd(crate::io::formats::rrd::DecodedMessageWithTimestampStream<'a>),
+    ParallelRrd(crate::io::formats::rrd::parallel::RrdDecodedMessageWithTimestampStream<'a>),
 }
 
 /// Unified decoded message iterator.
@@ -135,6 +136,28 @@ impl<'a> Iterator for DecodedMessageIter<'a> {
                 })
             }),
             Inner::Rrd(stream) => stream.next().map(|result| {
+                result.map(|(msg, ch)| {
+                    let ch_info = ChannelInfo {
+                        id: ch.id,
+                        topic: ch.topic.clone(),
+                        message_type: ch.message_type.clone(),
+                        encoding: ch.encoding.clone(),
+                        schema: ch.schema.clone(),
+                        schema_data: ch.schema_data.clone(),
+                        schema_encoding: ch.schema_encoding.clone(),
+                        message_count: ch.message_count,
+                        callerid: ch.callerid.clone(),
+                    };
+                    DecodedMessageResult {
+                        message: msg.message,
+                        channel: ch_info,
+                        log_time: Some(msg.log_time),
+                        publish_time: Some(msg.publish_time),
+                        sequence: None,
+                    }
+                })
+            }),
+            Inner::ParallelRrd(stream) => stream.next().map(|result| {
                 result.map(|(msg, ch)| {
                     let ch_info = ChannelInfo {
                         id: ch.id,
@@ -319,6 +342,16 @@ impl RoboReader {
             });
         }
 
+        // Try Parallel RRD - use timestamped stream to get timestamps
+        use crate::io::formats::rrd::parallel::ParallelRrdReader;
+        if let Some(rrd) = self.inner.as_any().downcast_ref::<ParallelRrdReader>() {
+            let rrd_iter = rrd.decode_messages_with_timestamp()?;
+            let rrd_stream = rrd_iter.stream()?;
+            return Ok(DecodedMessageIter {
+                inner: Inner::ParallelRrd(rrd_stream),
+            });
+        }
+
         // Include format information in error for better debugging
         let format_name = match self.inner.format() {
             crate::io::metadata::FileFormat::Mcap => "MCAP",
@@ -349,6 +382,7 @@ impl RoboReader {
     pub fn supports_parallel(&self) -> bool {
         use crate::io::formats::bag::ParallelBagReader;
         use crate::io::formats::mcap::parallel::ParallelMcapReader;
+        use crate::io::formats::rrd::parallel::ParallelRrdReader;
 
         self.inner
             .as_any()
@@ -360,6 +394,12 @@ impl RoboReader {
                     .downcast_ref::<ParallelBagReader>()
                     .map(ParallelReader::supports_parallel)
             })
+            .or_else(|| {
+                self.inner
+                    .as_any()
+                    .downcast_ref::<ParallelRrdReader>()
+                    .map(ParallelReader::supports_parallel)
+            })
             .unwrap_or(false)
     }
 
@@ -367,6 +407,7 @@ impl RoboReader {
     pub fn chunk_count(&self) -> usize {
         use crate::io::formats::bag::ParallelBagReader;
         use crate::io::formats::mcap::parallel::ParallelMcapReader;
+        use crate::io::formats::rrd::parallel::ParallelRrdReader;
 
         self.inner
             .as_any()
@@ -376,6 +417,12 @@ impl RoboReader {
                 self.inner
                     .as_any()
                     .downcast_ref::<ParallelBagReader>()
+                    .map(ParallelReader::chunk_count)
+            })
+            .or_else(|| {
+                self.inner
+                    .as_any()
+                    .downcast_ref::<ParallelRrdReader>()
                     .map(ParallelReader::chunk_count)
             })
             .unwrap_or(0)
