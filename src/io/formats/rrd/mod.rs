@@ -48,6 +48,9 @@
 //! Constants for RRD file format.
 pub mod constants;
 
+/// ArrowMsg protobuf encoding/decoding with LZ4 compression.
+pub mod arrow_msg;
+
 /// Parallel reader implementation.
 pub mod parallel;
 
@@ -61,10 +64,11 @@ pub mod stream;
 pub mod writer;
 
 // Re-exports
+pub use arrow_msg::{ArrowCompression, ArrowMsg};
 pub use parallel::{MessageIndex, ParallelRrdReader};
 pub use reader::{DecodedMessageWithTimestampStream, RrdFormat, RrdReader};
 pub use stream::{
     Compression, MessageKind, RRD_STREAM_MAGIC, RrdMessageRecord, RrdStreamHeader,
     StreamingRrdParser,
 };
-pub use writer::RrdWriter;
+pub use writer::{RrdCompression as WriterCompression, RrdWriter};

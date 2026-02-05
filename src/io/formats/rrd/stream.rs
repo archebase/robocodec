@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 
+use crate::io::formats::rrd::arrow_msg::ArrowMsg;
 use crate::io::formats::rrd::constants::{
     COMPRESSION_LZ4, COMPRESSION_OFF, DEFAULT_TOPIC, MESSAGE_HEADER_SIZE, MSG_KIND_ARROW_MSG,
     MSG_KIND_BLUEPRINT_ACTIVATION_COMMAND, MSG_KIND_END, MSG_KIND_SET_STORE_INFO, OLD_RRD_MAGIC,
@@ -252,12 +253,28 @@ impl StreamingRrdParser {
 
     /// Decompress message payload if needed.
     ///
-    /// NOTE: In RRF2, the compression flag in the stream header is effectively ignored.
-    /// Individual messages are stored as plain Protobuf, not compressed.
-    /// See: https://github.com/rerun-io/rerun/blob/main/crates/store/re_log_encoding/src/rrd/frames.rs
+    /// In RRF2, ArrowMsg payloads can be LZ4 compressed at the message level.
+    /// The payload is an ArrowMsg protobuf which contains:
+    /// - compression field (i32)
+    /// - uncompressed_size field (u64)
+    /// - payload field (bytes) - the actual Arrow IPC data, potentially LZ4 compressed
     fn decompress_payload(&self, payload: &[u8]) -> Result<Vec<u8>, FatalError> {
-        // RRF2 stores messages as plain Protobuf regardless of stream compression flag
-        Ok(payload.to_vec())
+        // Try to parse as ArrowMsg protobuf
+        match ArrowMsg::from_bytes(payload) {
+            Ok(arrow_msg) => {
+                // Decompress the ArrowMsg payload if needed
+                arrow_msg
+                    .decompress_payload()
+                    .map_err(|e| FatalError::ConfigError {
+                        message: format!("Failed to decompress ArrowMsg payload: {e}"),
+                    })
+            }
+            Err(_) => {
+                // Not a valid ArrowMsg protobuf - return as-is for backward compatibility
+                // This handles old-format RRD files without ArrowMsg wrapper
+                Ok(payload.to_vec())
+            }
+        }
     }
 
     /// Get the RRD stream header if parsed.

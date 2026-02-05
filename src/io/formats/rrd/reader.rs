@@ -22,6 +22,7 @@ use crate::io::traits::FormatReader;
 use crate::io::writer::WriterConfig;
 use crate::io::{ChannelInfo, FormatWriter, TimestampedDecodedMessage};
 
+use super::arrow_msg::ArrowMsg;
 use super::constants::*;
 use super::parallel::ParallelRrdReader;
 
@@ -452,7 +453,23 @@ impl<'a> DecodedMessageIter<'a> {
             // Read payload if we have data
             if pos + len <= data_buf.len() {
                 let payload = data_buf[pos..pos + len].to_vec();
-                messages.push((payload, topic));
+
+                // Try to decompress if it's an ArrowMsg protobuf
+                let decompressed = match ArrowMsg::from_bytes(&payload) {
+                    Ok(arrow_msg) => match arrow_msg.decompress_payload() {
+                        Ok(data) => data,
+                        Err(_) => {
+                            // Decompression failed, use as-is
+                            payload
+                        }
+                    },
+                    Err(_) => {
+                        // Not a valid ArrowMsg, use as-is
+                        payload
+                    }
+                };
+
+                messages.push((decompressed, topic));
                 pos += len;
             } else {
                 break;
@@ -595,7 +612,23 @@ impl<'a> DecodedMessageWithTimestampIter<'a> {
             // Read payload if we have data
             if pos + len <= data_buf.len() {
                 let payload = data_buf[pos..pos + len].to_vec();
-                messages.push((payload, topic));
+
+                // Try to decompress if it's an ArrowMsg protobuf
+                let decompressed = match ArrowMsg::from_bytes(&payload) {
+                    Ok(arrow_msg) => match arrow_msg.decompress_payload() {
+                        Ok(data) => data,
+                        Err(_) => {
+                            // Decompression failed, use as-is
+                            payload
+                        }
+                    },
+                    Err(_) => {
+                        // Not a valid ArrowMsg, use as-is
+                        payload
+                    }
+                };
+
+                messages.push((decompressed, topic));
                 pos += len;
             } else {
                 break;

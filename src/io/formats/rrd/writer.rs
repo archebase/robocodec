@@ -16,10 +16,34 @@ use crate::core::{CodecError, Result};
 use crate::io::metadata::{ChannelInfo, RawMessage};
 use crate::io::traits::FormatWriter;
 
+use super::arrow_msg::ArrowMsg;
 use super::constants::{
-    COMPRESSION_OFF, MSG_KIND_ARROW_MSG, MSG_KIND_END, RRD_FOOTER_MAGIC, RRD_MAGIC, RRD_VERSION,
-    SERIALIZER_PROTOBUF, STREAM_FOOTER_SIZE,
+    COMPRESSION_LZ4, COMPRESSION_OFF, MSG_KIND_ARROW_MSG, MSG_KIND_END, RRD_FOOTER_MAGIC,
+    RRD_MAGIC, RRD_VERSION, SERIALIZER_PROTOBUF, STREAM_FOOTER_SIZE,
 };
+
+/// Compression option for RRD writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RrdCompression {
+    Off,
+    Lz4,
+}
+
+impl RrdCompression {
+    /// Convert to u8 value for RRD header.
+    fn as_u8(self) -> u8 {
+        match self {
+            Self::Off => COMPRESSION_OFF,
+            Self::Lz4 => COMPRESSION_LZ4,
+        }
+    }
+}
+
+impl Default for RrdCompression {
+    fn default() -> Self {
+        Self::Lz4 // Use LZ4 compression by default to match Rerun
+    }
+}
 
 /// RRD file writer (RRF2 format).
 ///
@@ -37,15 +61,30 @@ pub struct RrdWriter {
     message_count: u64,
     /// Finished flag
     finished: bool,
+    /// Compression setting
+    compression: RrdCompression,
 }
 
 impl RrdWriter {
-    /// Create a new RRD writer.
+    /// Create a new RRD writer with default LZ4 compression.
     ///
     /// # Arguments
     ///
     /// * `path` - Path to the output file
     pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::create_with_compression(path, RrdCompression::default())
+    }
+
+    /// Create a new RRD writer with specified compression.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the output file
+    /// * `compression` - Compression setting
+    pub fn create_with_compression<P: AsRef<Path>>(
+        path: P,
+        compression: RrdCompression,
+    ) -> Result<Self> {
         let path_obj = path.as_ref();
         let path_str = path_obj.to_string_lossy().to_string();
 
@@ -65,7 +104,7 @@ impl RrdWriter {
             .map_err(|e| CodecError::parse("RRD", format!("Failed to create file: {}", e)))?;
 
         // Write RRF2 stream header
-        Self::write_header(&mut file)?;
+        Self::write_header(&mut file, compression)?;
 
         Ok(Self {
             file,
@@ -74,13 +113,14 @@ impl RrdWriter {
             channels: HashMap::new(),
             message_count: 0,
             finished: false,
+            compression,
         })
     }
 
     /// Write the RRF2 stream header (12 bytes).
     ///
     /// Format: magic(4) + version(4) + options(4)
-    fn write_header<W: Write>(writer: &mut W) -> Result<()> {
+    fn write_header<W: Write>(writer: &mut W, compression: RrdCompression) -> Result<()> {
         // Magic: "RRF2"
         writer
             .write_all(RRD_MAGIC)
@@ -93,7 +133,7 @@ impl RrdWriter {
 
         // Options: compression(1) + serializer(1) + reserved(2)
         writer
-            .write_all(&[COMPRESSION_OFF]) // compression: off
+            .write_all(&[compression.as_u8()]) // compression
             .map_err(|e| CodecError::parse("RRD", format!("Failed to write compression: {}", e)))?;
 
         writer
@@ -200,9 +240,17 @@ impl FormatWriter for RrdWriter {
             channel.message_count += 1;
         }
 
+        // Wrap data in ArrowMsg protobuf with compression
+        let arrow_msg = match self.compression {
+            RrdCompression::Off => ArrowMsg::new(message.data.clone()),
+            RrdCompression::Lz4 => ArrowMsg::with_lz4(message.data.clone())?,
+        };
+
+        // Serialize ArrowMsg to protobuf
+        let msg_data = arrow_msg.to_bytes()?;
+
         // Write message as ArrowMsg (kind=2)
-        // In RRF2, we write the raw data as the payload
-        self.write_message(MSG_KIND_ARROW_MSG, &message.data)?;
+        self.write_message(MSG_KIND_ARROW_MSG, &msg_data)?;
 
         Ok(())
     }
@@ -311,7 +359,7 @@ mod tests {
         assert_eq!(data[4..8], RRD_VERSION);
 
         // Verify options
-        assert_eq!(data[8], COMPRESSION_OFF);
+        assert_eq!(data[8], COMPRESSION_LZ4); // Default is now LZ4
         assert_eq!(data[9], SERIALIZER_PROTOBUF);
 
         println!("Written {} bytes", data.len());
@@ -466,5 +514,114 @@ mod tests {
 
         // Verify the file was created
         assert!(temp.path().exists());
+    }
+
+    #[test]
+    fn test_writer_with_compression_off() {
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let mut writer = RrdWriter::create_with_compression(temp_file.path(), RrdCompression::Off)
+            .expect("Failed to create writer");
+
+        // Verify compression is Off
+        assert_eq!(writer.compression, RrdCompression::Off);
+
+        // Write data
+        let channel_id = writer
+            .add_channel("/test", "std_msgs/String", "json", None)
+            .unwrap();
+        let message = RawMessage {
+            channel_id,
+            log_time: 1000,
+            publish_time: 1000,
+            data: b"test data".to_vec(),
+            sequence: Some(0),
+        };
+        writer.write(&message).expect("Failed to write message");
+        writer.finish().expect("Failed to finish");
+
+        // Verify the file has COMPRESSION_OFF
+        let data = std::fs::read(temp_file.path()).expect("Failed to read file");
+        assert_eq!(data[8], COMPRESSION_OFF);
+    }
+
+    #[test]
+    fn test_writer_with_lz4_compression() {
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let mut writer = RrdWriter::create_with_compression(temp_file.path(), RrdCompression::Lz4)
+            .expect("Failed to create writer");
+
+        // Verify compression is LZ4
+        assert_eq!(writer.compression, RrdCompression::Lz4);
+
+        // Write data
+        let channel_id = writer
+            .add_channel("/test", "std_msgs/String", "json", None)
+            .unwrap();
+        let message = RawMessage {
+            channel_id,
+            log_time: 1000,
+            publish_time: 1000,
+            data: b"test data".to_vec(),
+            sequence: Some(0),
+        };
+        writer.write(&message).expect("Failed to write message");
+        writer.finish().expect("Failed to finish");
+
+        // Verify the file has COMPRESSION_LZ4
+        let data = std::fs::read(temp_file.path()).expect("Failed to read file");
+        assert_eq!(data[8], COMPRESSION_LZ4);
+    }
+
+    #[test]
+    fn test_writer_arrowmsg_roundtrip_with_lz4() {
+        use super::super::arrow_msg::ArrowMsg;
+
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let mut writer = RrdWriter::create_with_compression(temp_file.path(), RrdCompression::Lz4)
+            .expect("Failed to create writer");
+
+        // Write a larger payload that will compress
+        let payload = "test data".repeat(100).into_bytes();
+        let channel_id = writer
+            .add_channel("/test", "std_msgs/String", "json", None)
+            .unwrap();
+        let message = RawMessage {
+            channel_id,
+            log_time: 1000,
+            publish_time: 1000,
+            data: payload.clone(),
+            sequence: Some(0),
+        };
+        writer.write(&message).expect("Failed to write message");
+        writer.finish().expect("Failed to finish");
+
+        // Read the file and verify ArrowMsg format
+        let data = std::fs::read(temp_file.path()).expect("Failed to read file");
+
+        // Skip stream header (12 bytes)
+        // Read message header: kind(8) + len(8)
+        let msg_kind = u64::from_le_bytes(data[12..20].try_into().unwrap());
+        assert_eq!(msg_kind, MSG_KIND_ARROW_MSG);
+
+        let msg_len = u64::from_le_bytes(data[20..28].try_into().unwrap()) as usize;
+
+        // ArrowMsg protobuf starts at offset 28
+        let arrow_msg_data = &data[28..28 + msg_len];
+
+        // Parse as ArrowMsg
+        let arrow_msg = ArrowMsg::from_bytes(arrow_msg_data).expect("Failed to parse ArrowMsg");
+
+        // Verify compression
+        assert_eq!(
+            arrow_msg.compression,
+            super::super::arrow_msg::ArrowCompression::Lz4
+        );
+        assert_eq!(arrow_msg.uncompressed_size, payload.len() as u64);
+
+        // Decompress and verify
+        let decompressed = arrow_msg
+            .decompress_payload()
+            .expect("Failed to decompress");
+        assert_eq!(decompressed, payload);
     }
 }
