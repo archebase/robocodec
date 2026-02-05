@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use clap::Args;
 
-use crate::common::Result;
 use robocodec::RoboRewriter;
+use robocodec::cli::Result;
 
 /// Rewrite a robotics data file (same format only).
 ///

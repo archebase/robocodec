@@ -23,7 +23,7 @@ path = "scripts/upload-fixtures.rs"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
-anyhow = "1.0"
+anyhow = { version = "1.0", optional = true }
 pest = "2.7"
 pest_derive = "2.7"
 byteorder = "1.5"
@@ -76,7 +76,7 @@ percent-encoding = { version = "2.3.2", optional = true }
 default = ["s3"]
 python = ["pyo3"]
 jemalloc = ["dep:tikv-jemallocator"]
-cli = ["clap", "indicatif", "human-size"]
+cli = ["clap", "indicatif", "human-size", "anyhow"]
 s3 = [
     "aws-config",
     "aws-credential-types",

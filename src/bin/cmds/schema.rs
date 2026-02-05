@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use clap::Subcommand;
 use serde::Serialize;
 
-use crate::common::{Result, open_reader};
 use robocodec::FormatReader;
+use robocodec::cli::{Result, open_reader, output_json_or};
 
 /// Schema operations.
 #[derive(Subcommand, Clone, Debug)]
@@ -474,22 +474,6 @@ fn compute_diff(s1: &str, s2: &str) -> String {
     }
 
     diff
-}
-
-fn output_json_or<T>(
-    json: bool,
-    value: &T,
-    human_fn: impl FnOnce() -> std::io::Result<()>,
-) -> Result<()>
-where
-    T: Serialize,
-{
-    if json {
-        println!("{}", serde_json::to_string_pretty(value)?);
-    } else {
-        human_fn()?;
-    }
-    Ok(())
 }
 
 // Output types

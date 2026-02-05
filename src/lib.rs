@@ -116,3 +116,8 @@ pub trait Decoder: Send + Sync {
 // Python bindings (optional feature)
 #[cfg(feature = "python")]
 pub mod python;
+
+// CLI support utilities (optional feature, not part of public API)
+#[cfg(feature = "cli")]
+#[doc(hidden)]
+pub mod cli;
