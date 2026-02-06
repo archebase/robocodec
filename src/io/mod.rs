@@ -7,7 +7,6 @@
 //! This module provides the foundational types and traits for reading
 //! and writing robotics data files.
 
-pub mod arena;
 pub(crate) mod detection;
 // Format modules are accessible but hidden from docs
 #[doc(hidden)]
@@ -24,7 +23,6 @@ pub mod transport;
 pub mod s3;
 
 // Re-exports
-pub use arena::{MmapArena, MmapArenaRef};
 pub use metadata::{
     ChannelInfo, FileFormat, FileInfo, MessageMetadata, RawMessage, TimestampedDecodedMessage,
 };
