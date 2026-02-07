@@ -274,14 +274,14 @@ uint32 nanosec
 
     assert!(result.contains_key("names"));
 
-    if let Some(robocodec::CodecValue::Array(arr)) = result.get("names") {
+    if let Some(robocodec::core::CodecValue::Array(arr)) = result.get("names") {
         assert_eq!(arr.len(), 2);
-        if let robocodec::CodecValue::String(s1) = &arr[0] {
+        if let robocodec::core::CodecValue::String(s1) = &arr[0] {
             assert_eq!(s1, "left_arm_joint1");
         } else {
             panic!("First element should be a string");
         }
-        if let robocodec::CodecValue::String(s2) = &arr[1] {
+        if let robocodec::core::CodecValue::String(s2) = &arr[1] {
             assert_eq!(s2, "left_arm_joint2");
         } else {
             panic!("Second element should be a string");
