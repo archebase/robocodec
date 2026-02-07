@@ -101,7 +101,7 @@ impl McapTransportReader {
         // Read and parse the entire file
         loop {
             let n = transport.file_mut().read(&mut buffer).map_err(|e| {
-                CodecError::encode("Transport", format!("Failed to read from {}: {}", path, e))
+                CodecError::encode("Transport", format!("Failed to read from {path}: {e}"))
             })?;
 
             if n == 0 {
@@ -120,7 +120,7 @@ impl McapTransportReader {
                 Err(e) => {
                     return Err(CodecError::parse(
                         "MCAP",
-                        format!("Failed to parse MCAP data at {}: {}", path, e),
+                        format!("Failed to parse MCAP data at {path}: {e}"),
                     ));
                 }
             }
@@ -135,11 +135,13 @@ impl McapTransportReader {
     }
 
     /// Get all parsed messages.
+    #[must_use]
     pub fn messages(&self) -> &[MessageRecord] {
         &self.messages
     }
 
     /// Get the streaming parser.
+    #[must_use]
     pub fn parser(&self) -> &McapStreamingParser {
         &self.parser
     }
@@ -215,7 +217,7 @@ impl FormatReader for McapTransportReader {
                         Err(e) => {
                             return Err(CodecError::parse(
                                 "MCAP",
-                                format!("Failed to parse MCAP data at {}: {}", path, e),
+                                format!("Failed to parse MCAP data at {path}: {e}"),
                             ));
                         }
                     }
@@ -223,7 +225,7 @@ impl FormatReader for McapTransportReader {
                 Poll::Ready(Err(e)) => {
                     return Err(CodecError::encode(
                         "Transport",
-                        format!("Failed to read from {}: {}", path, e),
+                        format!("Failed to read from {path}: {e}"),
                     ));
                 }
                 Poll::Pending => {

@@ -62,9 +62,17 @@ use crate::rewriter::{FormatRewriter, RewriteOptions, RewriteStats};
 /// more testable by isolating writer-specific logic.
 pub trait McapWriter: Send + Sync {
     /// Add a schema to the MCAP file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the schema cannot be added to the MCAP file.
     fn add_schema(&mut self, name: &str, encoding: &str, data: &[u8]) -> Result<u16>;
 
     /// Add a channel to the MCAP file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the channel cannot be added to the MCAP file.
     fn add_channel(
         &mut self,
         schema_id: u16,
@@ -74,6 +82,10 @@ pub trait McapWriter: Send + Sync {
     ) -> Result<u16>;
 
     /// Write a message to the MCAP file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the message cannot be written to the MCAP file.
     fn write_message(
         &mut self,
         channel_id: u16,
@@ -83,11 +95,16 @@ pub trait McapWriter: Send + Sync {
     ) -> Result<()>;
 
     /// Finish writing and flush the MCAP file.
+    ///
     /// Returns the total number of messages written.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the MCAP file cannot be finalized or flushed.
     fn finish(&mut self) -> Result<u64>;
 }
 
-/// Implement McapWriter for the actual ParallelMcapWriter.
+/// Implement `McapWriter` for the actual `ParallelMcapWriter`.
 impl<W: std::io::Write + Send + Sync> McapWriter for ParallelMcapWriter<W> {
     fn add_schema(&mut self, name: &str, encoding: &str, data: &[u8]) -> Result<u16> {
         self.add_schema(name, encoding, data)
@@ -141,11 +158,13 @@ pub struct McapRewriter {
 
 impl McapRewriter {
     /// Create a new rewriter with default options.
+    #[must_use]
     pub fn new() -> Self {
         Self::with_options(RewriteOptions::default())
     }
 
     /// Create a new rewriter with custom options.
+    #[must_use]
     pub fn with_options(options: RewriteOptions) -> Self {
         Self {
             options,
@@ -165,6 +184,15 @@ impl McapRewriter {
     /// # Returns
     ///
     /// Statistics about the rewrite operation
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The input MCAP file cannot be opened or is malformed
+    /// - The output MCAP file cannot be created
+    /// - Schema parsing fails when `validate_schemas` is enabled
+    /// - Transformation validation fails
+    /// - Message encoding or writing fails
     ///
     /// # Example
     ///
@@ -350,6 +378,7 @@ impl McapRewriter {
     }
 
     /// Get the options used for rewriting.
+    #[must_use]
     pub fn options(&self) -> &RewriteOptions {
         &self.options
     }
@@ -385,6 +414,13 @@ impl Default for McapRewriter {
 ///
 /// * `input_path` - Path to the input MCAP file
 /// * `output_path` - Path to the output MCAP file
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The input file cannot be opened or is malformed
+/// - The output file cannot be created
+/// - Message decoding or encoding fails
 ///
 /// # Example
 ///

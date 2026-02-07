@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Python bindings for RoboWriter.
+//! Python bindings for `RoboWriter`.
 
 use pyo3::prelude::*;
 
@@ -44,7 +44,7 @@ impl PyRoboWriter {
     ///
     /// Raises
     /// ------
-    /// RobocodecError
+    /// `RobocodecError`
     ///     If the file cannot be created or format is not recognized
     ///
     /// # Example
@@ -76,8 +76,8 @@ impl PyRoboWriter {
     /// ----------
     /// topic : str
     ///     Topic name (e.g., "/chatter")
-    /// message_type : str
-    ///     Message type name (e.g., "std_msgs/String")
+    /// `message_type` : str
+    ///     Message type name (e.g., "`std_msgs/String`")
     /// encoding : str
     ///     Encoding format (e.g., "cdr", "protobuf", "json")
     /// schema : str or None
@@ -90,7 +90,7 @@ impl PyRoboWriter {
     ///
     /// Raises
     /// ------
-    /// RobocodecError
+    /// `RobocodecError`
     ///     If the channel cannot be added
     ///
     /// # Example
@@ -122,7 +122,7 @@ impl PyRoboWriter {
     ///
     /// Raises
     /// ------
-    /// RobocodecError
+    /// `RobocodecError`
     ///     If finishing the write fails
     ///
     /// # Example

@@ -281,21 +281,62 @@ impl std::str::FromStr for Encoding {
 
 impl Encoding {
     /// Check if this encoding is CDR.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use robocodec::Encoding;
+    ///
+    /// assert!(Encoding::Cdr.is_cdr());
+    /// assert!(!Encoding::Protobuf.is_cdr());
+    /// ```
+    #[must_use]
     pub fn is_cdr(&self) -> bool {
         matches!(self, Encoding::Cdr)
     }
 
     /// Check if this encoding is Protobuf.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use robocodec::Encoding;
+    ///
+    /// assert!(Encoding::Protobuf.is_protobuf());
+    /// assert!(!Encoding::Cdr.is_protobuf());
+    /// ```
+    #[must_use]
     pub fn is_protobuf(&self) -> bool {
         matches!(self, Encoding::Protobuf)
     }
 
     /// Check if this encoding is JSON.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use robocodec::Encoding;
+    ///
+    /// assert!(Encoding::Json.is_json());
+    /// assert!(!Encoding::Cdr.is_json());
+    /// ```
+    #[must_use]
     pub fn is_json(&self) -> bool {
         matches!(self, Encoding::Json)
     }
 
     /// Convert to string representation.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use robocodec::Encoding;
+    ///
+    /// assert_eq!(Encoding::Cdr.as_str(), "cdr");
+    /// assert_eq!(Encoding::Protobuf.as_str(), "protobuf");
+    /// assert_eq!(Encoding::Json.as_str(), "json");
+    /// ```
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Encoding::Cdr => "cdr",

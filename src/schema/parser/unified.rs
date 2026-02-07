@@ -40,7 +40,7 @@ pub enum SchemaFormat {
 ///
 /// # Arguments
 ///
-/// * `name` - The name of the message type (e.g., "std_msgs/Header")
+/// * `name` - The name of the message type (e.g., "`std_msgs/Header`")
 /// * `definition` - The schema file contents
 ///
 /// # Examples
@@ -81,7 +81,7 @@ pub fn parse_schema(name: impl Into<String>, definition: &str) -> CoreResult<Mes
 ///
 /// # Arguments
 ///
-/// * `name` - The name of the message type (e.g., "std_msgs/Header")
+/// * `name` - The name of the message type (e.g., "`std_msgs/Header`")
 /// * `definition` - The schema file contents
 /// * `encoding` - The message encoding (e.g., "cdr", "ros1msg")
 pub fn parse_schema_with_encoding(
@@ -106,7 +106,7 @@ pub fn parse_schema_with_encoding(
 
 /// Populate a schema with predefined builtin types.
 ///
-/// This adds standard ROS2 builtin_interfaces types like Time and Duration
+/// This adds standard ROS2 `builtin_interfaces` types like Time and Duration
 /// to the schema, ensuring they're available when decoding messages that
 /// reference them.
 fn populate_builtin_types(schema: &mut MessageSchema) {
@@ -152,7 +152,7 @@ fn detect_format(definition: &str) -> SchemaFormat {
 ///
 /// This format has separator lines like:
 ///   ================================================================================================
-///   IDL: std_msgs/msg/Header
+///   IDL: `std_msgs/msg/Header`
 ///
 /// We strip these headers and parse the entire content as pure OMG IDL.
 fn parse_ros2_idl(name: &str, definition: &str) -> CoreResult<MessageSchema> {

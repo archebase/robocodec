@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+[package]
+name = "robocodec-fuzz"
+version = "0.1.0"
+edition = "2024"
+authors = ["Strata Contributors"]
+license = "MulanPSL-2.0"
+publish = false
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Use workspace dependencies where possible
+# Fuzz targets are built with the --cfg fuzzing_seeds configuration

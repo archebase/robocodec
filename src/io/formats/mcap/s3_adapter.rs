@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! S3 streaming adapter using the mcap crate's LinearReader.
+//! S3 streaming adapter using the mcap crate's `LinearReader`.
 //!
 //! This module provides an adapter that integrates `mcap::LinearReader` with S3
-//! streaming. The LinearReader uses an event-driven API that is perfect for
+//! streaming. The `LinearReader` uses an event-driven API that is perfect for
 //! streaming scenarios where data arrives in chunks.
 
 use std::collections::HashMap;
@@ -14,13 +14,13 @@ use crate::io::formats::mcap::constants::{OP_CHANNEL, OP_MESSAGE, OP_SCHEMA};
 use crate::io::metadata::ChannelInfo;
 use crate::io::s3::FatalError;
 
-/// S3 streaming adapter using mcap::LinearReader.
+/// S3 streaming adapter using `mcap::LinearReader`.
 ///
-/// This adapter wraps the mcap crate's LinearReader and provides a simple
+/// This adapter wraps the mcap crate's `LinearReader` and provides a simple
 /// chunk-based API suitable for S3 streaming. It processes MCAP records
 /// incrementally as data arrives from S3.
 pub struct McapS3Adapter {
-    /// The underlying mcap LinearReader
+    /// The underlying mcap `LinearReader`
     reader: mcap::sans_io::linear_reader::LinearReader,
     /// Discovered schemas indexed by schema ID
     schemas: HashMap<u16, SchemaInfo>,
@@ -35,7 +35,7 @@ pub struct McapS3Adapter {
 pub struct SchemaInfo {
     /// Schema ID
     pub id: u16,
-    /// Schema name (e.g., "sensor_msgs/msg/Image")
+    /// Schema name (e.g., "`sensor_msgs/msg/Image`")
     pub name: String,
     /// Schema encoding (e.g., "ros2msg", "protobuf")
     pub encoding: String,
@@ -73,6 +73,7 @@ pub struct MessageRecord {
 
 impl McapS3Adapter {
     /// Create a new S3 adapter.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             reader: mcap::sans_io::linear_reader::LinearReader::new(),
@@ -97,7 +98,7 @@ impl McapS3Adapter {
         // Process all available events
         while let Some(event) = self.reader.next_event() {
             let event =
-                event.map_err(|e| FatalError::io_error(format!("MCAP parse error: {}", e)))?;
+                event.map_err(|e| FatalError::io_error(format!("MCAP parse error: {e}")))?;
 
             match event {
                 mcap::sans_io::linear_reader::LinearReadEvent::ReadRequest(_) => break,
@@ -298,7 +299,8 @@ impl McapS3Adapter {
         })
     }
 
-    /// Get all discovered channels as ChannelInfo.
+    /// Get all discovered channels as `ChannelInfo`.
+    #[must_use]
     pub fn channels(&self) -> HashMap<u16, ChannelInfo> {
         self.channels
             .iter()
@@ -328,11 +330,13 @@ impl McapS3Adapter {
     }
 
     /// Get the total message count.
+    #[must_use]
     pub fn message_count(&self) -> u64 {
         self.message_count
     }
 
     /// Check if the parser has seen all channels.
+    #[must_use]
     pub fn has_channels(&self) -> bool {
         !self.channels.is_empty()
     }

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Python bindings for TransformBuilder.
+//! Python bindings for `TransformBuilder`.
 
 use pyo3::prelude::*;
 use std::collections::HashMap;
@@ -69,7 +69,7 @@ impl PyTransformBuilder {
     ///
     /// Returns
     /// -------
-    /// TransformBuilder
+    /// `TransformBuilder`
     ///     Self for method chaining
     ///
     /// # Example
@@ -77,11 +77,11 @@ impl PyTransformBuilder {
     /// ```python
     /// builder = builder.with_topic_rename("/old_topic", "/new_topic")
     /// ```
-    fn with_topic_rename<'a>(
-        mut slf: PyRefMut<'a, Self>,
+    fn with_topic_rename(
+        mut slf: PyRefMut<'_, Self>,
         from: String,
         to: String,
-    ) -> PyRefMut<'a, Self> {
+    ) -> PyRefMut<'_, Self> {
         slf.topic_mappings.insert(from, to);
         slf
     }
@@ -99,7 +99,7 @@ impl PyTransformBuilder {
     ///
     /// Returns
     /// -------
-    /// TransformBuilder
+    /// `TransformBuilder`
     ///     Self for method chaining
     ///
     /// # Example
@@ -108,11 +108,11 @@ impl PyTransformBuilder {
     /// # Rename all topics starting with /foo/ to /bar/
     /// builder = builder.with_topic_rename_wildcard("/foo/*", "/bar/*")
     /// ```
-    fn with_topic_rename_wildcard<'a>(
-        mut slf: PyRefMut<'a, Self>,
+    fn with_topic_rename_wildcard(
+        mut slf: PyRefMut<'_, Self>,
         pattern: String,
         target: String,
-    ) -> PyRefMut<'a, Self> {
+    ) -> PyRefMut<'_, Self> {
         slf.topic_wildcards.push((pattern, target));
         slf
     }
@@ -128,7 +128,7 @@ impl PyTransformBuilder {
     ///
     /// Returns
     /// -------
-    /// TransformBuilder
+    /// `TransformBuilder`
     ///     Self for method chaining
     ///
     /// # Example
@@ -136,11 +136,11 @@ impl PyTransformBuilder {
     /// ```python
     /// builder = builder.with_type_rename("old_pkg/Msg", "new_pkg/Msg")
     /// ```
-    fn with_type_rename<'a>(
-        mut slf: PyRefMut<'a, Self>,
+    fn with_type_rename(
+        mut slf: PyRefMut<'_, Self>,
         from: String,
         to: String,
-    ) -> PyRefMut<'a, Self> {
+    ) -> PyRefMut<'_, Self> {
         slf.type_mappings.insert(from, to);
         slf
     }
@@ -158,7 +158,7 @@ impl PyTransformBuilder {
     ///
     /// Returns
     /// -------
-    /// TransformBuilder
+    /// `TransformBuilder`
     ///     Self for method chaining
     ///
     /// # Example
@@ -167,11 +167,11 @@ impl PyTransformBuilder {
     /// # Rename all types starting with "foo/" to "bar/"
     /// builder = builder.with_type_rename_wildcard("foo/*", "bar/*")
     /// ```
-    fn with_type_rename_wildcard<'a>(
-        mut slf: PyRefMut<'a, Self>,
+    fn with_type_rename_wildcard(
+        mut slf: PyRefMut<'_, Self>,
         pattern: String,
         target: String,
-    ) -> PyRefMut<'a, Self> {
+    ) -> PyRefMut<'_, Self> {
         slf.type_wildcards.push((pattern, target));
         slf
     }
@@ -185,14 +185,14 @@ impl PyTransformBuilder {
     /// ----------
     /// topic : str
     ///     The topic name (exact match)
-    /// source_type : str
+    /// `source_type` : str
     ///     Original type name (e.g., "nmx.msg.LowdimData")
-    /// target_type : str
+    /// `target_type` : str
     ///     New type name (e.g., "nmx.msg.JointStates")
     ///
     /// Returns
     /// -------
-    /// TransformBuilder
+    /// `TransformBuilder`
     ///     Self for method chaining
     ///
     /// # Example
@@ -204,12 +204,12 @@ impl PyTransformBuilder {
     ///     "nmx.msg.JointStates"
     /// )
     /// ```
-    fn with_topic_type_rename<'a>(
-        mut slf: PyRefMut<'a, Self>,
+    fn with_topic_type_rename(
+        mut slf: PyRefMut<'_, Self>,
         topic: String,
         source_type: String,
         target_type: String,
-    ) -> PyRefMut<'a, Self> {
+    ) -> PyRefMut<'_, Self> {
         slf.topic_type_mappings
             .insert((topic, source_type), target_type);
         slf
@@ -222,7 +222,7 @@ impl PyTransformBuilder {
             + self.type_mappings.len()
             + self.type_wildcards.len()
             + self.topic_type_mappings.len();
-        format!("TransformBuilder(rules={})", total)
+        format!("TransformBuilder(rules={total})")
     }
 
     fn __str__(&self) -> String {
@@ -232,7 +232,7 @@ impl PyTransformBuilder {
 
 impl PyTransformBuilder {
     /// Build the transformation pipeline (internal use).
-    /// This constructs the MultiTransform from the stored rules.
+    /// This constructs the `MultiTransform` from the stored rules.
     pub(crate) fn build_inner(self) -> crate::transform::MultiTransform {
         // Reconstruct the builder from stored rules
         let mut builder = TransformBuilder::new();

@@ -34,6 +34,7 @@ pub enum SchemaFormat {
 
 impl SchemaFormat {
     /// Parse from string.
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "msg" => Some(SchemaFormat::Msg),
@@ -43,6 +44,7 @@ impl SchemaFormat {
     }
 
     /// Get string representation.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             SchemaFormat::Msg => "msg",

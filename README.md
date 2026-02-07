@@ -286,7 +286,38 @@ make build-python-dev
 
 MulanPSL v2 - see [LICENSE](LICENSE)
 
+## Development
+
+### Testing
+
+```bash
+make test              # Run all tests
+make test-rust         # Run Rust tests only
+make test-python       # Run Python tests only
+```
+
+### Fuzzing
+
+Robocodec includes comprehensive fuzzing infrastructure for parser security and robustness testing:
+
+```bash
+./scripts/fuzz_init.sh  # Initialize fuzzing infrastructure (one-time setup)
+make fuzz               # Quick fuzzing check (30s per target)
+make fuzz-all           # Extended fuzzing (1min per target)
+make fuzz-mcap          # Fuzz MCAP parser only
+```
+
+For detailed fuzzing documentation, see [docs/FUZZING.md](docs/FUZZING.md).
+
+### Benchmarks
+
+```bash
+make bench              # Run performance benchmarks
+make bench-compare      # Compare against baseline
+```
+
 ## Links
 
 - [Issue Tracker](https://github.com/archebase/robocodec/issues)
 - [Security Policy](SECURITY.md)
+- [Fuzzing Guide](docs/FUZZING.md)

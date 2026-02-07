@@ -7,7 +7,7 @@
 //! This module provides a complete MCAP reader/writer implementation with:
 //! - Parallel chunk-based reading for optimal performance
 //! - Sequential reading using the mcap crate
-//! - S3 streaming using the mcap crate's LinearReader
+//! - S3 streaming using the mcap crate's `LinearReader`
 //! - Automatic encoding detection and decoding
 //! - Custom writer with manual chunk control for parallel compression
 //!

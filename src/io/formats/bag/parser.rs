@@ -64,7 +64,7 @@ pub struct BagHeader {
 pub struct BagChunkInfo {
     /// Chunk sequence number
     pub sequence: u64,
-    /// Offset of chunk record in file (position of header_len)
+    /// Offset of chunk record in file (position of `header_len`)
     pub chunk_pos: u64,
     /// Start time of messages in this chunk
     pub start_time: u64,
@@ -350,8 +350,8 @@ impl BagParser {
             }
             b"time" if value.len() >= 8 => {
                 // ROS time: sec (4 bytes) + nsec (4 bytes)
-                let sec = u32::from_le_bytes([value[0], value[1], value[2], value[3]]) as u64;
-                let nsec = u32::from_le_bytes([value[4], value[5], value[6], value[7]]) as u64;
+                let sec = u64::from(u32::from_le_bytes([value[0], value[1], value[2], value[3]]));
+                let nsec = u64::from(u32::from_le_bytes([value[4], value[5], value[6], value[7]]));
                 fields.time = Some(sec * 1_000_000_000 + nsec);
             }
             b"topic" => {
@@ -391,13 +391,13 @@ impl BagParser {
                 ]));
             }
             b"start_time" if value.len() >= 8 => {
-                let sec = u32::from_le_bytes([value[0], value[1], value[2], value[3]]) as u64;
-                let nsec = u32::from_le_bytes([value[4], value[5], value[6], value[7]]) as u64;
+                let sec = u64::from(u32::from_le_bytes([value[0], value[1], value[2], value[3]]));
+                let nsec = u64::from(u32::from_le_bytes([value[4], value[5], value[6], value[7]]));
                 fields.start_time = Some(sec * 1_000_000_000 + nsec);
             }
             b"end_time" if value.len() >= 8 => {
-                let sec = u32::from_le_bytes([value[0], value[1], value[2], value[3]]) as u64;
-                let nsec = u32::from_le_bytes([value[4], value[5], value[6], value[7]]) as u64;
+                let sec = u64::from(u32::from_le_bytes([value[0], value[1], value[2], value[3]]));
+                let nsec = u64::from(u32::from_le_bytes([value[4], value[5], value[6], value[7]]));
                 fields.end_time = Some(sec * 1_000_000_000 + nsec);
             }
             b"compression" => {
@@ -461,7 +461,7 @@ impl BagParser {
         Ok((chunks, connections))
     }
 
-    /// Create a BagConnection from parsed header and data fields.
+    /// Create a `BagConnection` from parsed header and data fields.
     fn connection_from_fields(
         header_fields: &RecordHeader,
         data_fields: &RecordHeader,
@@ -477,7 +477,7 @@ impl BagParser {
         })
     }
 
-    /// Create a BagChunkInfo from parsed header fields and data.
+    /// Create a `BagChunkInfo` from parsed header fields and data.
     fn chunk_info_from_fields(
         fields: &RecordHeader,
         data: &[u8],
@@ -569,26 +569,31 @@ impl BagParser {
     }
 
     /// Get chunk information for random access.
+    #[must_use]
     pub fn chunks(&self) -> &[BagChunkInfo] {
         &self.chunks
     }
 
     /// Get connections.
+    #[must_use]
     pub fn connections(&self) -> &HashMap<u32, BagConnection> {
         &self.connections
     }
 
     /// Get the file size.
+    #[must_use]
     pub fn file_size(&self) -> u64 {
         self.file_size
     }
 
     /// Get the file path.
+    #[must_use]
     pub fn path(&self) -> &str {
         &self.path
     }
 
     /// Get header info.
+    #[must_use]
     pub fn header(&self) -> &BagHeader {
         &self.header
     }
@@ -641,8 +646,7 @@ impl BagParser {
                 Ok(decompressed)
             }
             _ => Err(CodecError::unsupported(format!(
-                "Unsupported compression format: {}",
-                compression
+                "Unsupported compression format: {compression}"
             ))),
         }
     }

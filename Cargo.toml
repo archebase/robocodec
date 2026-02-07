@@ -1,29 +1,40 @@
-[package]
-name = "robocodec"
+# SPDX-FileCopyrightText: 2026 ArcheBase
+#
+# SPDX-License-Identifier: MulanPSL-2.0
+
+[workspace]
+members = ["robocodec-cli"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 authors = ["Strata Contributors"]
 license = "MulanPSL-2.0"
+repository = "https://github.com/archebase/robocodec"
+
+[workspace.dependencies]
+# Shared dependencies across workspace members
+
+[package]
+name = "robocodec"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "High-performance robotics data codec library for reading, writing, and converting MCAP and ROS1 bag files with support for CDR, Protobuf, and JSON encodings"
 
 [lib]
 crate-type = ["rlib", "cdylib"]
 
-[[bin]]
-name = "robocodec"
-path = "src/bin/robocodec.rs"
-required-features = ["cli"]
-
 [[example]]
 name = "upload-fixtures"
 path = "scripts/upload-fixtures.rs"
-
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
-anyhow = { version = "1.0", optional = true }
 pest = "2.7"
 pest_derive = "2.7"
 byteorder = "1.5"
@@ -53,9 +64,6 @@ tracing = "0.1"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 tikv-jemallocator = { version = "0.6", optional = true }
 pyo3 = { version = "0.25", features = ["abi3-py311", "extension-module"], optional = true }
-clap = { version = "4.5", features = ["derive"], optional = true }
-indicatif = { version = "0.17", optional = true }
-human-size = { version = "0.4", optional = true }
 # Remote storage support (gated behind remote feature)
 reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false, optional = true }
 bytes = { version = "1.6", optional = true }
@@ -76,7 +84,6 @@ percent-encoding = { version = "2.3.2", optional = true }
 default = ["remote"]
 python = ["pyo3"]
 jemalloc = ["dep:tikv-jemallocator"]
-cli = ["clap", "indicatif", "human-size", "anyhow"]
 remote = [
     "aws-config",
     "aws-credential-types",

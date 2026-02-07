@@ -15,7 +15,7 @@ const DEFAULT_AWS_REGION: &str = "us-east-1";
 
 /// HTTP client for S3 operations.
 ///
-/// Wraps a reqwest::Client with S3-specific configuration for
+/// Wraps a `reqwest::Client` with S3-specific configuration for
 /// streaming operations with HTTP Range requests.
 #[derive(Clone)]
 pub struct S3Client {
@@ -37,14 +37,14 @@ impl S3Client {
             .timeout(config.request_timeout())
             .pool_max_idle_per_host(config.pool_max_idle());
 
-        let client = if !config.validate_ssl() {
-            client_builder.danger_accept_invalid_certs(true)
-        } else {
+        let client = if config.validate_ssl() {
             client_builder
+        } else {
+            client_builder.danger_accept_invalid_certs(true)
         };
 
         let client = client.build().map_err(|e| FatalError::ConfigError {
-            message: format!("Failed to create HTTP client: {}", e),
+            message: format!("Failed to create HTTP client: {e}"),
         })?;
 
         Ok(Self { client, config })
@@ -93,7 +93,7 @@ impl S3Client {
         self.check_range_status(response.status())?;
 
         response.bytes().await.map_err(|e| FatalError::IoError {
-            message: format!("Failed to read response body: {}", e),
+            message: format!("Failed to read response body: {e}"),
         })
     }
 
@@ -175,7 +175,7 @@ impl S3Client {
     ///
     /// # Returns
     ///
-    /// The upload ID that must be used for subsequent upload_part calls.
+    /// The upload ID that must be used for subsequent `upload_part` calls.
     pub async fn create_upload(&self, location: &S3Location) -> Result<String, FatalError> {
         let url = location.url();
         let response = self
@@ -192,7 +192,7 @@ impl S3Client {
             .await
             .map_err(|e| FatalError::HttpError {
                 status: None,
-                message: format!("Failed to create upload: {}", e),
+                message: format!("Failed to create upload: {e}"),
             })?;
 
         let status = response.status();
@@ -205,7 +205,7 @@ impl S3Client {
 
         // Parse the UploadId from the XML response
         let body = response.text().await.map_err(|e| FatalError::IoError {
-            message: format!("Failed to read response: {}", e),
+            message: format!("Failed to read response: {e}"),
         })?;
 
         // Extract UploadId from XML response
@@ -226,13 +226,13 @@ impl S3Client {
     /// # Arguments
     ///
     /// * `location` - The S3 location to upload to
-    /// * `upload_id` - The upload ID returned by create_upload
+    /// * `upload_id` - The upload ID returned by `create_upload`
     /// * `part_number` - The part number (1-indexed)
     /// * `data` - The part data to upload
     ///
     /// # Returns
     ///
-    /// The ETag of the uploaded part, needed for complete_upload.
+    /// The `ETag` of the uploaded part, needed for `complete_upload`.
     pub async fn upload_part(
         &self,
         location: &S3Location,
@@ -261,7 +261,7 @@ impl S3Client {
             .await
             .map_err(|e| FatalError::HttpError {
                 status: None,
-                message: format!("Failed to upload part: {}", e),
+                message: format!("Failed to upload part: {e}"),
             })?;
 
         let status = response.status();
@@ -288,8 +288,8 @@ impl S3Client {
     /// # Arguments
     ///
     /// * `location` - The S3 location
-    /// * `upload_id` - The upload ID returned by create_upload
-    /// * `parts` - List of (part_number, etag) tuples for each uploaded part
+    /// * `upload_id` - The upload ID returned by `create_upload`
+    /// * `parts` - List of (`part_number`, etag) tuples for each uploaded part
     pub async fn complete_upload(
         &self,
         location: &S3Location,
@@ -300,8 +300,7 @@ impl S3Client {
         let mut xml = String::from("<CompleteMultipartUpload>");
         for (part_number, etag) in &parts {
             xml.push_str(&format!(
-                "<Part><PartNumber>{}</PartNumber><ETag>{}</ETag></Part>",
-                part_number, etag
+                "<Part><PartNumber>{part_number}</PartNumber><ETag>{etag}</ETag></Part>"
             ));
         }
         xml.push_str("</CompleteMultipartUpload>");
@@ -325,7 +324,7 @@ impl S3Client {
             .await
             .map_err(|e| FatalError::HttpError {
                 status: None,
-                message: format!("Failed to complete upload: {}", e),
+                message: format!("Failed to complete upload: {e}"),
             })?;
 
         let status = response.status();
@@ -365,7 +364,7 @@ impl S3Client {
             .await
             .map_err(|e| FatalError::HttpError {
                 status: None,
-                message: format!("Failed to abort upload: {}", e),
+                message: format!("Failed to abort upload: {e}"),
             })?;
 
         // Check for error status
@@ -383,11 +382,13 @@ impl S3Client {
     }
 
     /// Get a reference to the underlying HTTP client.
+    #[must_use]
     pub fn http_client(&self) -> &reqwest::Client {
         &self.client
     }
 
     /// Get the configuration.
+    #[must_use]
     pub fn config(&self) -> &S3ReaderConfig {
         &self.config
     }
@@ -409,7 +410,7 @@ impl S3Client {
     {
         let uri = Uri::from_str(url).map_err(|e| FatalError::HttpError {
             status: None,
-            message: format!("Invalid URL: {}", e),
+            message: format!("Invalid URL: {e}"),
         })?;
 
         let mut headers = HeaderMap::new();
@@ -423,7 +424,7 @@ impl S3Client {
             signer::sign_request(credentials, region, "s3", method, &uri, &mut headers).map_err(
                 |e| FatalError::HttpError {
                     status: None,
-                    message: format!("Failed to sign request: {}", e),
+                    message: format!("Failed to sign request: {e}"),
                 },
             )?;
         }
@@ -435,14 +436,14 @@ impl S3Client {
             _ => {
                 return Err(FatalError::HttpError {
                     status: None,
-                    message: format!("Unsupported HTTP method: {:?}", method),
+                    message: format!("Unsupported HTTP method: {method:?}"),
                 });
             }
         };
 
         // Add headers (excluding 'host' which reqwest handles automatically)
         let mut request_builder = request_builder;
-        for (name, value) in headers.iter() {
+        for (name, value) in &headers {
             if let Ok(value_str) = value.to_str()
                 && name.as_str() != "host"
             {
@@ -454,7 +455,7 @@ impl S3Client {
             if e.is_connect() || e.is_timeout() {
                 FatalError::HttpError {
                     status: None,
-                    message: format!("Connection failed: {}", e),
+                    message: format!("Connection failed: {e}"),
                 }
             } else {
                 FatalError::HttpError {
@@ -465,7 +466,7 @@ impl S3Client {
         })
     }
 
-    /// Build a signed POST request (returns RequestBuilder for further customization).
+    /// Build a signed POST request (returns `RequestBuilder` for further customization).
     async fn build_signed_post_request<F>(
         &self,
         url: &str,
@@ -479,7 +480,7 @@ impl S3Client {
             .await
     }
 
-    /// Build a signed DELETE request (returns RequestBuilder for further customization).
+    /// Build a signed DELETE request (returns `RequestBuilder` for further customization).
     async fn build_signed_delete_request<F>(
         &self,
         url: &str,
@@ -493,7 +494,7 @@ impl S3Client {
             .await
     }
 
-    /// Build a signed request (returns RequestBuilder for further customization).
+    /// Build a signed request (returns `RequestBuilder` for further customization).
     async fn build_signed_request<F>(
         &self,
         url: &str,
@@ -506,7 +507,7 @@ impl S3Client {
     {
         let uri = Uri::from_str(url).map_err(|e| FatalError::HttpError {
             status: None,
-            message: format!("Invalid URL: {}", e),
+            message: format!("Invalid URL: {e}"),
         })?;
 
         let mut headers = HeaderMap::new();
@@ -520,7 +521,7 @@ impl S3Client {
             signer::sign_request(credentials, region, "s3", method, &uri, &mut headers).map_err(
                 |e| FatalError::HttpError {
                     status: None,
-                    message: format!("Failed to sign request: {}", e),
+                    message: format!("Failed to sign request: {e}"),
                 },
             )?;
         }
@@ -533,14 +534,14 @@ impl S3Client {
             _ => {
                 return Err(FatalError::HttpError {
                     status: None,
-                    message: format!("Unsupported HTTP method: {:?}", method),
+                    message: format!("Unsupported HTTP method: {method:?}"),
                 });
             }
         };
 
         // Add headers (excluding 'host' which reqwest handles automatically)
         let mut result_builder = request_builder;
-        for (name, value) in headers.iter() {
+        for (name, value) in &headers {
             if let Ok(value_str) = value.to_str()
                 && name.as_str() != "host"
             {
@@ -589,7 +590,7 @@ impl S3Client {
         Ok(())
     }
 
-    /// Helper to insert a header into a HeaderMap with proper error handling.
+    /// Helper to insert a header into a `HeaderMap` with proper error handling.
     fn insert_header(
         headers: &mut HeaderMap,
         name: http::header::HeaderName,
@@ -597,7 +598,7 @@ impl S3Client {
     ) -> Result<(), FatalError> {
         let header_value = HeaderValue::from_str(value).map_err(|e| FatalError::HttpError {
             status: None,
-            message: format!("Invalid {:?} header value: {}", name, e),
+            message: format!("Invalid {name:?} header value: {e}"),
         })?;
         headers.insert(name, header_value);
         Ok(())

@@ -20,16 +20,19 @@ pub enum S3Error {
 
 impl S3Error {
     /// Check if this error is recoverable.
+    #[must_use]
     pub fn is_recoverable(&self) -> bool {
         matches!(self, S3Error::Recoverable(_))
     }
 
     /// Check if this error is fatal.
+    #[must_use]
     pub fn is_fatal(&self) -> bool {
         matches!(self, S3Error::Fatal(_))
     }
 
     /// Get a description of the error context.
+    #[must_use]
     pub fn context(&self) -> &str {
         match self {
             S3Error::Recoverable(err) => err.context(),
@@ -41,8 +44,8 @@ impl S3Error {
 impl fmt::Display for S3Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            S3Error::Recoverable(err) => write!(f, "{}", err),
-            S3Error::Fatal(err) => write!(f, "{}", err),
+            S3Error::Recoverable(err) => write!(f, "{err}"),
+            S3Error::Fatal(err) => write!(f, "{err}"),
         }
     }
 }
@@ -80,6 +83,7 @@ pub enum RecoverableError {
 
 impl RecoverableError {
     /// Get the error context.
+    #[must_use]
     pub fn context(&self) -> &str {
         match self {
             RecoverableError::MessageCorruption { .. } => "message corruption",
@@ -97,6 +101,7 @@ impl RecoverableError {
     }
 
     /// Create an unknown channel error.
+    #[must_use]
     pub fn unknown_channel(channel_id: u16) -> Self {
         RecoverableError::UnknownChannel { channel_id }
     }
@@ -114,13 +119,13 @@ impl fmt::Display for RecoverableError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             RecoverableError::MessageCorruption { offset, error } => {
-                write!(f, "Message corruption at offset {}: {}", offset, error)
+                write!(f, "Message corruption at offset {offset}: {error}")
             }
             RecoverableError::UnknownChannel { channel_id } => {
-                write!(f, "Unknown channel: {}", channel_id)
+                write!(f, "Unknown channel: {channel_id}")
             }
             RecoverableError::ParseError { record_type, error } => {
-                write!(f, "Parse error in {} record: {}", record_type, error)
+                write!(f, "Parse error in {record_type} record: {error}")
             }
         }
     }
@@ -195,6 +200,7 @@ pub enum FatalError {
 
 impl FatalError {
     /// Get the error context.
+    #[must_use]
     pub fn context(&self) -> &str {
         match self {
             FatalError::AccessDenied { .. } => "access denied",
@@ -226,11 +232,13 @@ impl FatalError {
     }
 
     /// Create an invalid format error.
+    #[must_use]
     pub fn invalid_format(expected: &'static str, found: Vec<u8>) -> Self {
         FatalError::InvalidFormat { expected, found }
     }
 
     /// Create a memory limit exceeded error.
+    #[must_use]
     pub fn memory_limit_exceeded(requested: usize, limit: usize) -> Self {
         FatalError::MemoryLimitExceeded { requested, limit }
     }
@@ -276,48 +284,43 @@ impl fmt::Display for FatalError {
                 details,
             } => {
                 if details.is_empty() {
-                    write!(f, "Access denied to s3://{}/{}", bucket, key)
+                    write!(f, "Access denied to s3://{bucket}/{key}")
                 } else {
-                    write!(f, "Access denied to s3://{}/{}: {}", bucket, key, details)
+                    write!(f, "Access denied to s3://{bucket}/{key}: {details}")
                 }
             }
             FatalError::ObjectNotFound { bucket, key } => {
-                write!(f, "Object not found: s3://{}/{}", bucket, key)
+                write!(f, "Object not found: s3://{bucket}/{key}")
             }
             FatalError::InvalidFormat { expected, found } => {
                 let preview = if found.len() <= 8 {
-                    format!("{:?}", found)
+                    format!("{found:?}")
                 } else {
                     format!("{:?}...", &found[..8])
                 };
-                write!(
-                    f,
-                    "Invalid format: expected {}, found {}",
-                    expected, preview
-                )
+                write!(f, "Invalid format: expected {expected}, found {preview}")
             }
             FatalError::MemoryLimitExceeded { requested, limit } => {
                 write!(
                     f,
-                    "Memory limit exceeded: requested {} bytes, limit is {} bytes",
-                    requested, limit
+                    "Memory limit exceeded: requested {requested} bytes, limit is {limit} bytes"
                 )
             }
             FatalError::HttpError { status, message } => {
                 if let Some(code) = status {
-                    write!(f, "HTTP error {}: {}", code, message)
+                    write!(f, "HTTP error {code}: {message}")
                 } else {
-                    write!(f, "HTTP error: {}", message)
+                    write!(f, "HTTP error: {message}")
                 }
             }
             FatalError::IoError { message } => {
-                write!(f, "IO error: {}", message)
+                write!(f, "IO error: {message}")
             }
             FatalError::ConfigError { message } => {
-                write!(f, "Configuration error: {}", message)
+                write!(f, "Configuration error: {message}")
             }
             FatalError::CredentialsError { message } => {
-                write!(f, "AWS credentials error: {}", message)
+                write!(f, "AWS credentials error: {message}")
             }
         }
     }

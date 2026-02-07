@@ -55,6 +55,16 @@ pub struct CodecFactory {
 
 impl CodecFactory {
     /// Create a new codec factory with all supported codecs.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use robocodec::encoding::CodecFactory;
+    ///
+    /// let factory = CodecFactory::new();
+    /// # let _ = factory;
+    /// ```
+    #[must_use]
     pub fn new() -> Self {
         let mut codecs: HashMap<Encoding, Box<dyn DynCodec>> = HashMap::new();
 
@@ -76,17 +86,43 @@ impl CodecFactory {
     /// # Returns
     ///
     /// A reference to the codec, or an error if the encoding is not supported
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use robocodec::encoding::CodecFactory;
+    /// use robocodec::Encoding;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let factory = CodecFactory::new();
+    /// let codec = factory.get_codec(Encoding::Cdr)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn get_codec(&self, encoding: Encoding) -> Result<&dyn DynCodec> {
         let encoding_str = format!("encoding: {encoding:?}");
         self.codecs
             .get(&encoding)
-            .map(|b| b.as_ref())
+            .map(std::convert::AsRef::as_ref)
             .ok_or_else(move || CodecError::unsupported(&encoding_str))
     }
 
     /// Get a mutable codec for the specified encoding.
     ///
     /// This is used for encode operations which may modify internal state.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use robocodec::encoding::CodecFactory;
+    /// use robocodec::Encoding;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut factory = CodecFactory::new();
+    /// let codec = factory.get_codec_mut(Encoding::Cdr)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn get_codec_mut(&mut self, encoding: Encoding) -> Result<&mut Box<dyn DynCodec>> {
         let encoding_str = format!("encoding: {encoding:?}");
         self.codecs
@@ -104,6 +140,7 @@ impl CodecFactory {
     /// # Returns
     ///
     /// Detected `Encoding` type
+    #[must_use]
     pub fn detect_encoding(&self, encoding_str: &str, schema_encoding: Option<&str>) -> Encoding {
         let encoding_lower = encoding_str.to_lowercase();
 

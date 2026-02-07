@@ -2196,7 +2196,6 @@ dependencies = [
 name = "robocodec"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "aws-config",
  "aws-credential-types",
@@ -2206,7 +2205,6 @@ dependencies = [
  "bytes",
  "bzip2",
  "chrono",
- "clap",
  "crc32fast",
  "criterion",
  "crossbeam",
@@ -2216,8 +2214,6 @@ dependencies = [
  "hex",
  "hmac",
  "http 1.4.0",
- "human-size",
- "indicatif",
  "libc",
  "lz4_flex",
  "mcap",
@@ -2250,6 +2246,20 @@ dependencies = [
  "uuid",
  "wiremock",
  "zstd",
+]
+
+[[package]]
+name = "robocodec-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "human-size",
+ "indicatif",
+ "robocodec",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

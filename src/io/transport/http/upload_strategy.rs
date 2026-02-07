@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! HTTP upload strategy for HttpWriter.
+//! HTTP upload strategy for `HttpWriter`.
 //!
 //! This module defines the upload strategies available for HTTP/HTTPS write operations.
 //! Different strategies offer trade-offs between efficiency, compatibility, and memory usage.
@@ -14,14 +14,14 @@
 ///
 /// # Variants
 ///
-/// * **SinglePut** - Upload entire file in a single PUT request. Simple but requires
+/// * **`SinglePut`** - Upload entire file in a single PUT request. Simple but requires
 ///   the entire file to be in memory. Suitable for small files (< 10MB).
 ///
-/// * **ChunkedPut** - Upload file in chunks using multiple PUT requests with Content-Range
+/// * **`ChunkedPut`** - Upload file in chunks using multiple PUT requests with Content-Range
 ///   headers. Server must support HTTP Range requests. Most efficient for large files
 ///   while maintaining broad compatibility.
 ///
-/// * **ChunkedEncoding** - Upload using Transfer-Encoding: chunked. Most memory-efficient
+/// * **`ChunkedEncoding`** - Upload using Transfer-Encoding: chunked. Most memory-efficient
 ///   as data streams directly to the server without buffering. Server support varies
 ///   significantly across implementations.
 ///
@@ -113,24 +113,27 @@ impl std::fmt::Display for HttpUploadStrategy {
 impl HttpUploadStrategy {
     /// Check if this strategy requires server Range request support.
     ///
-    /// Returns true for ChunkedPut, which needs the server to accept and
+    /// Returns true for `ChunkedPut`, which needs the server to accept and
     /// process Content-Range headers.
+    #[must_use]
     pub fn requires_range_support(&self) -> bool {
         matches!(self, Self::ChunkedPut)
     }
 
     /// Check if this strategy streams data (no full buffering).
     ///
-    /// Returns true for ChunkedEncoding, which streams data without
+    /// Returns true for `ChunkedEncoding`, which streams data without
     /// buffering the entire file in memory.
+    #[must_use]
     pub fn is_streaming(&self) -> bool {
         matches!(self, Self::ChunkedEncoding)
     }
 
     /// Get the recommended chunk size for this strategy.
     ///
-    /// Returns the recommended chunk size in bytes. For SinglePut,
+    /// Returns the recommended chunk size in bytes. For `SinglePut`,
     /// this returns the maximum recommended file size.
+    #[must_use]
     pub fn recommended_chunk_size(&self) -> usize {
         match self {
             // SinglePut: Return maximum recommended file size (10MB)

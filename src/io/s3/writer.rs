@@ -72,7 +72,7 @@ pub struct S3Writer {
     part_size: usize,
     /// Upload ID for multipart upload (None until first part is uploaded)
     upload_id: Option<String>,
-    /// List of uploaded parts (part_number, etag)
+    /// List of uploaded parts (`part_number`, etag)
     parts: Vec<(u32, String)>,
     /// Next part number to upload
     next_part_number: u32,
@@ -124,7 +124,7 @@ impl S3Writer {
         if part_size < MIN_PART_SIZE {
             return Err(CodecError::parse(
                 "S3Writer",
-                format!("Part size must be at least {} bytes", MIN_PART_SIZE),
+                format!("Part size must be at least {MIN_PART_SIZE} bytes"),
             ));
         }
         Ok(Self {
@@ -208,6 +208,7 @@ impl S3Writer {
     }
 
     /// Get the S3 location.
+    #[must_use]
     pub fn location(&self) -> &S3Location {
         &self.location
     }
@@ -235,7 +236,7 @@ impl FormatWriter for S3Writer {
             topic: topic.to_string(),
             message_type: message_type.to_string(),
             encoding: encoding.to_string(),
-            schema: schema.map(|s| s.to_string()),
+            schema: schema.map(std::string::ToString::to_string),
             schema_data: None,
             schema_encoding: None,
             message_count: 0,

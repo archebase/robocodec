@@ -51,13 +51,11 @@ fn validate_bucket_name(bucket: &str) -> Result<(), S3UrlParseError> {
     if bucket
         .bytes()
         .next()
-        .map(|b| !b.is_ascii_alphanumeric())
-        .unwrap_or(false)
+        .is_some_and(|b| !b.is_ascii_alphanumeric())
         || bucket
             .bytes()
             .last()
-            .map(|b| !b.is_ascii_alphanumeric())
-            .unwrap_or(false)
+            .is_some_and(|b| !b.is_ascii_alphanumeric())
     {
         return Err(S3UrlParseError::InvalidBucketName);
     }
@@ -180,7 +178,7 @@ impl S3Location {
 
     /// Set a custom S3 endpoint URL.
     ///
-    /// This is useful for S3-compatible services like MinIO or Cloudflare R2.
+    /// This is useful for S3-compatible services like `MinIO` or Cloudflare R2.
     ///
     /// # Security
     ///
@@ -210,21 +208,25 @@ impl S3Location {
     }
 
     /// Get the bucket name.
+    #[must_use]
     pub fn bucket(&self) -> &str {
         &self.bucket
     }
 
     /// Get the object key.
+    #[must_use]
     pub fn key(&self) -> &str {
         &self.key
     }
 
     /// Get the region, if set.
+    #[must_use]
     pub fn region(&self) -> Option<&str> {
         self.region.as_deref()
     }
 
     /// Get the custom endpoint, if set.
+    #[must_use]
     pub fn endpoint(&self) -> Option<&str> {
         self.endpoint.as_deref()
     }
@@ -234,6 +236,7 @@ impl S3Location {
     /// The URL format depends on whether a custom endpoint is set:
     /// - Default: `https://{bucket}.s3.{region}.amazonaws.com/{key}`
     /// - Custom endpoint: `{endpoint}/{bucket}/{key}`
+    #[must_use]
     pub fn url(&self) -> String {
         if let Some(endpoint) = &self.endpoint {
             // Custom endpoint (MinIO, R2, etc.)
@@ -255,15 +258,15 @@ impl S3Location {
         }
     }
 
-    /// Create an S3Location from an s3:// URL.
+    /// Create an `S3Location` from an s3:// URL.
     ///
     /// Supports formats:
     /// - `s3://{bucket}/{key}`
-    /// - `s3://{bucket}/{key}?endpoint={custom_endpoint}` (for MinIO, Alibaba OSS, etc.)
+    /// - `s3://{bucket}/{key}?endpoint={custom_endpoint}` (for `MinIO`, Alibaba OSS, etc.)
     /// - `s3://{bucket}/{key}?region={region}` (explicit region)
     ///
     /// The endpoint query parameter is useful for S3-compatible services:
-    /// - MinIO: `s3://bucket/key?endpoint=http://localhost:9000`
+    /// - `MinIO`: `s3://bucket/key?endpoint=http://localhost:9000`
     /// - Alibaba OSS: `s3://bucket/key?endpoint=https://oss-cn-hangzhou.aliyuncs.com`
     ///
     /// # Example
@@ -321,7 +324,7 @@ impl S3Location {
                 let decoded = percent_encoding::percent_decode_str(value)
                     .decode_utf8()
                     .ok()
-                    .map(|v| v.into_owned());
+                    .map(std::borrow::Cow::into_owned);
                 match (key, decoded) {
                     ("endpoint", Some(value)) if !value.is_empty() => endpoint = Some(value),
                     ("region", Some(value)) if !value.is_empty() => region = Some(value),
@@ -358,6 +361,7 @@ impl S3Location {
     /// let location = S3Location::new("bucket", "path/to/file.mcap");
     /// assert_eq!(location.extension(), Some("mcap"));
     /// ```
+    #[must_use]
     pub fn extension(&self) -> Option<&str> {
         // Find the last dot in the key
         let dot_pos = self.key.rfind('.')?;
@@ -382,16 +386,19 @@ impl S3Location {
     }
 
     /// Check if this location points to an MCAP file.
+    #[must_use]
     pub fn is_mcap(&self) -> bool {
         self.extension() == Some("mcap")
     }
 
     /// Check if this location points to an RRD file.
+    #[must_use]
     pub fn is_rrd(&self) -> bool {
         self.extension() == Some("rrd")
     }
 
     /// Check if this location points to a BAG file.
+    #[must_use]
     pub fn is_bag(&self) -> bool {
         self.extension() == Some("bag")
     }

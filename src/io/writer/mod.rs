@@ -44,11 +44,11 @@ pub struct RoboWriter {
 impl RoboWriter {
     /// Create a new writer with automatic format detection based on file extension.
     ///
-    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    /// Supports both local file paths and S3 URLs (<s3://bucket/key>).
     ///
     /// # Arguments
     ///
-    /// * `path` - Path to the output file, or S3 URL (s3://bucket/key)
+    /// * `path` - Path to the output file, or S3 URL (<s3://bucket/key>)
     ///
     /// # Example
     ///
@@ -68,11 +68,11 @@ impl RoboWriter {
 
     /// Create a writer with the specified configuration.
     ///
-    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    /// Supports both local file paths and S3 URLs (<s3://bucket/key>).
     ///
     /// # Arguments
     ///
-    /// * `path` - Path to the output file, or S3 URL (s3://bucket/key)
+    /// * `path` - Path to the output file, or S3 URL (<s3://bucket/key>)
     /// * `config` - Writer configuration
     ///
     /// # Example
@@ -161,8 +161,7 @@ impl RoboWriter {
                         return Err(CodecError::parse(
                             "RoboWriter",
                             format!(
-                                "Unknown file format. Use .mcap, .bag, or .rrd extension: {}",
-                                path
+                                "Unknown file format. Use .mcap, .bag, or .rrd extension: {path}"
                             ),
                         ));
                     }
@@ -176,7 +175,7 @@ impl RoboWriter {
     /// Create a writer for HTTP/HTTPS URLs.
     ///
     /// This method is called by `create_with_config` when an HTTP/HTTPS URL is detected.
-    /// It handles authentication configuration from the WriterConfig.
+    /// It handles authentication configuration from the `WriterConfig`.
     ///
     /// # Arguments
     ///
@@ -206,10 +205,10 @@ impl RoboWriter {
         })
     }
 
-    /// Resolve HTTP authentication from WriterConfig.
+    /// Resolve HTTP authentication from `WriterConfig`.
     ///
-    /// Returns HttpAuth if any authentication is configured in the WriterConfig.
-    /// This allows authentication to be set via WriterConfig instead of URL parameters.
+    /// Returns `HttpAuth` if any authentication is configured in the `WriterConfig`.
+    /// This allows authentication to be set via `WriterConfig` instead of URL parameters.
     #[cfg(feature = "remote")]
     fn resolve_http_auth(config: &WriterConfig) -> Option<HttpAuth> {
         let http_auth = &config.http_auth;
@@ -232,6 +231,7 @@ impl RoboWriter {
     }
 
     /// Get the file format being written.
+    #[must_use]
     pub fn format(&self) -> FileFormat {
         // Determine from path extension
         match self.path().rsplit('.').next() {
@@ -243,6 +243,7 @@ impl RoboWriter {
     }
 
     /// Downcast to the inner writer for format-specific operations.
+    #[must_use]
     pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
         self.inner.as_any().downcast_ref::<T>()
     }

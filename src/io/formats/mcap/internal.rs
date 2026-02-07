@@ -8,9 +8,9 @@
 
 use std::collections::BTreeMap;
 
-/// Message index entry for MCAP MessageIndex records.
+/// Message index entry for MCAP `MessageIndex` records.
 ///
-/// Each entry records the log_time and offset of a message within the
+/// Each entry records the `log_time` and offset of a message within the
 /// uncompressed chunk data, enabling time-based random access.
 #[derive(Debug, Clone)]
 pub struct MessageIndexEntry {
@@ -32,16 +32,16 @@ pub struct CompressedChunk {
     pub compressed_data: Vec<u8>,
     /// Uncompressed size
     pub uncompressed_size: usize,
-    /// Message start time (earliest log_time)
+    /// Message start time (earliest `log_time`)
     pub message_start_time: u64,
-    /// Message end time (latest log_time)
+    /// Message end time (latest `log_time`)
     pub message_end_time: u64,
     /// Number of messages in this chunk
     pub message_count: usize,
     /// Compression ratio (compressed / uncompressed)
     pub compression_ratio: f64,
-    /// Message indexes by channel ID for MCAP MessageIndex records.
-    /// Maps channel_id -> list of (log_time, offset) entries.
+    /// Message indexes by channel ID for MCAP `MessageIndex` records.
+    /// Maps `channel_id` -> list of (`log_time`, offset) entries.
     pub message_indexes: BTreeMap<u16, Vec<MessageIndexEntry>>,
 }
 

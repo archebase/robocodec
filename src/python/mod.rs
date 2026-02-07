@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Python bindings via PyO3.
+//! Python bindings via `PyO3`.
 //!
-//! This module provides Python 3.11+ bindings for robocodec using PyO3.
+//! This module provides Python 3.11+ bindings for robocodec using `PyO3`.
 //!
 //! # Python API
 //!

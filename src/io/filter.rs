@@ -47,6 +47,7 @@ impl fmt::Debug for TopicFilter {
 
 impl TopicFilter {
     /// Check if a topic should be included.
+    #[must_use]
     pub fn should_include(&self, topic: &str) -> bool {
         match self {
             TopicFilter::All => true,
@@ -59,11 +60,13 @@ impl TopicFilter {
     }
 
     /// Create an include filter from topic names.
+    #[must_use]
     pub fn include(topics: Vec<String>) -> Self {
         Self::Include(topics)
     }
 
     /// Create an exclude filter from topic names.
+    #[must_use]
     pub fn exclude(topics: Vec<String>) -> Self {
         Self::Exclude(topics)
     }
@@ -98,6 +101,7 @@ pub struct ChannelFilter {
 
 impl ChannelFilter {
     /// Create a channel filter from topic filter and channel info.
+    #[must_use]
     pub fn from_topic_filter(filter: &TopicFilter, channels: &HashMap<u16, ChannelInfo>) -> Self {
         let mut allowed_channels = HashSet::new();
         let mut topic_to_channels: HashMap<String, Vec<u16>> = HashMap::new();
@@ -119,6 +123,7 @@ impl ChannelFilter {
     }
 
     /// Create a filter that includes all channels.
+    #[must_use]
     pub fn all(channels: &HashMap<u16, ChannelInfo>) -> Self {
         let mut allowed_channels = HashSet::new();
         let mut topic_to_channels: HashMap<String, Vec<u16>> = HashMap::new();
@@ -138,21 +143,23 @@ impl ChannelFilter {
     }
 
     /// Check if a channel ID is allowed.
+    #[must_use]
     pub fn allows_channel(&self, channel_id: u16) -> bool {
         self.allowed_channels.contains(&channel_id)
     }
 
     /// Get the number of allowed channels.
+    #[must_use]
     pub fn channel_count(&self) -> usize {
         self.allowed_channels.len()
     }
 
     /// Get all channel IDs for a topic.
+    #[must_use]
     pub fn channels_for_topic(&self, topic: &str) -> &[u16] {
         self.topic_to_channels
             .get(topic)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map_or(&[], std::vec::Vec::as_slice)
     }
 }
 

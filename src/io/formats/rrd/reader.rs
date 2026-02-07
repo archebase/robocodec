@@ -23,7 +23,10 @@ use crate::io::writer::WriterConfig;
 use crate::io::{ChannelInfo, FormatWriter, TimestampedDecodedMessage};
 
 use super::arrow_msg::ArrowMsg;
-use super::constants::*;
+use super::constants::{
+    COMPRESSION_LZ4, COMPRESSION_OFF, DEFAULT_TOPIC, MESSAGE_ENCODING_PROTOBUF, RRD_MAGIC,
+    RRD_MIN_VERSION, RRD_VERSION, SERIALIZER_MSGPACK, SERIALIZER_PROTOBUF,
+};
 use super::parallel::ParallelRrdReader;
 
 /// RRD format type.
@@ -42,7 +45,7 @@ impl RrdFormat {
 
     /// Create an RRD writer with the given configuration.
     ///
-    /// Returns a boxed FormatWriter trait object for unified writer API.
+    /// Returns a boxed `FormatWriter` trait object for unified writer API.
     pub fn create_writer<P: AsRef<Path>>(
         path: P,
         _config: &WriterConfig,
@@ -81,22 +84,19 @@ impl RrdHeader {
         let mut magic = [0u8; 4];
         reader
             .read_exact(&mut magic)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read magic: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read magic: {e}")))?;
 
         if magic != *RRD_MAGIC {
             return Err(CodecError::parse(
                 "RRD",
-                format!(
-                    "Invalid magic number: expected {:?}, got {:?}",
-                    RRD_MAGIC, magic
-                ),
+                format!("Invalid magic number: expected {RRD_MAGIC:?}, got {magic:?}"),
             ));
         }
 
         let mut version = [0u8; 4];
         reader
             .read_exact(&mut version)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read version: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read version: {e}")))?;
 
         // Validate version - reject clearly incompatible versions
         // Version [0, 0, 0, 0] indicates an unversioned/incompatible file
@@ -104,9 +104,8 @@ impl RrdHeader {
             return Err(CodecError::parse(
                 "RRD",
                 format!(
-                    "Incompatible RRD version: {:?}. This file appears to be from an old or incompatible Rerun version. \
-                    Please regenerate the file with a newer version of Rerun, or use Rerun's tools to convert the data.",
-                    version
+                    "Incompatible RRD version: {version:?}. This file appears to be from an old or incompatible Rerun version. \
+                    Please regenerate the file with a newer version of Rerun, or use Rerun's tools to convert the data."
                 ),
             ));
         }
@@ -125,7 +124,7 @@ impl RrdHeader {
         let mut options = [0u8; 4];
         reader
             .read_exact(&mut options)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read options: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read options: {e}")))?;
 
         let compression = options[0];
         let serializer = options[1];
@@ -197,18 +196,18 @@ impl RrdReader {
         if !path_obj.exists() {
             return Err(CodecError::parse(
                 "RRD",
-                format!("File not found: {}", path_str),
+                format!("File not found: {path_str}"),
             ));
         }
 
         // Get file size
         let file_size = std::fs::metadata(path_obj)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to get metadata: {}", e)))?
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to get metadata: {e}")))?
             .len();
 
         // Open file and read header
         let file = std::fs::File::open(path_obj)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to open file: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to open file: {e}")))?;
 
         let mut reader = BufReader::new(file);
         let header = RrdHeader::read(&mut reader)?;
@@ -266,31 +265,37 @@ impl RrdReader {
     }
 
     /// Get all channel information.
+    #[must_use]
     pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }
 
     /// Get channel info by topic name.
+    #[must_use]
     pub fn channel_by_topic(&self, topic: &str) -> Option<&ChannelInfo> {
         self.channels.values().find(|c| c.topic == topic)
     }
 
     /// Get total message count.
+    #[must_use]
     pub fn message_count(&self) -> u64 {
         self.message_count
     }
 
     /// Get start timestamp in nanoseconds.
+    #[must_use]
     pub fn start_time(&self) -> Option<u64> {
         self.start_time
     }
 
     /// Get end timestamp in nanoseconds.
+    #[must_use]
     pub fn end_time(&self) -> Option<u64> {
         self.end_time
     }
 
     /// Get the file path.
+    #[must_use]
     pub fn path(&self) -> &str {
         &self.path
     }
@@ -322,11 +327,13 @@ impl RrdReader {
     ///
     /// RRF2 doesn't use chunk-based indexing like legacy RRD formats.
     /// This method returns 0 to indicate no chunk information is available.
+    #[must_use]
     pub fn chunk_count(&self) -> usize {
         0
     }
 
     /// Get the RRD header.
+    #[must_use]
     pub fn header(&self) -> &RrdHeader {
         &self.header
     }
@@ -374,6 +381,14 @@ impl FormatReader for RrdReader {
         self.file_size
     }
 
+    fn decoded_with_timestamp_boxed(
+        &self,
+    ) -> Result<Box<dyn crate::io::traits::DecodedMessageIterator + Send + Sync + '_>> {
+        let iter = self.decode_messages_with_timestamp()?;
+        let stream = iter.stream()?;
+        Ok(Box::new(stream))
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -414,12 +429,12 @@ impl<'a> DecodedMessageIter<'a> {
         };
 
         let mut file = std::fs::File::open(&reader.path)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to open file: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to open file: {e}")))?;
 
         // Skip stream header (STREAM_HEADER_SIZE bytes)
         let mut header_buf = vec![0u8; STREAM_HEADER_SIZE];
         file.read_exact(&mut header_buf)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read header: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read header: {e}")))?;
 
         // Verify magic
         if &header_buf[0..4] != RRD_MAGIC {
@@ -434,7 +449,7 @@ impl<'a> DecodedMessageIter<'a> {
 
         // Read remaining file data
         file.read_to_end(&mut data_buf)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read data: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read data: {e}")))?;
 
         let mut pos = 0;
 
@@ -498,7 +513,7 @@ impl<'a> DecodedMessageIter<'a> {
     }
 }
 
-impl<'a> Iterator for DecodedMessageIter<'a> {
+impl Iterator for DecodedMessageIter<'_> {
     type Item = Result<(DecodedMessage, ChannelInfo)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -574,12 +589,12 @@ impl<'a> DecodedMessageWithTimestampIter<'a> {
         };
 
         let mut file = std::fs::File::open(&reader.path)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to open file: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to open file: {e}")))?;
 
         // Skip stream header (STREAM_HEADER_SIZE bytes)
         let mut header_buf = vec![0u8; STREAM_HEADER_SIZE];
         file.read_exact(&mut header_buf)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read header: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read header: {e}")))?;
 
         // Verify magic
         if &header_buf[0..4] != RRD_MAGIC {
@@ -594,7 +609,7 @@ impl<'a> DecodedMessageWithTimestampIter<'a> {
 
         // Read remaining file data
         file.read_to_end(&mut data_buf)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to read data: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to read data: {e}")))?;
 
         let mut pos = 0;
 
@@ -701,7 +716,7 @@ impl<'a> DecodedMessageWithTimestampIter<'a> {
     }
 }
 
-impl<'a> Iterator for DecodedMessageWithTimestampIter<'a> {
+impl Iterator for DecodedMessageWithTimestampIter<'_> {
     type Item = Result<(TimestampedDecodedMessage, ChannelInfo)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -759,6 +774,11 @@ pub type DecodedMessageWithTimestampStream<'a> =
 mod tests {
     use super::*;
     use std::io::Write;
+
+    use crate::io::formats::rrd::constants::{
+        COMPRESSION_LZ4, COMPRESSION_OFF, MSG_KIND_END, MSG_KIND_SET_STORE_INFO, RRD_FOOTER_MAGIC,
+        RRD_MAGIC, RRD_VERSION, SERIALIZER_MSGPACK, SERIALIZER_PROTOBUF, STREAM_FOOTER_SIZE,
+    };
 
     #[test]
     fn test_rrd_magic() {

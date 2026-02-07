@@ -169,15 +169,15 @@ impl CodecValue {
     #[must_use]
     pub fn as_f64(&self) -> Option<f64> {
         match self {
-            CodecValue::Int8(v) => Some(*v as f64),
-            CodecValue::Int16(v) => Some(*v as f64),
-            CodecValue::Int32(v) => Some(*v as f64),
+            CodecValue::Int8(v) => Some(f64::from(*v)),
+            CodecValue::Int16(v) => Some(f64::from(*v)),
+            CodecValue::Int32(v) => Some(f64::from(*v)),
             CodecValue::Int64(v) => Some(*v as f64),
-            CodecValue::UInt8(v) => Some(*v as f64),
-            CodecValue::UInt16(v) => Some(*v as f64),
-            CodecValue::UInt32(v) => Some(*v as f64),
+            CodecValue::UInt8(v) => Some(f64::from(*v)),
+            CodecValue::UInt16(v) => Some(f64::from(*v)),
+            CodecValue::UInt32(v) => Some(f64::from(*v)),
             CodecValue::UInt64(v) => Some(*v as f64),
-            CodecValue::Float32(v) => Some(*v as f64),
+            CodecValue::Float32(v) => Some(f64::from(*v)),
             CodecValue::Float64(v) => Some(*v),
             _ => None,
         }
@@ -187,15 +187,15 @@ impl CodecValue {
     #[must_use]
     pub fn as_i64(&self) -> Option<i64> {
         match self {
-            CodecValue::Int8(v) => Some(*v as i64),
-            CodecValue::Int16(v) => Some(*v as i64),
-            CodecValue::Int32(v) => Some(*v as i64),
+            CodecValue::Int8(v) => Some(i64::from(*v)),
+            CodecValue::Int16(v) => Some(i64::from(*v)),
+            CodecValue::Int32(v) => Some(i64::from(*v)),
             CodecValue::Int64(v) => Some(*v),
-            CodecValue::UInt8(v) => Some(*v as i64),
-            CodecValue::UInt16(v) => Some(*v as i64),
-            CodecValue::UInt32(v) => Some(*v as i64),
+            CodecValue::UInt8(v) => Some(i64::from(*v)),
+            CodecValue::UInt16(v) => Some(i64::from(*v)),
+            CodecValue::UInt32(v) => Some(i64::from(*v)),
             CodecValue::UInt64(v) => {
-                if *v <= i64::MAX as u64 {
+                if i64::try_from(*v).is_ok() {
                     Some(*v as i64)
                 } else {
                     None
@@ -209,9 +209,9 @@ impl CodecValue {
     #[must_use]
     pub fn as_u64(&self) -> Option<u64> {
         match self {
-            CodecValue::UInt8(v) => Some(*v as u64),
-            CodecValue::UInt16(v) => Some(*v as u64),
-            CodecValue::UInt32(v) => Some(*v as u64),
+            CodecValue::UInt8(v) => Some(u64::from(*v)),
+            CodecValue::UInt16(v) => Some(u64::from(*v)),
+            CodecValue::UInt32(v) => Some(u64::from(*v)),
             CodecValue::UInt64(v) => Some(*v),
             CodecValue::Int8(v) => {
                 if *v >= 0 {
@@ -347,22 +347,25 @@ impl CodecValue {
     /// Estimate the in-memory size of this value in bytes.
     ///
     /// This is an approximation for memory usage tracking.
-    /// Does not include HashMap overhead for structs.
+    /// Does not include `HashMap` overhead for structs.
     #[must_use]
     pub fn size_hint(&self) -> usize {
         match self {
             CodecValue::Bool(_) | CodecValue::Int8(_) | CodecValue::UInt8(_) => 1,
             CodecValue::Int16(_) | CodecValue::UInt16(_) => 2,
             CodecValue::Int32(_) | CodecValue::UInt32(_) | CodecValue::Float32(_) => 4,
-            CodecValue::Int64(_) | CodecValue::UInt64(_) | CodecValue::Float64(_) => 8,
-            CodecValue::Timestamp(_) | CodecValue::Duration(_) => 8,
+            CodecValue::Int64(_)
+            | CodecValue::UInt64(_)
+            | CodecValue::Float64(_)
+            | CodecValue::Timestamp(_)
+            | CodecValue::Duration(_) => 8,
             CodecValue::String(s) => s.len(),
             CodecValue::Bytes(b) => b.len(),
             CodecValue::Null => 0,
             CodecValue::Array(arr) => {
-                arr.iter().map(|v| v.size_hint()).sum::<usize>() + (arr.len() * 8)
+                arr.iter().map(CodecValue::size_hint).sum::<usize>() + (arr.len() * 8)
             }
-            CodecValue::Struct(map) => map.values().map(|v| v.size_hint()).sum::<usize>(),
+            CodecValue::Struct(map) => map.values().map(CodecValue::size_hint).sum::<usize>(),
         }
     }
 
@@ -375,16 +378,16 @@ impl CodecValue {
     /// Common in ROS1 time representation.
     #[must_use]
     pub fn timestamp_from_secs_nanos(secs: u32, nanos: u32) -> Self {
-        let total_nanos = (secs as i64) * 1_000_000_000 + (nanos as i64);
+        let total_nanos = i64::from(secs) * 1_000_000_000 + i64::from(nanos);
         CodecValue::Timestamp(total_nanos)
     }
 
     /// Create a timestamp from signed seconds and unsigned nanoseconds.
     ///
-    /// Common in ROS2 time representation (builtin_interfaces/Time).
+    /// Common in ROS2 time representation (`builtin_interfaces/Time`).
     #[must_use]
     pub fn timestamp_from_signed_secs_nanos(secs: i32, nanos: u32) -> Self {
-        let total_nanos = (secs as i64) * 1_000_000_000 + (nanos as i64);
+        let total_nanos = i64::from(secs) * 1_000_000_000 + i64::from(nanos);
         CodecValue::Timestamp(total_nanos)
     }
 
@@ -393,7 +396,7 @@ impl CodecValue {
     /// Supports negative durations.
     #[must_use]
     pub fn duration_from_secs_nanos(secs: i32, nanos: i32) -> Self {
-        let total_nanos = (secs as i64) * 1_000_000_000 + (nanos as i64);
+        let total_nanos = i64::from(secs) * 1_000_000_000 + i64::from(nanos);
         CodecValue::Duration(total_nanos)
     }
 
@@ -411,7 +414,7 @@ impl CodecValue {
 
     /// Create a Timestamp from ROS2 Time (sec: i32, nanosec: u32).
     ///
-    /// ROS2 builtin_interfaces/Time uses signed 32-bit seconds
+    /// ROS2 `builtin_interfaces/Time` uses signed 32-bit seconds
     /// and unsigned 32-bit nanoseconds.
     #[must_use]
     pub fn from_ros2_time(sec: i32, nanosec: u32) -> Self {
@@ -428,11 +431,11 @@ impl CodecValue {
 
     /// Create a Duration from ROS2 Duration (sec: i32, nanosec: u32).
     ///
-    /// ROS2 builtin_interfaces/Duration uses signed 32-bit seconds
+    /// ROS2 `builtin_interfaces/Duration` uses signed 32-bit seconds
     /// and unsigned 32-bit nanoseconds.
     #[must_use]
     pub fn from_ros2_duration(sec: i32, nanosec: u32) -> Self {
-        let total_nanos = (sec as i64) * 1_000_000_000 + (nanosec as i64);
+        let total_nanos = i64::from(sec) * 1_000_000_000 + i64::from(nanosec);
         CodecValue::Duration(total_nanos)
     }
 }
@@ -496,7 +499,7 @@ pub enum PrimitiveType {
     Float64,
     /// String
     String,
-    /// Byte (alias for UInt8)
+    /// Byte (alias for `UInt8`)
     Byte,
 }
 
@@ -505,14 +508,14 @@ impl PrimitiveType {
     #[must_use]
     pub const fn alignment(self) -> u64 {
         match self {
-            PrimitiveType::Bool
-            | PrimitiveType::Int8
-            | PrimitiveType::UInt8
-            | PrimitiveType::Byte => 1,
+            PrimitiveType::Bool => 1,
+            PrimitiveType::Int8 | PrimitiveType::UInt8 | PrimitiveType::Byte => 1,
             PrimitiveType::Int16 | PrimitiveType::UInt16 => 2,
-            PrimitiveType::Int32 | PrimitiveType::UInt32 | PrimitiveType::Float32 => 4,
+            PrimitiveType::Int32
+            | PrimitiveType::UInt32
+            | PrimitiveType::Float32
+            | PrimitiveType::String => 4,
             PrimitiveType::Int64 | PrimitiveType::UInt64 | PrimitiveType::Float64 => 8,
-            PrimitiveType::String => 4, // Length prefix is 4-byte aligned
         }
     }
 
@@ -520,8 +523,10 @@ impl PrimitiveType {
     #[must_use]
     pub const fn size(self) -> Option<usize> {
         match self {
-            PrimitiveType::Bool => Some(1),
-            PrimitiveType::Int8 | PrimitiveType::UInt8 | PrimitiveType::Byte => Some(1),
+            PrimitiveType::Bool
+            | PrimitiveType::Int8
+            | PrimitiveType::UInt8
+            | PrimitiveType::Byte => Some(1),
             PrimitiveType::Int16 | PrimitiveType::UInt16 => Some(2),
             PrimitiveType::Int32 | PrimitiveType::UInt32 | PrimitiveType::Float32 => Some(4),
             PrimitiveType::Int64 | PrimitiveType::UInt64 | PrimitiveType::Float64 => Some(8),

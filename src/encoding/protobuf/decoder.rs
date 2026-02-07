@@ -34,6 +34,7 @@ pub struct ProtobufDecoder {
 
 impl ProtobufDecoder {
     /// Create a new Protobuf decoder.
+    #[must_use]
     pub fn new() -> Self {
         Self { _private: () }
     }
@@ -41,8 +42,8 @@ impl ProtobufDecoder {
     /// Decode a protobuf message from raw bytes.
     ///
     /// This method provides basic protobuf parsing without requiring
-    /// a FileDescriptorSet. It decodes the wire format into a generic
-    /// CodecValue structure.
+    /// a `FileDescriptorSet`. It decodes the wire format into a generic
+    /// `CodecValue` structure.
     ///
     /// # Arguments
     ///
@@ -50,7 +51,7 @@ impl ProtobufDecoder {
     ///
     /// # Limitations
     ///
-    /// Without a FileDescriptorSet, this decoder:
+    /// Without a `FileDescriptorSet`, this decoder:
     /// - Cannot resolve field names (uses field numbers)
     /// - Cannot distinguish between varint types (int32, uint32, bool, enum)
     /// - Treats all unknown fields as raw bytes
@@ -91,8 +92,7 @@ impl ProtobufDecoder {
                     let value = bytes
                         .try_into()
                         .ok()
-                        .map(|b: [u8; 8]| u64::from_le_bytes(b))
-                        .unwrap_or(0);
+                        .map_or(0, |b: [u8; 8]| u64::from_le_bytes(b));
                     result.insert(field_number.to_string(), CodecValue::UInt64(value));
                     pos += 8;
                 }
@@ -134,8 +134,7 @@ impl ProtobufDecoder {
                     let value = bytes
                         .try_into()
                         .ok()
-                        .map(|b: [u8; 4]| u32::from_le_bytes(b))
-                        .unwrap_or(0);
+                        .map_or(0, |b: [u8; 4]| u32::from_le_bytes(b));
                     result.insert(field_number.to_string(), CodecValue::UInt32(value));
                     pos += 4;
                 }
@@ -173,7 +172,7 @@ impl ProtobufDecoder {
             let byte = data[current_pos];
             current_pos += 1;
 
-            result |= ((byte & 0x7F) as u64) << shift;
+            result |= u64::from(byte & 0x7F) << shift;
             shift += 7;
 
             if byte & 0x80 == 0 {
@@ -260,7 +259,7 @@ impl crate::Decoder for ProtobufDecoder {
     ///
     /// The `schema` and `type_name` parameters are ignored since protobuf
     /// decoding uses wire format parsing without requiring a schema.
-    /// Future enhancements may support FileDescriptorSet via schema parameter.
+    /// Future enhancements may support `FileDescriptorSet` via schema parameter.
     fn decode(
         &self,
         data: &[u8],

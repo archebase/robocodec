@@ -9,9 +9,9 @@ use std::collections::HashMap;
 /// A parsed ROS message schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MessageSchema {
-    /// Schema name (e.g., "std_msgs/msg/Header" or just "Header")
+    /// Schema name (e.g., "`std_msgs/msg/Header`" or just "Header")
     pub name: String,
-    /// Package name (e.g., "std_msgs")
+    /// Package name (e.g., "`std_msgs`")
     pub package: Option<String>,
     /// All types defined in this schema (main type + nested types)
     pub types: HashMap<String, MessageType>,
@@ -82,7 +82,7 @@ pub enum PrimitiveType {
     String,
     /// Wide string (UTF-16)
     WString,
-    /// Byte (alias for UInt8)
+    /// Byte (alias for `UInt8`)
     Byte,
     /// Char (alias for Int8)
     Char,
@@ -94,6 +94,7 @@ pub enum PrimitiveType {
 
 impl PrimitiveType {
     /// Get the alignment requirement for this primitive type.
+    #[must_use]
     pub fn alignment(self) -> u64 {
         match self {
             PrimitiveType::Bool
@@ -110,6 +111,7 @@ impl PrimitiveType {
     }
 
     /// Get the size in bytes for this primitive type, if fixed.
+    #[must_use]
     pub fn size(self) -> Option<usize> {
         match self {
             PrimitiveType::Bool => Some(1),
@@ -126,6 +128,7 @@ impl PrimitiveType {
     }
 
     /// Parse a primitive type from a string.
+    #[must_use]
     pub fn try_from_str(s: &str) -> Option<Self> {
         match s {
             "bool" | "boolean" => Some(PrimitiveType::Bool),
@@ -149,7 +152,8 @@ impl PrimitiveType {
         }
     }
 
-    /// Convert to the core PrimitiveType.
+    /// Convert to the core `PrimitiveType`.
+    #[must_use]
     pub fn to_core(self) -> crate::PrimitiveType {
         match self {
             PrimitiveType::Bool => crate::PrimitiveType::Bool,
@@ -172,6 +176,7 @@ impl PrimitiveType {
 
 impl FieldType {
     /// Get the alignment requirement for this field type.
+    #[must_use]
     pub fn alignment(&self) -> u64 {
         match self {
             FieldType::Primitive(p) => p.alignment(),
@@ -181,6 +186,7 @@ impl FieldType {
     }
 
     /// Check if this is a complex type (requires per-element alignment in arrays).
+    #[must_use]
     pub fn is_complex(&self) -> bool {
         !matches!(
             self,
@@ -205,6 +211,7 @@ impl FieldType {
 
 impl MessageSchema {
     /// Create an empty schema.
+    #[must_use]
     pub fn new(name: String) -> Self {
         Self {
             package: extract_package(&name),
@@ -219,11 +226,13 @@ impl MessageSchema {
     }
 
     /// Look up a type by name.
+    #[must_use]
     pub fn get_type(&self, name: &str) -> Option<&MessageType> {
         self.types.get(name)
     }
 
     /// Look up a type by name with variant resolution.
+    #[must_use]
     pub fn get_type_variants(&self, name: &str) -> Option<&MessageType> {
         // Try exact match first
         if let Some(t) = self.types.get(name) {
@@ -273,12 +282,12 @@ impl MessageSchema {
     ///
     /// This updates:
     /// - The schema's own name and package
-    /// - All type names in the types HashMap
+    /// - All type names in the types `HashMap`
     /// - All nested type references in field types
     ///
     /// # Arguments
     ///
-    /// * `old_package` - The old package name (e.g., "genie_msgs")
+    /// * `old_package` - The old package name (e.g., "`genie_msgs`")
     /// * `new_package` - The new package name (e.g., "archebase")
     pub fn rename_package(&mut self, old_package: &str, new_package: &str) {
         // Update schema name
@@ -337,6 +346,7 @@ impl MessageSchema {
 
 impl MessageType {
     /// Create a new message type.
+    #[must_use]
     pub fn new(name: String) -> Self {
         Self {
             name,

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Unified MCAP streaming parser using the StreamingParser trait.
+//! Unified MCAP streaming parser using the `StreamingParser` trait.
 //!
 //! This module provides [`McapStreamingParser`], which implements the
 //! unified [`StreamingParser`](crate::io::streaming::StreamingParser) trait
@@ -59,7 +59,7 @@ pub struct McapStreamingParser {
     adapter: McapS3Adapter,
     /// Cached channel map (converted from adapter's internal format)
     cached_channels: HashMap<u16, ChannelInfo>,
-    /// Buffer for tracking magic bytes (for is_initialized compatibility)
+    /// Buffer for tracking magic bytes (for `is_initialized` compatibility)
     magic_buffer: Vec<u8>,
     /// Track whether we've seen the complete magic
     magic_seen: bool,
@@ -67,6 +67,7 @@ pub struct McapStreamingParser {
 
 impl McapStreamingParser {
     /// Create a new MCAP streaming parser.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             adapter: McapS3Adapter::new(),
@@ -77,6 +78,7 @@ impl McapStreamingParser {
     }
 
     /// Create a new MCAP streaming parser with a specific channel cache.
+    #[must_use]
     pub fn with_adapter(adapter: McapS3Adapter) -> Self {
         Self {
             adapter,
@@ -87,6 +89,7 @@ impl McapStreamingParser {
     }
 
     /// Get the underlying S3 adapter.
+    #[must_use]
     pub fn adapter(&self) -> &McapS3Adapter {
         &self.adapter
     }

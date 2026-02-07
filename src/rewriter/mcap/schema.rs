@@ -21,13 +21,19 @@ use std::collections::HashMap;
 /// * `schema_ids` - Output map of type name to schema ID
 /// * `writer` - MCAP writer to add schemas to
 /// * `pipeline` - Optional transform pipeline
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - A schema cannot be added to the MCAP writer
+/// - Schema transformation fails
 pub fn build_schema_mappings<W: std::io::Write + Send + Sync>(
     channels: &HashMap<u16, crate::io::metadata::ChannelInfo>,
     schema_ids: &mut HashMap<String, u16>,
     writer: &mut ParallelMcapWriter<W>,
     pipeline: Option<&crate::transform::MultiTransform>,
 ) -> Result<()> {
-    for (_channel_id, channel) in channels.iter() {
+    for channel in channels.values() {
         // Apply transformations to get the target type name and schema
         let (transformed_type, transformed_schema) = if let Some(p) = pipeline {
             p.transform_type(&channel.message_type, channel.schema.as_deref())
@@ -38,8 +44,8 @@ pub fn build_schema_mappings<W: std::io::Write + Send + Sync>(
         if !schema_ids.contains_key(&transformed_type) {
             let schema_bytes = transformed_schema
                 .as_ref()
-                .map(|s| s.as_bytes())
-                .or_else(|| channel.schema.as_ref().map(|s| s.as_bytes()));
+                .map(std::string::String::as_bytes)
+                .or_else(|| channel.schema.as_ref().map(std::string::String::as_bytes));
 
             if let Some(bytes) = schema_bytes {
                 let schema_id = writer
@@ -68,6 +74,12 @@ pub fn build_schema_mappings<W: std::io::Write + Send + Sync>(
 /// * `schemas` - Output map to cache parsed schemas
 /// * `pipeline` - Optional transform pipeline
 /// * `validate_schemas` - Whether to validate schema parsing
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Schema parsing fails
+/// - Schema transformation fails
 pub fn cache_schemas(
     reader: &McapReader,
     schemas: &mut HashMap<String, MessageSchema>,
@@ -177,8 +189,8 @@ pub fn get_schema_bytes<'a>(
     original_schema: Option<&'a String>,
 ) -> Option<&'a [u8]> {
     transformed_schema
-        .map(|s| s.as_bytes())
-        .or_else(|| original_schema.map(|s| s.as_bytes()))
+        .map(std::string::String::as_bytes)
+        .or_else(|| original_schema.map(std::string::String::as_bytes))
 }
 
 #[cfg(test)]

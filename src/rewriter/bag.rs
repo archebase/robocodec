@@ -35,11 +35,13 @@ pub struct BagRewriter {
 
 impl BagRewriter {
     /// Create a new rewriter with default options.
+    #[must_use]
     pub fn new() -> Self {
         Self::with_options(RewriteOptions::default())
     }
 
     /// Create a new rewriter with custom options.
+    #[must_use]
     pub fn with_options(options: RewriteOptions) -> Self {
         Self {
             options,
@@ -70,11 +72,11 @@ impl BagRewriter {
     ///
     /// # Arguments
     ///
-    /// * `type_name` - The full type name (e.g., "std_msgs/String")
+    /// * `type_name` - The full type name (e.g., "`std_msgs/String`")
     ///
     /// # Returns
     ///
-    /// The package name (e.g., "std_msgs") or empty string
+    /// The package name (e.g., "`std_msgs`") or empty string
     #[must_use]
     pub fn extract_package_name(type_name: &str) -> &str {
         type_name.split('/').next().unwrap_or("")
@@ -108,6 +110,15 @@ impl BagRewriter {
     /// # Returns
     ///
     /// Statistics about the rewrite operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The input bag file cannot be opened or is malformed
+    /// - The output bag file cannot be created
+    /// - Message decoding fails and `skip_decode_failures` is false
+    /// - Schema parsing fails when `validate_schemas` is true
+    /// - Transformation validation fails
     pub fn rewrite<P1, P2>(&mut self, input_path: P1, output_path: P2) -> Result<RewriteStats>
     where
         P1: AsRef<Path>,
@@ -157,7 +168,7 @@ impl BagRewriter {
         let pipeline = self.options.transforms.as_ref();
 
         // First pass: add all connections (with transformations applied)
-        for (orig_channel_id, channel) in channels.iter() {
+        for (orig_channel_id, channel) in &channels {
             // Apply transformations to get the target type and topic
             let (transformed_type, transformed_schema) = if let Some(p) = pipeline {
                 p.transform_type(&channel.message_type, channel.schema.as_deref())
@@ -253,22 +264,21 @@ impl BagRewriter {
             let new_conn_id = conn_mapping.get(&raw_msg.channel_id).copied();
 
             // Skip if we don't have a mapping (shouldn't happen)
-            let new_conn_id = match new_conn_id {
-                Some(id) => id,
-                None => {
-                    warn!(
-                        context = "bag_rewrite",
-                        channel_id = raw_msg.channel_id,
-                        "No connection mapping for channel, skipping message"
-                    );
-                    continue;
-                }
+            let new_conn_id = if let Some(id) = new_conn_id {
+                id
+            } else {
+                warn!(
+                    context = "bag_rewrite",
+                    channel_id = raw_msg.channel_id,
+                    "No connection mapping for channel, skipping message"
+                );
+                continue;
             };
 
             // Get the transformed message type for schema lookup
             let transformed_type = channel_type_map
                 .get(&raw_msg.channel_id)
-                .map(|s| s.as_str());
+                .map(std::string::String::as_str);
 
             // Try to decode and re-encode CDR messages
             if let Some(type_str) = transformed_type {
@@ -401,17 +411,18 @@ impl BagRewriter {
         schema: &MessageSchema,
     ) -> Result<Vec<u8>> {
         // Decode the message (handles CDR header internally)
-        let decoded = decoder.decode(schema, &msg.data, Some(&schema.name))?;
+        let decoded_message = decoder.decode(schema, &msg.data, Some(&schema.name))?;
 
         // Re-encode with proper CDR header
         let mut encoder = CdrEncoder::new();
-        encoder.encode_message(&decoded, schema, &schema.name)?;
+        encoder.encode_message(&decoded_message, schema, &schema.name)?;
 
         let encoded_data = encoder.finish();
         Ok(encoded_data)
     }
 
     /// Get the options used for rewriting.
+    #[must_use]
     pub fn options(&self) -> &RewriteOptions {
         &self.options
     }

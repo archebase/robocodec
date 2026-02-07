@@ -95,16 +95,19 @@ impl HttpAuth {
     }
 
     /// Get the bearer token if configured.
+    #[must_use]
     pub fn bearer_token(&self) -> Option<&str> {
         self.bearer_token.as_deref()
     }
 
     /// Get the basic auth username if configured.
+    #[must_use]
     pub fn basic_username(&self) -> Option<&str> {
         self.basic_username.as_deref()
     }
 
     /// Get the basic auth password if configured.
+    #[must_use]
     pub fn basic_password(&self) -> Option<&str> {
         self.basic_password.as_deref()
     }
@@ -137,7 +140,7 @@ pub struct HttpTransport {
     buffer: Vec<u8>,
     /// Current read offset within the buffer
     buffer_offset: usize,
-    /// Pending fetch future (for poll_read)
+    /// Pending fetch future (for `poll_read`)
     fetch_future: Option<FetchFuture>,
     /// Whether to use basic auth (stored for per-request configuration)
     use_basic_auth: bool,
@@ -238,8 +241,7 @@ impl HttpTransport {
         {
             // Bearer token via default headers
             let mut headers = reqwest::header::HeaderMap::new();
-            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
-            {
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
                 headers.insert(reqwest::header::AUTHORIZATION, value);
                 builder = builder.default_headers(headers);
             }
@@ -300,6 +302,7 @@ impl HttpTransport {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn with_bearer_token(mut self, token: &str) -> Self {
         self.auth = Some(HttpAuth::bearer(token));
         let (client, use_basic_auth, basic_username, basic_password) =
@@ -332,6 +335,7 @@ impl HttpTransport {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn with_basic_auth(mut self, username: &str, password: &str) -> Self {
         self.auth = Some(HttpAuth::basic(username, password));
         let (client, use_basic_auth, basic_username, basic_password) =
@@ -367,8 +371,7 @@ impl HttpTransport {
             .headers()
             .get(reqwest::header::ACCEPT_RANGES)
             .and_then(|v| v.to_str().ok())
-            .map(|v| v.eq_ignore_ascii_case("bytes"))
-            .unwrap_or(false);
+            .is_some_and(|v| v.eq_ignore_ascii_case("bytes"));
 
         Ok((content_length, accepts_ranges))
     }
@@ -396,7 +399,7 @@ impl HttpTransport {
 
             // Add Range header for partial content
             let end = offset.saturating_add(size as u64).saturating_sub(1);
-            request = request.header(reqwest::header::RANGE, format!("bytes={}-{}", offset, end));
+            request = request.header(reqwest::header::RANGE, format!("bytes={offset}-{end}"));
 
             let response = request.send().await?;
 
@@ -420,11 +423,13 @@ impl HttpTransport {
     }
 
     /// Get the URL being accessed.
+    #[must_use]
     pub fn url(&self) -> &str {
         &self.url
     }
 
     /// Get a reference to the HTTP client.
+    #[must_use]
     pub fn client(&self) -> &reqwest::Client {
         &self.client
     }

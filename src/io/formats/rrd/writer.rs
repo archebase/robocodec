@@ -96,7 +96,7 @@ impl RrdWriter {
 
         // Create the file
         let mut file = std::fs::File::create(path_obj)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to create file: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to create file: {e}")))?;
 
         // Write RRF2 stream header
         Self::write_header(&mut file, compression)?;
@@ -119,25 +119,25 @@ impl RrdWriter {
         // Magic: "RRF2"
         writer
             .write_all(RRD_MAGIC)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to write magic: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to write magic: {e}")))?;
 
         // Version: [0, 0, 0, 1]
         writer
             .write_all(&RRD_VERSION)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to write version: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to write version: {e}")))?;
 
         // Options: compression(1) + serializer(1) + reserved(2)
         writer
             .write_all(&[compression.as_u8()]) // compression
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to write compression: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to write compression: {e}")))?;
 
         writer
             .write_all(&[SERIALIZER_PROTOBUF]) // serializer: protobuf
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to write serializer: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to write serializer: {e}")))?;
 
         writer
             .write_all(&[0u8, 0]) // reserved
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to write reserved: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to write reserved: {e}")))?;
 
         Ok(())
     }
@@ -151,18 +151,18 @@ impl RrdWriter {
         }
 
         // Write message header: kind + len
-        self.file.write_u64::<LittleEndian>(kind).map_err(|e| {
-            CodecError::parse("RRD", format!("Failed to write message kind: {}", e))
-        })?;
+        self.file
+            .write_u64::<LittleEndian>(kind)
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to write message kind: {e}")))?;
 
         self.file
             .write_u64::<LittleEndian>(data.len() as u64)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to write message len: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to write message len: {e}")))?;
 
         // Write payload
-        self.file.write_all(data).map_err(|e| {
-            CodecError::parse("RRD", format!("Failed to write message data: {}", e))
-        })?;
+        self.file
+            .write_all(data)
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to write message data: {e}")))?;
 
         self.message_count += 1;
 
@@ -186,7 +186,7 @@ impl RrdWriter {
 
         self.file
             .write_all(&footer_data)
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to write footer: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to write footer: {e}")))?;
 
         Ok(())
     }
@@ -258,7 +258,7 @@ impl FormatWriter for RrdWriter {
         self.write_footer()?;
         self.file
             .flush()
-            .map_err(|e| CodecError::parse("RRD", format!("Failed to flush file: {}", e)))?;
+            .map_err(|e| CodecError::parse("RRD", format!("Failed to flush file: {e}")))?;
 
         self.finished = true;
         Ok(())

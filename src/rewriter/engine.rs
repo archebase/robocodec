@@ -54,10 +54,10 @@ fn extract_protobuf_message_name(type_name: &str) -> String {
 
     // For "pkg.foo.Bar", extract "Bar"
     let parts: Vec<&str> = name.split('.').collect();
-    if !parts.is_empty() {
-        parts.last().unwrap_or(&"").to_string()
-    } else {
+    if parts.is_empty() {
         String::new()
+    } else {
+        parts.last().unwrap_or(&"").to_string()
     }
 }
 
@@ -151,6 +151,7 @@ pub struct McapRewriteEngine {
 
 impl McapRewriteEngine {
     /// Create a new message rewrite engine.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             codec_factory: CodecFactory::new(),
@@ -162,6 +163,7 @@ impl McapRewriteEngine {
     }
 
     /// Get the current statistics.
+    #[must_use]
     pub fn stats(&self) -> &McapRewriteStats {
         &self.stats
     }
@@ -172,6 +174,7 @@ impl McapRewriteEngine {
     }
 
     /// Get the number of schemas prepared.
+    #[must_use]
     pub fn schema_count(&self) -> usize {
         self.schemas.len()
     }
@@ -187,6 +190,13 @@ impl McapRewriteEngine {
     ///
     /// * `reader` - The MCAP reader
     /// * `pipeline` - Optional transform pipeline to apply
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Schema parsing fails
+    /// - Schema transformation fails
+    /// - Encoding detection fails
     pub fn prepare_schemas(
         &mut self,
         reader: &McapReader,
@@ -346,7 +356,7 @@ impl McapRewriteEngine {
         match schema {
             SchemaMetadata::Cdr { .. } => {
                 let text = new_schema_text
-                    .or_else(|| original_schema_text.map(|s| s.to_string()))
+                    .or_else(|| original_schema_text.map(std::string::ToString::to_string))
                     .unwrap_or_default();
                 Ok(SchemaMetadata::cdr_with_encoding(
                     new_type_name,
@@ -443,7 +453,7 @@ impl McapRewriteEngine {
             }
             SchemaMetadata::Json { .. } => {
                 let text = new_schema_text
-                    .or_else(|| original_schema_text.map(|s| s.to_string()))
+                    .or_else(|| original_schema_text.map(std::string::ToString::to_string))
                     .unwrap_or_default();
                 Ok(SchemaMetadata::json(new_type_name, text))
             }
@@ -451,11 +461,15 @@ impl McapRewriteEngine {
     }
 
     /// Get the transformed topic for a channel.
+    #[must_use]
     pub fn get_transformed_topic(&self, channel_id: u16) -> Option<&str> {
-        self.channel_topics.get(&channel_id).map(|s| s.as_str())
+        self.channel_topics
+            .get(&channel_id)
+            .map(std::string::String::as_str)
     }
 
     /// Get the transformed schema for a channel.
+    #[must_use]
     pub fn get_transformed_schema(&self, channel_id: u16) -> Option<&SchemaMetadata> {
         // Schemas are keyed by channel_id to support topic-specific type transforms
         self.schemas.get(&channel_id.to_string())
@@ -474,6 +488,13 @@ impl McapRewriteEngine {
     ///
     /// True if the message was processed (encoded or passed through),
     /// false if it was skipped
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The encoding is not supported
+    /// - Message encoding fails
+    /// - The encode callback fails
     pub fn rewrite_message<F>(
         &mut self,
         msg: &RawMessage,
@@ -493,14 +514,13 @@ impl McapRewriteEngine {
         );
 
         // Get the schema for this channel
-        let schema = match self.get_transformed_schema(msg.channel_id) {
-            Some(s) => s.clone(),
-            None => {
-                // No schema available, pass through
-                encode_callback(&msg.data)?;
-                self.stats.passthrough_count += 1;
-                return Ok(true);
-            }
+        let schema = if let Some(s) = self.get_transformed_schema(msg.channel_id) {
+            s.clone()
+        } else {
+            // No schema available, pass through
+            encode_callback(&msg.data)?;
+            self.stats.passthrough_count += 1;
+            return Ok(true);
         };
 
         // Get the codec for this encoding (mutable for encode)

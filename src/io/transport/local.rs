@@ -41,7 +41,7 @@ impl LocalTransport {
         Ok(Self { file, pos: 0, len })
     }
 
-    /// Create a new LocalTransport from an existing File.
+    /// Create a new `LocalTransport` from an existing File.
     pub fn from_file(file: File) -> io::Result<Self> {
         let len = file.metadata()?.len();
         Ok(Self { file, pos: 0, len })
@@ -85,7 +85,7 @@ impl Transport for LocalTransport {
     }
 }
 
-/// Additional convenience methods for LocalTransport.
+/// Additional convenience methods for `LocalTransport`.
 impl LocalTransport {
     /// Seek to an absolute offset.
     pub fn seek_to(&mut self, offset: u64) -> io::Result<()> {
@@ -102,6 +102,7 @@ impl LocalTransport {
     }
 
     /// Get a reference to the underlying file.
+    #[must_use]
     pub fn file(&self) -> &File {
         &self.file
     }

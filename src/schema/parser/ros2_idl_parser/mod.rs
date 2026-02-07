@@ -33,7 +33,7 @@ fn is_idl_header_line(line: &str) -> bool {
 ///
 /// # Arguments
 ///
-/// * `name` - The name of the message type (e.g., "std_msgs/Header")
+/// * `name` - The name of the message type (e.g., "`std_msgs/Header`")
 /// * `definition` - The ROS2 IDL schema file contents
 ///
 /// # Examples
@@ -65,7 +65,7 @@ pub fn parse(name: &str, definition: &str) -> CoreResult<MessageSchema> {
 ///
 /// ROS2 IDL files contain separator lines like:
 ///   ================================================================================================
-///   IDL: std_msgs/msg/Header
+///   IDL: `std_msgs/msg/Header`
 ///
 /// The header consists of two lines:
 /// 1. A separator line with 80 or more '=' characters (all '=' chars, no mixed content)
@@ -75,6 +75,7 @@ pub fn parse(name: &str, definition: &str) -> CoreResult<MessageSchema> {
 ///
 /// Only skips lines that match BOTH conditions - a separator line must be
 /// immediately followed by an IDL header line to be considered a valid ROS2 header.
+#[must_use]
 pub fn normalize_ros2_idl(definition: &str) -> String {
     let lines: Vec<&str> = definition.lines().collect();
     let mut result = Vec::new();

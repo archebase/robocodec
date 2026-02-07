@@ -366,15 +366,16 @@ impl TwoPassMcapReader {
                     let encoding = String::from_utf8_lossy(&encoding_bytes).to_string();
 
                     // Get schema info if available
-                    let (message_type, schema_encoding, schema_data) = schemas
-                        .get(&schema_id)
-                        .map(|(name, enc, data)| (name.clone(), enc.clone(), data.clone()))
-                        .unwrap_or_else(|| ("unknown".to_string(), encoding.clone(), Vec::new()));
+                    let (message_type, schema_encoding, schema_data) =
+                        schemas.get(&schema_id).map_or_else(
+                            || ("unknown".to_string(), encoding.clone(), Vec::new()),
+                            |(name, enc, data)| (name.clone(), enc.clone(), data.clone()),
+                        );
 
-                    let schema_text = if !schema_data.is_empty() {
-                        Some(String::from_utf8_lossy(&schema_data).to_string())
-                    } else {
+                    let schema_text = if schema_data.is_empty() {
                         None
+                    } else {
+                        Some(String::from_utf8_lossy(&schema_data).to_string())
                     };
 
                     channels.insert(
@@ -565,7 +566,7 @@ impl TwoPassMcapReader {
                 log_time: msg.log_time,
                 publish_time: msg.publish_time,
                 data: msg.data,
-                sequence: Some(msg.sequence as u64),
+                sequence: Some(u64::from(msg.sequence)),
             };
             chunk.add_message(raw_msg);
         }
@@ -640,14 +641,11 @@ impl ParallelReader for TwoPassMcapReader {
     ) -> Result<ParallelReaderStats> {
         let num_threads = config.num_threads.unwrap_or_else(|| {
             std::thread::available_parallelism()
-                .map(|n| n.get())
+                .map(std::num::NonZero::get)
                 .unwrap_or(8)
         });
 
-        println!(
-            "Starting two-pass MCAP parallel reader with {} worker threads...",
-            num_threads
-        );
+        println!("Starting two-pass MCAP parallel reader with {num_threads} worker threads...");
         println!("  File: {}", self.path);
         println!("  Chunks to process: {}", self.chunk_indexes.len());
 
@@ -662,7 +660,7 @@ impl ParallelReader for TwoPassMcapReader {
         // Create thread pool for controlled parallelism
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
-            .thread_name(|index| format!("mcap-two-pass-{}", index))
+            .thread_name(|index| format!("mcap-two-pass-{index}"))
             .build()
             .map_err(|e| {
                 CodecError::encode(
@@ -714,8 +712,8 @@ impl ParallelReader for TwoPassMcapReader {
         let duration = total_start.elapsed();
 
         println!("Two-pass MCAP reader complete:");
-        println!("  Chunks processed: {}", chunks_processed);
-        println!("  Messages read: {}", messages_read);
+        println!("  Chunks processed: {chunks_processed}");
+        println!("  Messages read: {messages_read}");
         println!(
             "  Total bytes: {:.2} MB",
             total_bytes as f64 / (1024.0 * 1024.0)

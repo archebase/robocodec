@@ -23,6 +23,7 @@ pub struct CdrCodec {
 
 impl CdrCodec {
     /// Create a new CDR codec.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             decoder: CdrDecoder::new(),

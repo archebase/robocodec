@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Python bindings for RoboRewriter.
+//! Python bindings for `RoboRewriter`.
 
 use pyo3::prelude::*;
 use pyo3::types::PyType;
@@ -41,16 +41,16 @@ impl PyRoboRewriter {
     ///
     /// Parameters
     /// ----------
-    /// input_path : str
+    /// `input_path` : str
     ///     Path to the input file (.mcap or .bag)
-    /// validate_schemas : bool, default True
+    /// `validate_schemas` : bool, default True
     ///     Whether to validate message schemas
-    /// skip_decode_failures : bool, default True
+    /// `skip_decode_failures` : bool, default True
     ///     Whether to skip messages that fail to decode
     ///
     /// Raises
     /// ------
-    /// RobocodecError
+    /// `RobocodecError`
     ///     If the file cannot be opened or format is not recognized
     ///
     /// # Example
@@ -79,18 +79,18 @@ impl PyRoboRewriter {
     ///
     /// Parameters
     /// ----------
-    /// input_path : str
+    /// `input_path` : str
     ///     Path to the input file (.mcap or .bag)
-    /// transform_builder : TransformBuilder
+    /// `transform_builder` : `TransformBuilder`
     ///     Transformation builder for topic/type renaming
-    /// validate_schemas : bool, default True
+    /// `validate_schemas` : bool, default True
     ///     Whether to validate message schemas
-    /// skip_decode_failures : bool, default True
+    /// `skip_decode_failures` : bool, default True
     ///     Whether to skip messages that fail to decode
     ///
     /// Raises
     /// ------
-    /// RobocodecError
+    /// `RobocodecError`
     ///     If the file cannot be opened or format is not recognized
     ///
     /// # Example
@@ -125,17 +125,17 @@ impl PyRoboRewriter {
     ///
     /// Parameters
     /// ----------
-    /// output_path : str
+    /// `output_path` : str
     ///     Path to the output file
     ///
     /// Returns
     /// -------
-    /// RewriteStats
+    /// `RewriteStats`
     ///     Statistics about the rewrite operation
     ///
     /// Raises
     /// ------
-    /// RobocodecError
+    /// `RobocodecError`
     ///     If the rewrite operation fails
     ///
     /// # Example

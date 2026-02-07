@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use clap::Subcommand;
 use serde::Serialize;
 
+use crate::cli::{Result, open_reader, output_json_or};
 use robocodec::FormatReader;
-use robocodec::cli::{Result, open_reader, output_json_or};
 
 /// Schema operations.
 #[derive(Subcommand, Clone, Debug)]

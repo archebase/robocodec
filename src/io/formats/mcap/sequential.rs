@@ -24,7 +24,7 @@ use crate::{CodecError, Result};
 
 /// Sequential MCAP reader using the mcap crate.
 ///
-/// This reader uses memory-mapping and the mcap crate's MessageStream
+/// This reader uses memory-mapping and the mcap crate's `MessageStream`
 /// for sequential message iteration. It's reliable and works with
 /// all valid MCAP files, including those without summary sections.
 pub struct SequentialMcapReader {
@@ -225,6 +225,7 @@ impl SequentialMcapReader {
     }
 
     /// Get the memory-mapped data.
+    #[must_use]
     pub fn mmap(&self) -> &memmap2::Mmap {
         &self.mmap
     }
@@ -304,12 +305,13 @@ impl<'a> SequentialRawIter<'a> {
     }
 
     /// Get the channels.
+    #[must_use]
     pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }
 }
 
-impl<'a> Iterator for SequentialRawIter<'a> {
+impl Iterator for SequentialRawIter<'_> {
     type Item = Result<(RawMessage, ChannelInfo)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -351,7 +353,7 @@ impl<'a> Iterator for SequentialRawIter<'a> {
                     log_time: message.log_time,
                     publish_time: message.publish_time,
                     data: message.data.to_vec(),
-                    sequence: Some(message.sequence as u64),
+                    sequence: Some(u64::from(message.sequence)),
                 },
                 channel_info,
             )));

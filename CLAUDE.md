@@ -155,10 +155,28 @@ Transport-based reading uses `McapTransportReader` internally for streaming from
 
 As a common library for other projects to use, these do NOT belong:
 
-1. **CLI tools** - Should be in a separate `robocodec-cli` crate
-2. **CLI dependencies** - `clap`, `indicatif`, `human-size` should be feature-gated or moved
+1. ~~**CLI tools** - Should be in a separate `robocodec-cli` crate~~ (MOVED - CLI is now in `robocodec-cli/`)
+2. ~~**CLI dependencies** - `clap`, `indicatif`, `human-size` should be feature-gated or moved~~ (MOVED - these are now in `robocodec-cli/`)
 3. **Development examples** - Files with hardcoded paths in `examples/`
 4. **Internal type exposure** - Downcasting methods expose implementation details
+
+### Workspace Structure
+
+This is a Cargo workspace with two members:
+- `robocodec` - The library crate (this directory)
+- `robocodec-cli/` - The CLI tool crate (separate binary)
+
+To build just the library:
+```bash
+cargo build --package robocodec
+```
+
+To build and install the CLI:
+```bash
+cargo install --path robocodec-cli
+# or
+cargo build --release --package robocodec-cli
+```
 
 ## Code Style
 

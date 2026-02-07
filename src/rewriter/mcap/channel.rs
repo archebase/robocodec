@@ -51,6 +51,7 @@ pub fn resolve_topic_collision(topic: String, context: &mut RewriteContext) -> S
 /// * `topic` - The topic name to check
 /// * `current_channel_id` - The current channel being processed
 /// * `reader` - The MCAP reader to check for existing channels
+#[must_use]
 pub fn initialize_topic_collision_check(
     topic: &str,
     current_channel_id: u16,
@@ -76,6 +77,12 @@ pub fn initialize_topic_collision_check(
 /// * `writer` - MCAP writer to add channels to
 /// * `pipeline` - Optional transform pipeline
 /// * `stats` - Statistics to update for renamed topics/types
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - A channel cannot be added to the MCAP writer
+/// - Topic name collisions cannot be resolved
 pub fn build_channel_mappings<W: std::io::Write + Send + Sync>(
     channels: &HashMap<u16, crate::io::metadata::ChannelInfo>,
     schema_ids: &HashMap<String, u16>,
@@ -219,10 +226,10 @@ pub fn get_transformed_type(
     type_name: &str,
     pipeline: Option<&crate::transform::MultiTransform>,
 ) -> String {
-    pipeline
-        .as_ref()
-        .map(|p| p.transform_type(type_name, None).0)
-        .unwrap_or_else(|| type_name.to_string())
+    pipeline.as_ref().map_or_else(
+        || type_name.to_string(),
+        |p| p.transform_type(type_name, None).0,
+    )
 }
 
 #[cfg(test)]

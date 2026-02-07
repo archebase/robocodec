@@ -20,6 +20,10 @@ pub trait SchemaProvider {
     type Schema;
 
     /// Parse a schema from a string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the schema definition is invalid or malformed.
     fn parse_schema(&self, name: &str, definition: &str) -> Result<Self::Schema>;
 }
 
@@ -35,15 +39,15 @@ pub trait TypeAccessor {
     ///
     /// Tries multiple resolution strategies:
     /// - Exact match
-    /// - With /msg/ suffix (e.g., "std_msgs/Header" → "std_msgs/msg/Header")
-    /// - Without /msg/ suffix (e.g., "std_msgs/msg/Header" → "std_msgs/Header")
-    /// - Short name match (e.g., "Pose" → "geometry_msgs/Pose")
+    /// - With /msg/ suffix (e.g., "`std_msgs/Header`" → "`std_msgs/msg/Header`")
+    /// - Without /msg/ suffix (e.g., "`std_msgs/msg/Header`" → "`std_msgs/Header`")
+    /// - Short name match (e.g., "Pose" → "`geometry_msgs/Pose`")
     fn get_type_variants(&self, type_name: &str) -> Option<&Self::TypeDescriptor>;
 }
 
 /// Thread-safe registry for parsed schemas and type descriptors.
 ///
-/// Uses RwLock for concurrent read access with exclusive write access.
+/// Uses `RwLock` for concurrent read access with exclusive write access.
 /// Suitable for use across multiple decoder instances.
 pub struct TypeRegistry<T> {
     inner: RwLock<TypeRegistryInner<T>>,
@@ -55,6 +59,7 @@ struct TypeRegistryInner<T> {
 
 impl<T> TypeRegistry<T> {
     /// Create a new empty type registry.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: RwLock::new(TypeRegistryInner {
@@ -64,6 +69,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Register a schema with this registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn register(&self, name: impl Into<String>, schema: T) -> Result<()> {
         let mut inner = self
             .inner
@@ -74,6 +83,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Get a schema by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn get(&self, name: &str) -> Result<Option<T>>
     where
         T: Clone,
@@ -86,6 +99,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Check if a schema is registered.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn contains(&self, name: &str) -> Result<bool> {
         let inner = self
             .inner
@@ -95,6 +112,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Get all registered schema names.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn names(&self) -> Result<Vec<String>> {
         let inner = self
             .inner
@@ -104,6 +125,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Remove a schema from the registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn remove(&self, name: &str) -> Result<bool> {
         let mut inner = self
             .inner
@@ -113,6 +138,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Clear all schemas from the registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn clear(&self) -> Result<()> {
         let mut inner = self
             .inner
@@ -123,6 +152,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Get the number of registered schemas.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn len(&self) -> Result<usize> {
         let inner = self
             .inner
@@ -132,6 +165,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Check if the registry is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn is_empty(&self) -> Result<bool> {
         Ok(self.len()? == 0)
     }

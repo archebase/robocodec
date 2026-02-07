@@ -14,7 +14,7 @@
 //! - **Chunked upload**: Supports large files via chunked upload strategies
 //! - **Authentication**: Supports Bearer tokens and Basic auth
 //! - **Retry logic**: Configurable retry attempts for failed uploads
-//! - **Multiple strategies**: SinglePut, ChunkedPut, ChunkedEncoding
+//! - **Multiple strategies**: `SinglePut`, `ChunkedPut`, `ChunkedEncoding`
 //!
 //! # Limitations
 //!
@@ -262,8 +262,7 @@ impl HttpWriter {
             && let Some(token) = auth.bearer_token()
         {
             let mut headers = reqwest::header::HeaderMap::new();
-            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
-            {
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
                 headers.insert(reqwest::header::AUTHORIZATION, value);
                 builder = builder.default_headers(headers);
             }
@@ -271,7 +270,7 @@ impl HttpWriter {
 
         builder
             .build()
-            .map_err(|e| CodecError::parse("HttpWriter", format!("Failed to build client: {}", e)))
+            .map_err(|e| CodecError::parse("HttpWriter", format!("Failed to build client: {e}")))
     }
 
     /// Write raw bytes to the buffer.
@@ -338,7 +337,7 @@ impl HttpWriter {
         let end = offset + data.len() - 1;
         request = request.header(
             reqwest::header::CONTENT_RANGE,
-            format!("bytes {}-{}/{}", offset, end, total),
+            format!("bytes {offset}-{end}/{total}"),
         );
 
         let response = request.body(data).send().await?;
@@ -378,13 +377,12 @@ impl HttpWriter {
             .headers()
             .get(reqwest::header::ACCEPT_RANGES)
             .and_then(|v| v.to_str().ok())
-            .map(|v| v.eq_ignore_ascii_case("bytes"))
-            .unwrap_or(false);
+            .is_some_and(|v| v.eq_ignore_ascii_case("bytes"));
 
         Ok(accepts_ranges)
     }
 
-    /// Upload buffer using SinglePut strategy.
+    /// Upload buffer using `SinglePut` strategy.
     async fn upload_single_put(&mut self) -> core::result::Result<(), HttpWriteError> {
         let data = Bytes::from(self.buffer.clone());
         self.http_put(data).await?;
@@ -392,7 +390,7 @@ impl HttpWriter {
         Ok(())
     }
 
-    /// Upload buffer using ChunkedPut strategy.
+    /// Upload buffer using `ChunkedPut` strategy.
     async fn upload_chunked_put(&mut self) -> core::result::Result<(), HttpWriteError> {
         let total_size = self.buffer.len();
 
@@ -473,16 +471,19 @@ impl HttpWriter {
     }
 
     /// Get the target URL.
+    #[must_use]
     pub fn url(&self) -> &str {
         &self.url
     }
 
     /// Get the upload strategy.
+    #[must_use]
     pub fn strategy(&self) -> HttpUploadStrategy {
         self.strategy
     }
 
     /// Get the current buffer size.
+    #[must_use]
     pub fn buffer_size(&self) -> usize {
         self.buffer.len()
     }
@@ -515,7 +516,7 @@ impl FormatWriter for HttpWriter {
             topic: topic.to_string(),
             message_type: message_type.to_string(),
             encoding: encoding.to_string(),
-            schema: schema.map(|s| s.to_string()),
+            schema: schema.map(std::string::ToString::to_string),
             schema_data: None,
             schema_encoding: None,
             message_count: 0,

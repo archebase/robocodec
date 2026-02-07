@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Python bindings for RoboReader.
+//! Python bindings for `RoboReader`.
 
 use pyo3::prelude::*;
 
@@ -45,7 +45,7 @@ impl PyRoboReader {
     ///
     /// Raises
     /// ------
-    /// RobocodecError
+    /// `RobocodecError`
     ///     If the file cannot be opened or format is not recognized
     ///
     /// # Example
@@ -63,7 +63,7 @@ impl PyRoboReader {
     ///
     /// Returns
     /// -------
-    /// list[ChannelInfo]
+    /// list[`ChannelInfo`]
     ///     List of channel information objects
     ///
     /// # Example
@@ -90,7 +90,7 @@ impl PyRoboReader {
     ///
     /// Returns
     /// -------
-    /// ChannelInfo or None
+    /// `ChannelInfo` or None
     ///     Channel information if found, None otherwise
     ///
     /// # Example
@@ -113,7 +113,7 @@ impl PyRoboReader {
     ///
     /// Returns
     /// -------
-    /// list[ChannelInfo]
+    /// list[`ChannelInfo`]
     ///     List of channels matching the topic
     ///
     /// # Example

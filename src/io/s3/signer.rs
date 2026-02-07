@@ -2,13 +2,13 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! AWS SigV4 request signing for S3.
+//! AWS `SigV4` request signing for S3.
 
 use crate::io::s3::config::AwsCredentials;
 use http::{HeaderMap, HeaderValue, Method, Uri};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Sign an HTTP request with AWS SigV4.
+/// Sign an HTTP request with AWS `SigV4`.
 ///
 /// This function adds the necessary AWS Signature Version 4 headers to authenticate
 /// requests to AWS S3 or compatible services.
@@ -53,8 +53,8 @@ pub fn sign_request(
 
     // Build the path and query string
     let path = uri.path();
-    let query = uri.query().map(|q| format!("?{}", q)).unwrap_or_default();
-    let canonical_uri = &format!("{}{}", path, query);
+    let query = uri.query().map(|q| format!("?{q}")).unwrap_or_default();
+    let canonical_uri = &format!("{path}{query}");
 
     // Set required headers
     headers.insert("Host", HeaderValue::from_str(&host)?);
@@ -98,20 +98,17 @@ pub fn sign_request(
     );
 
     // Create string to sign
-    let credential_scope = format!("{}/{}/{}/aws4_request", date_stamp, region, service);
+    let credential_scope = format!("{date_stamp}/{region}/{service}/aws4_request");
     let hashed_canonical_request = hex_sha256(canonical_request.as_bytes());
-    let string_to_sign = format!(
-        "AWS4-HMAC-SHA256\n{}\n{}\n{}",
-        amz_date, credential_scope, hashed_canonical_request
-    );
+    let string_to_sign =
+        format!("AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{hashed_canonical_request}");
 
     // Calculate signature
     let signature = calculate_signature(secret_key, date_stamp, region, service, &string_to_sign);
 
     // Add authorization header
     let authorization_header = format!(
-        "AWS4-HMAC-SHA256 Credential={}/{}/{}/{}/aws4_request, SignedHeaders={}, Signature={}",
-        access_key, date_stamp, region, service, signed_headers, signature
+        "AWS4-HMAC-SHA256 Credential={access_key}/{date_stamp}/{region}/{service}/aws4_request, SignedHeaders={signed_headers}, Signature={signature}"
     );
     headers.insert(
         "Authorization",
@@ -170,7 +167,7 @@ fn derive_signing_key(secret: &str, date: &str, region: &str, service: &str) -> 
     type HmacSha256 = Hmac<Sha256>;
 
     let k_date = {
-        let mut mac = HmacSha256::new_from_slice(format!("AWS4{}", secret).as_bytes()).unwrap();
+        let mut mac = HmacSha256::new_from_slice(format!("AWS4{secret}").as_bytes()).unwrap();
         mac.update(date.as_bytes());
         mac.finalize().into_bytes()
     };
@@ -221,6 +218,7 @@ fn calculate_signature(
 }
 
 /// Check if we have valid credentials that should be used for signing.
+#[must_use]
 pub fn should_sign(credentials: &AwsCredentials) -> bool {
     !credentials.access_key_id().is_empty() && !credentials.secret_access_key().is_empty()
 }

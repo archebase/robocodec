@@ -1,0 +1,60 @@
+# ROS1 bag format dictionary for libFuzzer
+# SPDX-FileCopyrightText: 2026 ArcheBase
+# SPDX-License-Identifier: MulanPSL-2.0
+
+# Bag file magic
+"#ROS"
+
+# Bag version
+"#ROS1"
+"#ROS2"
+
+# Bag opcodes
+"\x00"  # Unknown/Reserved
+"\x01"  # Bag Header
+"\x02"  # Index Data
+"\x03"  # Chunk
+"\x04"  # Chunk Info
+"\x05"  # Connection
+"\x06"  # Message Data
+"\x07"  # Index Data
+
+# Compression types
+"none"
+"bz2"
+"lz4"
+
+# Common ROS message types
+"std_msgs/String"
+"std_msgs/Int32"
+"std_msgs/Float64"
+"geometry_msgs/Twist"
+"sensor_msgs/LaserScan"
+"nav_msgs/Odometry"
+
+# Topic names
+"/chatter"
+"/cmd_vel"
+"/odom"
+"/scan"
+"/tf"
+
+# MD5 checksums (common values)
+"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F"
+
+# Message definition (Header)
+"Header header\n"
+"time stamp\n"
+"string frame_id\n"
+
+# Common field names
+"header"
+"stamp"
+"frame_id"
+"data"
+"seq"
+
+# Array lengths
+"\x01\x00\x00\x00"  # 1
+"\x0A\x00\x00\x00"  # 10
+"\x64\x00\x00\x00"  # 100

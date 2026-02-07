@@ -20,7 +20,7 @@ use crate::encoding::transform::SchemaMetadata;
 /// Protobuf codec using prost-reflect for dynamic message encoding/decoding.
 ///
 /// This codec handles protobuf messages without code generation by using
-/// FileDescriptorSet at runtime. Uses thread-safe interior mutability for caching.
+/// `FileDescriptorSet` at runtime. Uses thread-safe interior mutability for caching.
 pub struct ProtobufCodec {
     /// Cached descriptor pools indexed by type name
     pools: RwLock<HashMap<String, DescriptorPool>>,
@@ -30,6 +30,7 @@ pub struct ProtobufCodec {
 
 impl ProtobufCodec {
     /// Create a new Protobuf codec.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             pools: RwLock::new(HashMap::new()),
@@ -37,12 +38,12 @@ impl ProtobufCodec {
         }
     }
 
-    /// Add a FileDescriptorSet to the codec.
+    /// Add a `FileDescriptorSet` to the codec.
     ///
     /// # Arguments
     ///
     /// * `type_name` - Message type name (e.g., "nmx.msg.Lowdim")
-    /// * `fds_bytes` - FileDescriptorSet binary data
+    /// * `fds_bytes` - `FileDescriptorSet` binary data
     ///
     /// # Returns
     ///
@@ -98,7 +99,7 @@ impl ProtobufCodec {
     ///
     /// # Arguments
     ///
-    /// * `schema` - Schema metadata containing FileDescriptorSet
+    /// * `schema` - Schema metadata containing `FileDescriptorSet`
     ///
     /// # Returns
     ///
@@ -135,7 +136,7 @@ impl ProtobufCodec {
         self.descriptors.read().ok()?.get(type_name).cloned()
     }
 
-    /// Convert a DynamicMessage to DecodedMessage.
+    /// Convert a `DynamicMessage` to `DecodedMessage`.
     ///
     /// # Arguments
     ///
@@ -161,7 +162,7 @@ impl ProtobufCodec {
         fields
     }
 
-    /// Convert a DecodedMessage to a DynamicMessage.
+    /// Convert a `DecodedMessage` to a `DynamicMessage`.
     ///
     /// # Arguments
     ///
@@ -184,7 +185,7 @@ impl ProtobufCodec {
         Ok(dynamic_msg)
     }
 
-    /// Convert a CodecValue to a prost-reflect Value with field context.
+    /// Convert a `CodecValue` to a prost-reflect Value with field context.
     ///
     /// This version handles nested structs by using the field descriptor
     /// to determine the target message type.
@@ -201,16 +202,16 @@ impl ProtobufCodec {
             CodecValue::Bool(v) => Ok(prost_reflect::Value::Bool(*v)),
             CodecValue::Int8(v) => {
                 if is_enum {
-                    Ok(prost_reflect::Value::EnumNumber(*v as i32))
+                    Ok(prost_reflect::Value::EnumNumber(i32::from(*v)))
                 } else {
-                    Ok(prost_reflect::Value::I32(*v as i32))
+                    Ok(prost_reflect::Value::I32(i32::from(*v)))
                 }
             }
             CodecValue::Int16(v) => {
                 if is_enum {
-                    Ok(prost_reflect::Value::EnumNumber(*v as i32))
+                    Ok(prost_reflect::Value::EnumNumber(i32::from(*v)))
                 } else {
-                    Ok(prost_reflect::Value::I32(*v as i32))
+                    Ok(prost_reflect::Value::I32(i32::from(*v)))
                 }
             }
             CodecValue::Int32(v) => {
@@ -221,8 +222,8 @@ impl ProtobufCodec {
                 }
             }
             CodecValue::Int64(v) => Ok(prost_reflect::Value::I64(*v)),
-            CodecValue::UInt8(v) => Ok(prost_reflect::Value::U32(*v as u32)),
-            CodecValue::UInt16(v) => Ok(prost_reflect::Value::U32(*v as u32)),
+            CodecValue::UInt8(v) => Ok(prost_reflect::Value::U32(u32::from(*v))),
+            CodecValue::UInt16(v) => Ok(prost_reflect::Value::U32(u32::from(*v))),
             CodecValue::UInt32(v) => Ok(prost_reflect::Value::U32(*v)),
             CodecValue::UInt64(v) => Ok(prost_reflect::Value::U64(*v)),
             CodecValue::Float32(v) => Ok(prost_reflect::Value::F32(*v)),
@@ -300,7 +301,7 @@ impl ProtobufCodec {
         }
     }
 
-    /// Convert a prost-reflect Value to CodecValue.
+    /// Convert a prost-reflect Value to `CodecValue`.
     fn reflect_value_to_codec(&self, value: &prost_reflect::Value) -> Option<CodecValue> {
         match value {
             prost_reflect::Value::Bool(v) => Some(CodecValue::Bool(*v)),

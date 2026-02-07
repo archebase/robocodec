@@ -5,7 +5,7 @@
 //! S3 transport implementation.
 //!
 //! This module provides S3-specific transport functionality using the AWS S3 protocol.
-//! It supports S3-compatible services like AWS S3, MinIO, Cloudflare R2, etc.
+//! It supports S3-compatible services like AWS S3, `MinIO`, Cloudflare R2, etc.
 
 mod transport;
 

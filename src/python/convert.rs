@@ -32,6 +32,12 @@ macro_rules! convert_numeric {
 /// - `Array` → `list`
 /// - `Struct` → `dict`
 /// - `Null` → `None`
+///
+/// # Errors
+///
+/// Returns a Python exception if:
+/// - Numeric conversion fails (overflow or type mismatch)
+/// - Recursive conversion of array elements fails
 pub fn codec_value_to_py<'py>(py: Python<'py>, value: &CodecValue) -> PyResult<Bound<'py, PyAny>> {
     match value {
         // Boolean
@@ -50,7 +56,7 @@ pub fn codec_value_to_py<'py>(py: Python<'py>, value: &CodecValue) -> PyResult<B
         CodecValue::UInt64(v) => convert_numeric!(py, *v),
 
         // Floating point
-        CodecValue::Float32(v) => convert_numeric!(py, *v as f64),
+        CodecValue::Float32(v) => convert_numeric!(py, f64::from(*v)),
         CodecValue::Float64(v) => convert_numeric!(py, *v),
 
         // String
@@ -73,17 +79,23 @@ pub fn codec_value_to_py<'py>(py: Python<'py>, value: &CodecValue) -> PyResult<B
         }
 
         // Struct (convert to dict)
-        CodecValue::Struct(fields) => decoded_message_to_py(py, fields).map(|x| x.into_any()),
+        CodecValue::Struct(fields) => decoded_message_to_py(py, fields).map(pyo3::Bound::into_any),
 
         // Null
         CodecValue::Null => Ok(py.None().into_bound(py).into_any()),
     }
 }
 
-/// Convert a `DecodedMessage` (HashMap) to a Python dict.
+/// Convert a `DecodedMessage` (`HashMap`) to a Python dict.
 ///
 /// This recursively converts all `CodecValue` instances in the message
 /// to native Python types.
+///
+/// # Errors
+///
+/// Returns a Python exception if:
+/// - Dict creation fails
+/// - Recursive value conversion fails
 pub fn decoded_message_to_py<'py>(
     py: Python<'py>,
     msg: &DecodedMessage,

@@ -52,7 +52,7 @@ pub struct S3Transport {
     buffer: Vec<u8>,
     /// Current read offset within the buffer
     buffer_offset: usize,
-    /// Pending fetch future (for poll_read)
+    /// Pending fetch future (for `poll_read`)
     fetch_future: Option<FetchFuture>,
 }
 
@@ -83,6 +83,7 @@ impl S3Transport {
     /// Create a new S3 transport with a known size.
     ///
     /// This skips the initial metadata fetch when the size is already known.
+    #[must_use]
     pub fn with_size(client: S3Client, location: S3Location, len: u64) -> Self {
         Self {
             client,
@@ -107,11 +108,13 @@ impl S3Transport {
     }
 
     /// Get a reference to the S3 client.
+    #[must_use]
     pub fn client(&self) -> &S3Client {
         &self.client
     }
 
     /// Get a reference to the S3 location.
+    #[must_use]
     pub fn location(&self) -> &S3Location {
         &self.location
     }

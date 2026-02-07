@@ -24,7 +24,7 @@ impl HttpAuthConfig {
     ///
     /// # Arguments
     ///
-    /// * `token` - Bearer token (e.g., JWT or OAuth2 access token)
+    /// * `token` - Bearer token (e.g., JWT or `OAuth2` access token)
     ///
     /// # Example
     ///
@@ -151,7 +151,7 @@ impl Default for WriterConfig {
 }
 
 impl WriterConfig {
-    /// Create a new builder for WriterConfig.
+    /// Create a new builder for `WriterConfig`.
     #[must_use]
     pub fn builder() -> WriterConfigBuilder {
         WriterConfigBuilder::new()
@@ -209,7 +209,7 @@ impl WriterConfigBuilder {
     ///
     /// # Arguments
     ///
-    /// * `token` - Bearer token (e.g., JWT or OAuth2 access token)
+    /// * `token` - Bearer token (e.g., JWT or `OAuth2` access token)
     ///
     /// # Example
     ///
@@ -254,7 +254,7 @@ impl WriterConfigBuilder {
     ///
     /// # Arguments
     ///
-    /// * `size` - Chunk size for HTTP upload (minimum 1MB for ChunkedPut)
+    /// * `size` - Chunk size for HTTP upload (minimum 1MB for `ChunkedPut`)
     ///
     /// # Example
     ///
@@ -339,6 +339,7 @@ impl WriterBuilder {
     }
 
     /// Set the number of threads for parallel compression.
+    #[must_use]
     pub fn num_threads(mut self, count: usize) -> Self {
         self.config.num_threads = Some(count);
         self

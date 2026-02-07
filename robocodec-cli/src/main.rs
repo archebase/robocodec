@@ -25,13 +25,14 @@
 //! robocodec search topics input.mcap sensor
 //! ```
 
+mod cli;
 mod cmds;
 
 use std::process;
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use cmds::{ExtractCmd, InspectCmd, RewriteCmd, SchemaCmd, SearchCmd};
-use robocodec::cli::Result;
 
 /// Robocodec - Robotics data format toolkit
 ///

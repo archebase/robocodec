@@ -64,6 +64,7 @@ impl DecodedMessageResult {
     /// Get a reference to the decoded message.
     ///
     /// Provides access to the decoded message fields.
+    #[must_use]
     pub fn message(&self) -> &DecodedMessage {
         &self.message
     }
@@ -78,13 +79,13 @@ impl DecodedMessageResult {
 
     /// Get the message type name for this message.
     ///
-    /// Returns the fully-qualified message type (e.g., "std_msgs/String").
+    /// Returns the fully-qualified message type (e.g., "`std_msgs/String`").
     #[must_use]
     pub fn message_type(&self) -> &str {
         &self.channel.message_type
     }
 
-    /// Get the time range as (log_time, publish_time).
+    /// Get the time range as (`log_time`, `publish_time`).
     ///
     /// Returns `None` for either timestamp if not available. Note that when
     /// using the `decoded()` method, both timestamps will always be `None`.
@@ -113,15 +114,15 @@ impl DecodedMessageResult {
 pub struct ChannelInfo {
     /// Unique channel ID within the file
     pub id: u16,
-    /// Topic name (e.g., "/joint_states", "/tf")
+    /// Topic name (e.g., "/`joint_states`", "/tf")
     pub topic: String,
-    /// Message type name (e.g., "sensor_msgs/msg/JointState", "tf2_msgs/TFMessage")
+    /// Message type name (e.g., "`sensor_msgs/msg/JointState`", "`tf2_msgs/TFMessage`")
     pub message_type: String,
     /// Encoding format (e.g., "cdr", "protobuf", "json")
     pub encoding: String,
     /// Schema definition (message definition text for ROS messages)
     pub schema: Option<String>,
-    /// Schema binary data (e.g., protobuf FileDescriptorSet)
+    /// Schema binary data (e.g., protobuf `FileDescriptorSet`)
     pub schema_data: Option<Vec<u8>>,
     /// Schema encoding (e.g., "ros2msg", "protobuf", "ros1msg")
     pub schema_encoding: Option<String>,
@@ -132,7 +133,7 @@ pub struct ChannelInfo {
 }
 
 impl ChannelInfo {
-    /// Create a new ChannelInfo.
+    /// Create a new `ChannelInfo`.
     #[must_use]
     pub fn new(id: u16, topic: impl Into<String>, message_type: impl Into<String>) -> Self {
         Self {
@@ -211,7 +212,7 @@ pub struct RawMessage {
 }
 
 impl RawMessage {
-    /// Create a new RawMessage.
+    /// Create a new `RawMessage`.
     #[must_use]
     pub fn new(channel_id: u16, log_time: u64, publish_time: u64, data: Vec<u8>) -> Self {
         Self {
@@ -259,7 +260,7 @@ pub struct TimestampedDecodedMessage {
 }
 
 impl TimestampedDecodedMessage {
-    /// Create a new TimestampedDecodedMessage.
+    /// Create a new `TimestampedDecodedMessage`.
     #[must_use]
     pub fn new(message: DecodedMessage, log_time: u64, publish_time: u64) -> Self {
         Self {
@@ -270,11 +271,13 @@ impl TimestampedDecodedMessage {
     }
 
     /// Get a reference to the decoded message.
+    #[must_use]
     pub fn message(&self) -> &DecodedMessage {
         &self.message
     }
 
     /// Convert into the decoded message, discarding timestamps.
+    #[must_use]
     pub fn into_message(self) -> DecodedMessage {
         self.message
     }
@@ -282,7 +285,7 @@ impl TimestampedDecodedMessage {
 
 /// Metadata about a single message.
 ///
-/// Lightweight version of RawMessage for references into arena data.
+/// Lightweight version of `RawMessage` for references into arena data.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MessageMetadata {
     /// Channel ID this message belongs to
@@ -300,7 +303,7 @@ pub struct MessageMetadata {
 }
 
 impl MessageMetadata {
-    /// Create a new MessageMetadata.
+    /// Create a new `MessageMetadata`.
     #[must_use]
     pub fn new(
         channel_id: u16,
@@ -322,7 +325,10 @@ impl MessageMetadata {
     /// Get the data range as a tuple.
     #[must_use]
     pub fn data_range(&self) -> (u64, u64) {
-        (self.data_offset, self.data_offset + self.data_len as u64)
+        (
+            self.data_offset,
+            self.data_offset + u64::from(self.data_len),
+        )
     }
 
     /// Check if the data range is valid for a given file size.
@@ -357,7 +363,7 @@ pub struct FileInfo {
 }
 
 impl FileInfo {
-    /// Create a new FileInfo.
+    /// Create a new `FileInfo`.
     #[must_use]
     pub fn new(path: impl Into<String>, format: FileFormat) -> Self {
         Self {

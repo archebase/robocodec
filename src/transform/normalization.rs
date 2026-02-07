@@ -28,6 +28,7 @@ pub type GlobalTypeMappings = HashMap<String, String>;
 
 impl TypeNormalization {
     /// Create the full normalization preset with all brand mappings.
+    #[must_use]
     pub fn full() -> Self {
         Self {
             topic_aware: Self::nmx_topic_mappings(),
@@ -36,6 +37,7 @@ impl TypeNormalization {
     }
 
     /// Create nmx-specific normalization only.
+    #[must_use]
     pub fn nmx() -> Self {
         Self {
             topic_aware: Self::nmx_topic_mappings(),
@@ -44,6 +46,7 @@ impl TypeNormalization {
     }
 
     /// Create genie_msgs-specific normalization only.
+    #[must_use]
     pub fn genie() -> Self {
         Self {
             topic_aware: TopicAwareTypeRenameTransform::new(),
@@ -156,7 +159,8 @@ impl TypeNormalization {
         mapping
     }
 
-    /// Get all mappings as a HashMap for serialization.
+    /// Get all mappings as a `HashMap` for serialization.
+    #[must_use]
     pub fn as_maps(&self) -> (TopicAwareMappings, GlobalTypeMappings) {
         (
             self.topic_aware.mappings().clone(),

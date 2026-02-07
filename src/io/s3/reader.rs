@@ -73,7 +73,7 @@ impl fmt::Display for S3ReaderState {
             S3ReaderState::Initial => write!(f, "Initial"),
             S3ReaderState::Ready { .. } => write!(f, "Ready"),
             S3ReaderState::Eof => write!(f, "End of file"),
-            S3ReaderState::Error(msg) => write!(f, "Error: {}", msg),
+            S3ReaderState::Error(msg) => write!(f, "Error: {msg}"),
         }
     }
 }
@@ -590,7 +590,7 @@ impl S3Reader {
     /// Parse MCAP header to discover channels.
     ///
     /// This is a simple method used for testing. For production use,
-    /// prefer the two-tier approach (try_mcap_footer_first + scan_mcap_for_metadata).
+    /// prefer the two-tier approach (`try_mcap_footer_first` + `scan_mcap_for_metadata`).
     pub fn parse_mcap_header(
         &self,
         data: &[u8],
@@ -656,16 +656,19 @@ impl S3Reader {
     }
 
     /// Get the current reader state.
+    #[must_use]
     pub fn state(&self) -> &S3ReaderState {
         &self.state
     }
 
     /// Get the S3 location.
+    #[must_use]
     pub fn location(&self) -> &S3Location {
         &self.location
     }
 
     /// Get the file format.
+    #[must_use]
     pub fn format(&self) -> crate::io::metadata::FileFormat {
         self.format
     }
@@ -679,11 +682,13 @@ impl S3Reader {
     }
 
     /// Create an iterator over messages in the file.
+    #[must_use]
     pub fn iter_messages(&self) -> S3MessageStream<'_> {
         S3MessageStream::new(self)
     }
 
     /// Check if the reader has more messages.
+    #[must_use]
     pub fn has_more(&self) -> bool {
         !matches!(self.state, S3ReaderState::Eof | S3ReaderState::Error(_))
     }
@@ -757,7 +762,7 @@ impl FormatReader for S3Reader {
 /// Empty channel map singleton.
 static EMPTY_CHANNELS: OnceLock<HashMap<u16, ChannelInfo>> = OnceLock::new();
 
-/// Test-only constructor for creating S3Reader instances directly.
+/// Test-only constructor for creating `S3Reader` instances directly.
 ///
 /// This is public for testing purposes only. Normal usage should use
 /// `S3Reader::open()` or `S3Reader::open_with_config()`.
@@ -768,6 +773,7 @@ pub struct S3ReaderConstructor {
 }
 
 impl S3ReaderConstructor {
+    #[must_use]
     pub fn new_mcap() -> Self {
         Self {
             location: S3Location::new("test-bucket", "test.mcap"),
@@ -776,6 +782,7 @@ impl S3ReaderConstructor {
         }
     }
 
+    #[must_use]
     pub fn build(&self) -> S3Reader {
         S3Reader {
             location: self.location.clone(),
@@ -786,6 +793,7 @@ impl S3ReaderConstructor {
         }
     }
 
+    #[must_use]
     pub fn build_bag(&self) -> S3Reader {
         S3Reader {
             location: S3Location::new("test-bucket", "test.bag"),
@@ -803,7 +811,7 @@ impl S3ReaderConstructor {
 /// memory usage regardless of file size. Uses async iteration pattern
 /// to fetch from S3 without blocking.
 ///
-/// This stream borrows from the parent S3Reader, avoiding unnecessary
+/// This stream borrows from the parent `S3Reader`, avoiding unnecessary
 /// cloning of client, location, and config.
 pub struct S3MessageStream<'a> {
     /// Reference to the parent reader
@@ -839,7 +847,7 @@ impl ParsedMessage {
     /// Get the channel ID for this message.
     fn channel_id(&self) -> u32 {
         match self {
-            ParsedMessage::Mcap(m) => m.channel_id as u32,
+            ParsedMessage::Mcap(m) => u32::from(m.channel_id),
             ParsedMessage::Bag(b) => b.conn_id,
             ParsedMessage::Rrd(r) => r.index as u32,
         }
@@ -891,7 +899,7 @@ impl<'a> S3MessageStream<'a> {
     }
 }
 
-impl<'a> Stream for S3MessageStream<'a> {
+impl Stream for S3MessageStream<'_> {
     type Item = Result<(ChannelInfo, Vec<u8>), FatalError>;
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -921,7 +929,7 @@ impl<'a> Stream for S3MessageStream<'a> {
 }
 
 // Block on the stream for synchronous usage
-impl<'a> S3MessageStream<'a> {
+impl S3MessageStream<'_> {
     /// Get the next message synchronously (blocking).
     ///
     /// This method is provided for convenience when async runtime is available.
@@ -982,7 +990,7 @@ impl<'a> S3MessageStream<'a> {
     }
 }
 
-impl<'a> S3MessageStream<'a> {
+impl S3MessageStream<'_> {
     fn parse_chunk(&mut self, chunk_data: &[u8]) {
         match self.reader.format {
             crate::io::metadata::FileFormat::Mcap => {

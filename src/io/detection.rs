@@ -151,13 +151,14 @@ fn is_rosbag_magic(header: &[u8]) -> bool {
 fn detect_from_extension(path: &Path) -> FileFormat {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|ext| match ext.to_lowercase().as_str() {
-            "mcap" => FileFormat::Mcap,
-            "bag" => FileFormat::Bag,
-            "rrd" => FileFormat::Rrd,
-            _ => FileFormat::Unknown,
+        .map_or(FileFormat::Unknown, |ext| {
+            match ext.to_lowercase().as_str() {
+                "mcap" => FileFormat::Mcap,
+                "bag" => FileFormat::Bag,
+                "rrd" => FileFormat::Rrd,
+                _ => FileFormat::Unknown,
+            }
         })
-        .unwrap_or(FileFormat::Unknown)
 }
 
 #[cfg(test)]

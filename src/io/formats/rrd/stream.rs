@@ -39,6 +39,7 @@ pub enum MessageKind {
 
 impl MessageKind {
     /// Create from u64 value.
+    #[must_use]
     pub fn from_u64(value: u64) -> Option<Self> {
         match value {
             MSG_KIND_END => Some(Self::End),
@@ -50,6 +51,7 @@ impl MessageKind {
     }
 
     /// Convert to u64.
+    #[must_use]
     pub fn as_u64(self) -> u64 {
         self as u64
     }
@@ -75,6 +77,7 @@ impl Compression {
     }
 
     /// Convert to u8.
+    #[must_use]
     pub fn as_u8(self) -> u8 {
         match self {
             Self::Off => COMPRESSION_OFF,
@@ -158,6 +161,7 @@ pub struct StreamingRrdParser {
 
 impl StreamingRrdParser {
     /// Create a new streaming RRD parser.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             state: ParserState::NeedMagic,
@@ -253,12 +257,12 @@ impl StreamingRrdParser {
 
     /// Decompress message payload.
     ///
-    /// In RRF2, ArrowMsg payloads are LZ4 compressed at the message level.
-    /// The payload is an ArrowMsg protobuf (Rerun 0.27+ format) which contains:
-    /// - field 1: entity_path (bytes) - skipped
+    /// In RRF2, `ArrowMsg` payloads are LZ4 compressed at the message level.
+    /// The payload is an `ArrowMsg` protobuf (Rerun 0.27+ format) which contains:
+    /// - field 1: `entity_path` (bytes) - skipped
     /// - field 2: compression (varint) - 0=Off, 2=LZ4
-    /// - field 3: uncompressed_size (varint)
-    /// - field 4: num_instances/flag (varint) - skipped
+    /// - field 3: `uncompressed_size` (varint)
+    /// - field 4: `num_instances/flag` (varint) - skipped
     /// - field 5: payload (bytes) - Arrow IPC data, potentially LZ4 compressed
     fn decompress_payload(&self, payload: &[u8]) -> Result<Vec<u8>, FatalError> {
         // Parse as ArrowMsg protobuf
@@ -275,6 +279,7 @@ impl StreamingRrdParser {
     }
 
     /// Get the RRD stream header if parsed.
+    #[must_use]
     pub fn header(&self) -> Option<&RrdStreamHeader> {
         self.header.as_ref()
     }

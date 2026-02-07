@@ -23,7 +23,7 @@ use crate::core::{CodecError, Encoding, Result};
 pub enum SchemaMetadata {
     /// CDR/ROS2 text schema
     Cdr {
-        /// Type name (e.g., "sensor_msgs/msg/JointState")
+        /// Type name (e.g., "`sensor_msgs/msg/JointState`")
         type_name: String,
         /// Schema text (IDL/MSG format)
         schema_text: String,
@@ -31,11 +31,11 @@ pub enum SchemaMetadata {
         /// This determines which parser to use for the schema text.
         schema_encoding: Option<String>,
     },
-    /// Protobuf FileDescriptorSet
+    /// Protobuf `FileDescriptorSet`
     Protobuf {
         /// Message type name (e.g., "nmx.msg.Lowdim")
         type_name: String,
-        /// FileDescriptorSet binary data
+        /// `FileDescriptorSet` binary data
         file_descriptor_set: Vec<u8>,
         /// Original schema text (for debugging/validation)
         schema_text: Option<String>,
@@ -51,6 +51,7 @@ pub enum SchemaMetadata {
 
 impl SchemaMetadata {
     /// Get the type name for this schema.
+    #[must_use]
     pub fn type_name(&self) -> &str {
         match self {
             SchemaMetadata::Cdr { type_name, .. } => type_name,
@@ -60,6 +61,7 @@ impl SchemaMetadata {
     }
 
     /// Get the encoding for this schema.
+    #[must_use]
     pub fn encoding(&self) -> Encoding {
         match self {
             SchemaMetadata::Cdr { .. } => Encoding::Cdr,
@@ -69,6 +71,7 @@ impl SchemaMetadata {
     }
 
     /// Create CDR schema metadata.
+    #[must_use]
     pub fn cdr(type_name: String, schema_text: String) -> Self {
         SchemaMetadata::Cdr {
             type_name,
@@ -78,6 +81,7 @@ impl SchemaMetadata {
     }
 
     /// Create CDR schema metadata with explicit schema encoding.
+    #[must_use]
     pub fn cdr_with_encoding(
         type_name: String,
         schema_text: String,
@@ -91,6 +95,7 @@ impl SchemaMetadata {
     }
 
     /// Get the schema encoding for CDR schemas.
+    #[must_use]
     pub fn schema_encoding(&self) -> Option<&str> {
         match self {
             SchemaMetadata::Cdr {
@@ -101,6 +106,7 @@ impl SchemaMetadata {
     }
 
     /// Create Protobuf schema metadata.
+    #[must_use]
     pub fn protobuf(type_name: String, file_descriptor_set: Vec<u8>) -> Self {
         SchemaMetadata::Protobuf {
             type_name,
@@ -110,6 +116,7 @@ impl SchemaMetadata {
     }
 
     /// Create Protobuf schema metadata with optional schema text.
+    #[must_use]
     pub fn protobuf_with_text(
         type_name: String,
         file_descriptor_set: Vec<u8>,
@@ -123,6 +130,7 @@ impl SchemaMetadata {
     }
 
     /// Create JSON schema metadata.
+    #[must_use]
     pub fn json(type_name: String, schema_text: String) -> Self {
         SchemaMetadata::Json {
             type_name,
@@ -138,7 +146,7 @@ impl SchemaMetadata {
 /// Trait for transforming schemas between different formats or with renames.
 ///
 /// This trait abstracts schema transformation logic, allowing the rewriter
-/// to handle both text-based (ROS IDL) and binary (Protobuf FileDescriptorSet)
+/// to handle both text-based (ROS IDL) and binary (Protobuf `FileDescriptorSet`)
 /// schemas through a common interface.
 pub trait SchemaTransformer: Send + Sync {
     /// Transform a schema by applying package/type renames.
@@ -177,6 +185,7 @@ pub struct CdrSchemaTransformer;
 
 impl CdrSchemaTransformer {
     /// Create a new CDR schema transformer.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -186,12 +195,13 @@ impl CdrSchemaTransformer {
     /// # Arguments
     ///
     /// * `schema_text` - Original schema text
-    /// * `old_type_name` - Old type name (e.g., "genie_msgs/msg/ArmState")
+    /// * `old_type_name` - Old type name (e.g., "`genie_msgs/msg/ArmState`")
     /// * `new_type_name` - New type name (e.g., "archebase/msgs/ArmState")
     ///
     /// # Returns
     ///
     /// Rewritten schema text
+    #[must_use]
     pub fn rewrite_schema(
         &self,
         schema_text: &str,
@@ -227,9 +237,9 @@ impl CdrSchemaTransformer {
 
     /// Extract the prefix from a type name (everything except the message name).
     ///
-    /// For "sensor_msgs/msg/JointState" → "sensor_msgs/msg/"
+    /// For "`sensor_msgs/msg/JointState`" → "`sensor_msgs/msg`/"
     /// For "archebase/msgs/ArmState" → "archebase/msgs/"
-    /// For "MessageType" → ""
+    /// For "`MessageType`" → ""
     fn extract_type_prefix(type_name: &str) -> String {
         if let Some(last_slash) = type_name.rfind('/') {
             format!("{}/", &type_name[..last_slash])
@@ -302,28 +312,29 @@ impl SchemaTransformer for CdrSchemaTransformer {
 // Protobuf Schema Transformer
 // =============================================================================
 
-/// Transformer for Protobuf FileDescriptorSet schemas.
+/// Transformer for Protobuf `FileDescriptorSet` schemas.
 ///
-/// Handles package renaming in binary protobuf FileDescriptorSet data.
+/// Handles package renaming in binary protobuf `FileDescriptorSet` data.
 pub struct ProtobufSchemaTransformer;
 
 impl ProtobufSchemaTransformer {
     /// Create a new Protobuf schema transformer.
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
 
-    /// Transform a FileDescriptorSet by renaming packages.
+    /// Transform a `FileDescriptorSet` by renaming packages.
     ///
     /// # Arguments
     ///
-    /// * `fds_bytes` - FileDescriptorSet binary data
+    /// * `fds_bytes` - `FileDescriptorSet` binary data
     /// * `old_package` - Old package name to replace
     /// * `new_package` - New package name
     ///
     /// # Returns
     ///
-    /// Transformed FileDescriptorSet binary data
+    /// Transformed `FileDescriptorSet` binary data
     pub fn transform_file_descriptor_set(
         &self,
         fds_bytes: &[u8],
@@ -396,7 +407,7 @@ impl ProtobufSchemaTransformer {
         // Update field type references
         for field in &mut message_type.field {
             if let Some(type_name) = &field.type_name
-                && type_name.starts_with(".")
+                && type_name.starts_with('.')
             {
                 // Fully qualified type name (e.g., ".old_pkg.Message")
                 let new_type_name =
@@ -439,21 +450,21 @@ impl ProtobufSchemaTransformer {
         }
     }
 
-    /// Rename a message type within a FileDescriptorSet.
+    /// Rename a message type within a `FileDescriptorSet`.
     ///
     /// This renames the message type definition and updates all references to it
-    /// throughout the FileDescriptorSet.
+    /// throughout the `FileDescriptorSet`.
     ///
     /// # Arguments
     ///
-    /// * `fds_bytes` - FileDescriptorSet binary data
-    /// * `old_message_name` - Old message name (e.g., "LowdimData")
-    /// * `new_message_name` - New message name (e.g., "JointStates")
+    /// * `fds_bytes` - `FileDescriptorSet` binary data
+    /// * `old_message_name` - Old message name (e.g., "`LowdimData`")
+    /// * `new_message_name` - New message name (e.g., "`JointStates`")
     /// * `package` - Package name for context (e.g., "nmx.msg")
     ///
     /// # Returns
     ///
-    /// Transformed FileDescriptorSet binary data with the message renamed
+    /// Transformed `FileDescriptorSet` binary data with the message renamed
     pub fn rename_message_type_in_fds(
         &self,
         fds_bytes: &[u8],
@@ -628,6 +639,7 @@ impl ProtobufSchemaTransformer {
     /// # Returns
     ///
     /// Package name (e.g., "nmx.msg")
+    #[must_use]
     pub fn extract_package(type_name: &str) -> Option<String> {
         // Remove leading dot if present
         let name = type_name.strip_prefix('.').unwrap_or(type_name);

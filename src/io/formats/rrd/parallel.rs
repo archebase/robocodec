@@ -18,7 +18,10 @@ use std::time::Instant;
 use rayon::prelude::*;
 
 use crate::io::TopicFilter;
-use crate::io::formats::rrd::constants::*;
+use crate::io::formats::rrd::constants::{
+    DEFAULT_TOPIC, MESSAGE_ENCODING_PROTOBUF, MESSAGE_HEADER_SIZE, MSG_KIND_ARROW_MSG,
+    MSG_KIND_END, MSG_KIND_SET_STORE_INFO, RRD_MAGIC, STREAM_FOOTER_SIZE, STREAM_HEADER_SIZE,
+};
 use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
 use crate::io::traits::{
     FormatReader, MessageChunkData, ParallelReader, ParallelReaderConfig, ParallelReaderStats,
@@ -116,6 +119,7 @@ impl ParallelRrdReader {
     }
 
     /// Get the message index.
+    #[must_use]
     pub fn message_index(&self) -> &[MessageIndex] {
         &self.message_index
     }
@@ -134,10 +138,7 @@ impl ParallelRrdReader {
         if magic != RRD_MAGIC {
             return Err(CodecError::parse(
                 "ParallelRrdReader",
-                format!(
-                    "Invalid RRD magic: expected {:?}, got {:?}",
-                    RRD_MAGIC, magic
-                ),
+                format!("Invalid RRD magic: expected {RRD_MAGIC:?}, got {magic:?}"),
             ));
         }
 
@@ -224,7 +225,7 @@ impl ParallelRrdReader {
 
     /// Check if an RRD file can be read in parallel.
     ///
-    /// Returns (has_messages, message_count).
+    /// Returns (`has_messages`, `message_count`).
     pub fn check_parallel<P: AsRef<Path>>(path: P) -> Result<(bool, usize)> {
         let file = File::open(path.as_ref()).map_err(|e| {
             CodecError::encode("ParallelRrdReader", format!("Failed to open file: {e}"))
@@ -283,7 +284,7 @@ impl ParallelRrdReader {
 
     /// Decode messages with timestamps from the RRD file.
     ///
-    /// Returns an iterator that yields decoded messages with their log_time and publish_time.
+    /// Returns an iterator that yields decoded messages with their `log_time` and `publish_time`.
     /// RRF2 doesn't have timestamps at message level, so sequential timestamps are generated.
     ///
     /// # Example
@@ -340,6 +341,7 @@ impl<'a> RrdDecodedMessageWithTimestampIter<'a> {
     }
 
     /// Get the channels for this iterator.
+    #[must_use]
     pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         self.channels
     }
@@ -355,7 +357,7 @@ impl<'a> RrdDecodedMessageWithTimestampIter<'a> {
     }
 }
 
-impl<'a> Iterator for RrdDecodedMessageWithTimestampIter<'a> {
+impl Iterator for RrdDecodedMessageWithTimestampIter<'_> {
     type Item = Result<(crate::io::metadata::TimestampedDecodedMessage, ChannelInfo)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -397,7 +399,7 @@ impl<'a> RrdDecodedMessageWithTimestampStream<'a> {
     }
 }
 
-impl<'a> Iterator for RrdDecodedMessageWithTimestampStream<'a> {
+impl Iterator for RrdDecodedMessageWithTimestampStream<'_> {
     type Item = Result<(crate::io::metadata::TimestampedDecodedMessage, ChannelInfo)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -504,6 +506,14 @@ impl FormatReader for ParallelRrdReader {
         self.file_size
     }
 
+    fn decoded_with_timestamp_boxed(
+        &self,
+    ) -> Result<Box<dyn crate::io::traits::DecodedMessageIterator + Send + Sync + '_>> {
+        let iter = self.decode_messages_with_timestamp()?;
+        let stream = iter.stream()?;
+        Ok(Box::new(stream))
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -527,9 +537,9 @@ impl ParallelReader for ParallelRrdReader {
         }
 
         // Determine chunk size based on message count and thread count
-        let num_threads = config
-            .num_threads
-            .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
+        let num_threads = config.num_threads.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
+        });
 
         let messages_per_chunk = self.message_index.len().div_ceil(num_threads);
 
@@ -580,7 +590,7 @@ impl ParallelReader for ParallelRrdReader {
     fn chunk_count(&self) -> usize {
         // Return number of "chunks" based on thread count
         // For RRF2, we divide messages into chunks dynamically
-        let num_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let num_threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         let messages_per_chunk = self.message_index.len().div_ceil(num_threads);
         self.message_index.len().div_ceil(messages_per_chunk.max(1))
     }
@@ -604,6 +614,11 @@ struct RrdMetadata {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    use crate::io::formats::rrd::constants::{
+        COMPRESSION_OFF, MSG_KIND_ARROW_MSG, MSG_KIND_END, RRD_FOOTER_MAGIC, RRD_MAGIC,
+        RRD_VERSION, SERIALIZER_PROTOBUF, STREAM_FOOTER_SIZE,
+    };
 
     fn create_test_rrd_file(path: &str) -> std::io::Result<()> {
         let mut file = std::fs::File::create(path)?;

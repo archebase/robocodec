@@ -56,7 +56,7 @@ pub trait TransportExt: Transport {
     ///
     /// This is a convenience method that wraps `poll_seek` in a future.
     /// Returns the new position after seeking.
-    fn seek<'a>(&'a mut self, pos: u64) -> SeekFuture<'a, Self>
+    fn seek(&mut self, pos: u64) -> SeekFuture<'_, Self>
     where
         Self: Unpin,
     {
@@ -82,7 +82,7 @@ pub trait TransportExt: Transport {
     /// Async read all remaining bytes into a vector.
     ///
     /// Returns an empty vector if the length is unknown.
-    fn read_to_end<'a>(&'a mut self) -> ReadToEndFuture<'a, Self>
+    fn read_to_end(&mut self) -> ReadToEndFuture<'_, Self>
     where
         Self: Unpin,
     {

@@ -157,6 +157,7 @@ impl SequentialBagReader {
     }
 
     /// Get the connection ID to channel ID mapping.
+    #[must_use]
     pub fn conn_id_map(&self) -> &HashMap<u32, u16> {
         &self.conn_id_map
     }
@@ -227,7 +228,7 @@ pub struct SequentialBagRawIter {
     chunk_records: Vec<Vec<rosbag::record_types::MessageData<'static>>>,
     /// Current messages being processed
     current_messages: Option<Vec<rosbag::record_types::MessageData<'static>>>,
-    /// Current index within current_messages
+    /// Current index within `current_messages`
     current_index: usize,
     /// Current chunk index
     chunk_index: usize,

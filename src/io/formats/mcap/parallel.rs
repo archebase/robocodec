@@ -108,13 +108,14 @@ impl ParallelMcapReader {
     }
 
     /// Get chunk indexes for parallel reading.
+    #[must_use]
     pub fn chunk_indexes(&self) -> &[ChunkIndex] {
         &self.chunk_indexes
     }
 
     /// Check if an MCAP file has a summary with chunk indexes.
     ///
-    /// Returns (has_summary, has_chunk_indexes).
+    /// Returns (`has_summary`, `has_chunk_indexes`).
     pub fn check_summary<P: AsRef<Path>>(path: P) -> Result<(bool, bool)> {
         let file = File::open(path.as_ref()).map_err(|e| {
             CodecError::encode("ParallelMcapReader", format!("Failed to open file: {e}"))
@@ -165,43 +166,40 @@ impl ParallelMcapReader {
         // Try to read summary from footer first (more efficient for files with summary)
         let summary_result = Self::read_summary_from_footer(data);
 
-        match summary_result {
-            Ok(Some((mut channels, stats, chunk_indexes))) => {
-                // If we got chunk_indexes from summary but no channels, scan data section for channels
-                if channels.is_empty() && !chunk_indexes.is_empty() {
-                    let (data_channels, _) = Self::scan_data_section(data)?;
-                    channels = data_channels;
-                }
+        if let Ok(Some((mut channels, stats, chunk_indexes))) = summary_result {
+            // If we got chunk_indexes from summary but no channels, scan data section for channels
+            if channels.is_empty() && !chunk_indexes.is_empty() {
+                let (data_channels, _) = Self::scan_data_section(data)?;
+                channels = data_channels;
+            }
 
-                let start_time = if stats.message_start_time > 0 {
-                    Some(stats.message_start_time)
-                } else {
-                    None
-                };
-                let end_time = if stats.message_end_time > 0 {
-                    Some(stats.message_end_time)
-                } else {
-                    None
-                };
-                Ok(McapMetadata {
-                    channels,
-                    message_count: stats.message_count,
-                    start_time,
-                    end_time,
-                    chunk_indexes,
-                })
-            }
-            Ok(None) | Err(_) => {
-                // No summary or failed to read - scan the data section
-                let (channels, chunk_indexes) = Self::scan_data_section(data)?;
-                Ok(McapMetadata {
-                    channels,
-                    message_count: 0,
-                    start_time: None,
-                    end_time: None,
-                    chunk_indexes,
-                })
-            }
+            let start_time = if stats.message_start_time > 0 {
+                Some(stats.message_start_time)
+            } else {
+                None
+            };
+            let end_time = if stats.message_end_time > 0 {
+                Some(stats.message_end_time)
+            } else {
+                None
+            };
+            Ok(McapMetadata {
+                channels,
+                message_count: stats.message_count,
+                start_time,
+                end_time,
+                chunk_indexes,
+            })
+        } else {
+            // No summary or failed to read - scan the data section
+            let (channels, chunk_indexes) = Self::scan_data_section(data)?;
+            Ok(McapMetadata {
+                channels,
+                message_count: 0,
+                start_time: None,
+                end_time: None,
+                chunk_indexes,
+            })
         }
     }
 
@@ -592,8 +590,7 @@ impl ParallelMcapReader {
             "" | "none" => compressed_data.to_vec(),
             other => {
                 return Err(CodecError::unsupported(format!(
-                    "Unsupported compression: {}",
-                    other
+                    "Unsupported compression: {other}"
                 )));
             }
         };
@@ -673,7 +670,7 @@ impl ParallelMcapReader {
                 log_time: msg.log_time,
                 publish_time: msg.publish_time,
                 data: msg.data,
-                sequence: Some(msg.sequence as u64),
+                sequence: Some(u64::from(msg.sequence)),
             };
             chunk.add_message(raw_msg);
         }
@@ -746,14 +743,11 @@ impl ParallelReader for ParallelMcapReader {
     ) -> Result<ParallelReaderStats> {
         let num_threads = config.num_threads.unwrap_or_else(|| {
             std::thread::available_parallelism()
-                .map(|n| n.get())
+                .map(std::num::NonZero::get)
                 .unwrap_or(8)
         });
 
-        println!(
-            "Starting parallel MCAP reader with {} worker threads...",
-            num_threads
-        );
+        println!("Starting parallel MCAP reader with {num_threads} worker threads...");
         println!("  File: {}", self.path);
         println!("  Chunks to process: {}", self.chunk_indexes.len());
 
@@ -768,7 +762,7 @@ impl ParallelReader for ParallelMcapReader {
         // Create thread pool for controlled parallelism
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
-            .thread_name(|index| format!("mcap-reader-{}", index))
+            .thread_name(|index| format!("mcap-reader-{index}"))
             .build()
             .map_err(|e| {
                 CodecError::encode(
@@ -820,8 +814,8 @@ impl ParallelReader for ParallelMcapReader {
         let duration = total_start.elapsed();
 
         println!("Parallel MCAP reader complete:");
-        println!("  Chunks processed: {}", chunks_processed);
-        println!("  Messages read: {}", messages_read);
+        println!("  Chunks processed: {chunks_processed}");
+        println!("  Messages read: {messages_read}");
         println!(
             "  Total bytes: {:.2} MB",
             total_bytes as f64 / (1024.0 * 1024.0)

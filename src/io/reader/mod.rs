@@ -53,10 +53,9 @@ pub use config::{HttpAuthConfig, ReaderConfig, ReaderConfigBuilder};
 use crate::io::detection::detect_format;
 use crate::io::formats::bag::BagFormat;
 use crate::io::formats::mcap::McapFormat;
-use crate::io::formats::mcap::reader::DecodedMessageWithTimestampStream as McapTimestampedStream;
 use crate::io::formats::rrd::RrdFormat;
 use crate::io::metadata::{ChannelInfo, DecodedMessageResult, FileFormat};
-use crate::io::traits::{FormatReader, ParallelReader};
+use crate::io::traits::{DecodedMessageIterator, FormatReader, ParallelReader};
 use crate::{CodecError, Result};
 
 /// Get or create a shared Tokio runtime for blocking async operations.
@@ -70,18 +69,27 @@ fn shared_runtime() -> &'static tokio::runtime::Runtime {
     RT.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
 }
 
-enum DecodedMessageIterInner<'a> {
-    Mcap(McapTimestampedStream<'a>),
-    Bag(crate::io::formats::bag::BagDecodedMessageWithTimestampStream<'a>),
-    Rrd(crate::io::formats::rrd::DecodedMessageWithTimestampStream<'a>),
-    ParallelRrd(crate::io::formats::rrd::parallel::RrdDecodedMessageWithTimestampStream<'a>),
+/// Helper function to convert a timestamped message and channel into a decoded message result.
+fn to_decoded_message_result(
+    msg: crate::io::metadata::TimestampedDecodedMessage,
+    ch: ChannelInfo,
+) -> DecodedMessageResult {
+    DecodedMessageResult {
+        message: msg.message,
+        channel: ch,
+        log_time: Some(msg.log_time),
+        publish_time: Some(msg.publish_time),
+        sequence: None,
+    }
 }
 
 /// Unified decoded message iterator.
 ///
-/// This iterator works across both MCAP and ROS1 bag formats,
+/// This iterator works across all supported formats (MCAP, ROS1 bag, RRF2),
 /// providing a consistent interface for iterating over decoded messages.
 /// Timestamps are populated when available from the underlying format.
+///
+/// This uses a trait-based approach internally, avoiding fragile downcasting.
 ///
 /// # Example
 ///
@@ -100,106 +108,24 @@ enum DecodedMessageIterInner<'a> {
 /// # }
 /// ```
 pub struct DecodedMessageIter<'a> {
-    inner: DecodedMessageIterInner<'a>,
+    /// The inner boxed iterator over timestamped messages
+    inner: Box<dyn DecodedMessageIterator + Send + Sync + 'a>,
 }
 
-// Import alias for cleaner code
-use DecodedMessageIterInner as Inner;
+impl<'a> DecodedMessageIter<'a> {
+    /// Create a new decoded message iterator from a boxed iterator.
+    fn new(inner: Box<dyn DecodedMessageIterator + Send + Sync + 'a>) -> Self {
+        Self { inner }
+    }
+}
 
-impl<'a> Iterator for DecodedMessageIter<'a> {
+impl Iterator for DecodedMessageIter<'_> {
     type Item = Result<DecodedMessageResult>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match &mut self.inner {
-            Inner::Mcap(stream) => stream.next().map(|result| {
-                result.map(|(msg, ch)| {
-                    let ch_info = ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic.clone(),
-                        message_type: ch.message_type.clone(),
-                        encoding: ch.encoding.clone(),
-                        schema: ch.schema.clone(),
-                        schema_data: ch.schema_data.clone(),
-                        schema_encoding: ch.schema_encoding.clone(),
-                        message_count: ch.message_count,
-                        callerid: ch.callerid.clone(),
-                    };
-                    DecodedMessageResult {
-                        message: msg.message,
-                        channel: ch_info,
-                        log_time: Some(msg.log_time),
-                        publish_time: Some(msg.publish_time),
-                        sequence: None,
-                    }
-                })
-            }),
-            Inner::Bag(stream) => stream.next().map(|result| {
-                result.map(|(msg, ch)| {
-                    let ch_info = ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic.clone(),
-                        message_type: ch.message_type.clone(),
-                        encoding: ch.encoding.clone(),
-                        schema: ch.schema.clone(),
-                        schema_data: ch.schema_data.clone(),
-                        schema_encoding: ch.schema_encoding.clone(),
-                        message_count: ch.message_count,
-                        callerid: ch.callerid.clone(),
-                    };
-                    DecodedMessageResult {
-                        message: msg.message,
-                        channel: ch_info,
-                        log_time: Some(msg.log_time),
-                        publish_time: Some(msg.publish_time),
-                        sequence: None,
-                    }
-                })
-            }),
-            Inner::Rrd(stream) => stream.next().map(|result| {
-                result.map(|(msg, ch)| {
-                    let ch_info = ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic.clone(),
-                        message_type: ch.message_type.clone(),
-                        encoding: ch.encoding.clone(),
-                        schema: ch.schema.clone(),
-                        schema_data: ch.schema_data.clone(),
-                        schema_encoding: ch.schema_encoding.clone(),
-                        message_count: ch.message_count,
-                        callerid: ch.callerid.clone(),
-                    };
-                    DecodedMessageResult {
-                        message: msg.message,
-                        channel: ch_info,
-                        log_time: Some(msg.log_time),
-                        publish_time: Some(msg.publish_time),
-                        sequence: None,
-                    }
-                })
-            }),
-            Inner::ParallelRrd(stream) => stream.next().map(|result| {
-                result.map(|(msg, ch)| {
-                    let ch_info = ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic.clone(),
-                        message_type: ch.message_type.clone(),
-                        encoding: ch.encoding.clone(),
-                        schema: ch.schema.clone(),
-                        schema_data: ch.schema_data.clone(),
-                        schema_encoding: ch.schema_encoding.clone(),
-                        message_count: ch.message_count,
-                        callerid: ch.callerid.clone(),
-                    };
-                    DecodedMessageResult {
-                        message: msg.message,
-                        channel: ch_info,
-                        log_time: Some(msg.log_time),
-                        publish_time: Some(msg.publish_time),
-                        sequence: None,
-                    }
-                })
-            }),
-        }
+        self.inner
+            .next()
+            .map(|result| result.map(|(msg, ch)| to_decoded_message_result(msg, ch)))
     }
 }
 
@@ -237,10 +163,10 @@ impl RoboReader {
             let rt = shared_runtime();
             let transport = rt.block_on(async {
                 let client = crate::io::s3::S3Client::default_client().map_err(|e| {
-                    CodecError::encode("S3", format!("Failed to create S3 client: {}", e))
+                    CodecError::encode("S3", format!("Failed to create S3 client: {e}"))
                 })?;
                 S3Transport::new(client, location).await.map_err(|e| {
-                    CodecError::encode("S3", format!("Failed to create S3 transport: {}", e))
+                    CodecError::encode("S3", format!("Failed to create S3 transport: {e}"))
                 })
             })?;
             return Ok(Some(Box::new(transport)));
@@ -263,15 +189,12 @@ impl RoboReader {
                         .map_err(|e| {
                             CodecError::encode(
                                 "HTTP",
-                                format!("Failed to create HTTP transport: {}", e),
+                                format!("Failed to create HTTP transport: {e}"),
                             )
                         })
                 } else {
                     HttpTransport::new(base_url).await.map_err(|e| {
-                        CodecError::encode(
-                            "HTTP",
-                            format!("Failed to create HTTP transport: {}", e),
-                        )
+                        CodecError::encode("HTTP", format!("Failed to create HTTP transport: {e}"))
                     })
                 }
             })?;
@@ -285,7 +208,7 @@ impl RoboReader {
     /// Parse HTTP authentication from URL query parameters.
     ///
     /// Supports `?bearer_token=xxx` or `?basic_auth=user:pass`.
-    /// Returns (base_url, auth_from_query).
+    /// Returns (`base_url`, `auth_from_query`).
     #[cfg(feature = "remote")]
     fn parse_http_auth_from_url(
         url: &str,
@@ -356,11 +279,11 @@ impl RoboReader {
 
     /// Open a file with automatic format detection and default configuration.
     ///
-    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    /// Supports both local file paths and S3 URLs (<s3://bucket/key>).
     ///
     /// # Arguments
     ///
-    /// * `path` - Path to the file to open, or S3 URL (s3://bucket/key)
+    /// * `path` - Path to the file to open, or S3 URL (<s3://bucket/key>)
     ///
     /// # Example
     ///
@@ -380,11 +303,11 @@ impl RoboReader {
 
     /// Open a file with the specified configuration.
     ///
-    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    /// Supports both local file paths and S3 URLs (<s3://bucket/key>).
     ///
     /// # Arguments
     ///
-    /// * `path` - Path to the file to open, or S3 URL (s3://bucket/key)
+    /// * `path` - Path to the file to open, or S3 URL (<s3://bucket/key>)
     /// * `config` - Reader configuration
     ///
     /// # Example
@@ -453,7 +376,7 @@ impl RoboReader {
                     FileFormat::Unknown => {
                         return Err(CodecError::parse(
                             "RoboReader",
-                            format!("Unknown file format from URL: {}", path),
+                            format!("Unknown file format from URL: {path}"),
                         ));
                     }
                 }
@@ -466,7 +389,7 @@ impl RoboReader {
         if !path_obj.exists() {
             return Err(CodecError::parse(
                 "RoboReader",
-                format!("File not found: {}", path),
+                format!("File not found: {path}"),
             ));
         }
 
@@ -479,7 +402,7 @@ impl RoboReader {
             FileFormat::Unknown => {
                 return Err(CodecError::parse(
                     "RoboReader",
-                    format!("Unknown file format: {}", path),
+                    format!("Unknown file format: {path}"),
                 ));
             }
         };
@@ -516,70 +439,39 @@ impl RoboReader {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Trait-based approach
+    ///
+    /// This method uses the `decoded_with_timestamp_boxed()` trait method
+    /// instead of downcasting, making it more maintainable and allowing
+    /// new formats to be added without modifying this code.
     pub fn decoded(&self) -> Result<DecodedMessageIter<'_>> {
-        use crate::io::formats::bag::ParallelBagReader;
-        use crate::io::formats::mcap::reader::McapReader;
-        use crate::io::formats::rrd::RrdReader;
+        // Use the trait-based approach - this will work for any format
+        // that implements decoded_with_timestamp_boxed()
+        let boxed_iter = self.inner.decoded_with_timestamp_boxed().map_err(|_| {
+            let format_name = match self.inner.format() {
+                crate::io::metadata::FileFormat::Mcap => "MCAP",
+                crate::io::metadata::FileFormat::Bag => "ROS1 Bag",
+                crate::io::metadata::FileFormat::Rrd => "RRD",
+                crate::io::metadata::FileFormat::Unknown => "Unknown",
+            };
+            CodecError::parse(
+                "RoboReader",
+                format!("decoded() not supported for this format (detected: {format_name})"),
+            )
+        })?;
 
-        // Try MCAP first - use timestamped stream to get timestamps
-        if let Some(mcap) = self.inner.as_any().downcast_ref::<McapReader>() {
-            let mcap_iter = mcap.decode_messages_with_timestamp()?;
-            let mcap_stream = mcap_iter.stream()?;
-            return Ok(DecodedMessageIter {
-                inner: Inner::Mcap(mcap_stream),
-            });
-        }
-
-        // Try BAG - use timestamped stream to get timestamps
-        if let Some(bag) = self.inner.as_any().downcast_ref::<ParallelBagReader>() {
-            let bag_iter = bag.decode_messages_with_timestamp()?;
-            let bag_stream = bag_iter.stream()?;
-            return Ok(DecodedMessageIter {
-                inner: Inner::Bag(bag_stream),
-            });
-        }
-
-        // Try RRD - use timestamped stream to get timestamps
-        if let Some(rrd) = self.inner.as_any().downcast_ref::<RrdReader>() {
-            let rrd_iter = rrd.decode_messages_with_timestamp()?;
-            let rrd_stream = rrd_iter.stream()?;
-            return Ok(DecodedMessageIter {
-                inner: Inner::Rrd(rrd_stream),
-            });
-        }
-
-        // Try Parallel RRD - use timestamped stream to get timestamps
-        use crate::io::formats::rrd::parallel::ParallelRrdReader;
-        if let Some(rrd) = self.inner.as_any().downcast_ref::<ParallelRrdReader>() {
-            let rrd_iter = rrd.decode_messages_with_timestamp()?;
-            let rrd_stream = rrd_iter.stream()?;
-            return Ok(DecodedMessageIter {
-                inner: Inner::ParallelRrd(rrd_stream),
-            });
-        }
-
-        // Include format information in error for better debugging
-        let format_name = match self.inner.format() {
-            crate::io::metadata::FileFormat::Mcap => "MCAP",
-            crate::io::metadata::FileFormat::Bag => "ROS1 Bag",
-            crate::io::metadata::FileFormat::Rrd => "RRD",
-            crate::io::metadata::FileFormat::Unknown => "Unknown",
-        };
-        Err(CodecError::parse(
-            "RoboReader",
-            format!(
-                "decoded() not supported for this format (detected: {})",
-                format_name
-            ),
-        ))
+        Ok(DecodedMessageIter::new(boxed_iter))
     }
 
     /// Get the file information as a unified struct.
+    #[must_use]
     pub fn file_info(&self) -> crate::io::metadata::FileInfo {
         self.inner.file_info()
     }
 
     /// Get the detected file format.
+    #[must_use]
     pub fn format(&self) -> FileFormat {
         self.inner.format()
     }
@@ -674,7 +566,7 @@ impl FormatReader for RoboReader {
             FileFormat::Unknown => {
                 return Err(CodecError::parse(
                     "RoboReader",
-                    format!("Unknown file format: {}", path),
+                    format!("Unknown file format: {path}"),
                 ));
             }
         };
@@ -756,6 +648,7 @@ mod tests {
     }
 
     impl FormatReader for MockReader {
+        #[cfg(feature = "remote")]
         fn open_from_transport(
             _transport: Box<dyn crate::io::transport::Transport>,
             path: String,

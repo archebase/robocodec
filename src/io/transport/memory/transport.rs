@@ -29,7 +29,7 @@ use crate::io::transport::Transport;
 ///
 /// # Thread Safety
 ///
-/// MemoryTransport is Send + Sync, allowing it to be used in multi-threaded
+/// `MemoryTransport` is Send + Sync, allowing it to be used in multi-threaded
 /// contexts. The Transport trait's poll methods ensure exclusive access
 /// through Pin<&mut Self>.
 pub struct MemoryTransport {
@@ -40,7 +40,7 @@ pub struct MemoryTransport {
 }
 
 impl MemoryTransport {
-    /// Create a new MemoryTransport from owned bytes.
+    /// Create a new `MemoryTransport` from owned bytes.
     ///
     /// # Arguments
     ///
@@ -55,6 +55,7 @@ impl MemoryTransport {
     /// let transport = MemoryTransport::new(data);
     /// assert_eq!(transport.len(), Some(11));
     /// ```
+    #[must_use]
     pub fn new(data: Vec<u8>) -> Self {
         Self {
             data: Bytes::from(data),
@@ -62,7 +63,7 @@ impl MemoryTransport {
         }
     }
 
-    /// Create a new MemoryTransport from a byte slice.
+    /// Create a new `MemoryTransport` from a byte slice.
     ///
     /// This copies the slice into owned memory.
     ///
@@ -78,6 +79,7 @@ impl MemoryTransport {
     /// let transport = MemoryTransport::from_slice(b"test data");
     /// assert_eq!(transport.len(), Some(9));
     /// ```
+    #[must_use]
     pub fn from_slice(data: &[u8]) -> Self {
         Self {
             data: Bytes::copy_from_slice(data),
@@ -85,7 +87,7 @@ impl MemoryTransport {
         }
     }
 
-    /// Create a new MemoryTransport from Bytes.
+    /// Create a new `MemoryTransport` from Bytes.
     ///
     /// This is zero-cost since Bytes is already owned.
     ///
@@ -253,7 +255,7 @@ impl MemoryTransport {
     ///
     /// # Arguments
     ///
-    /// * `bufs` - Slice of IoSliceMut buffers to read into
+    /// * `bufs` - Slice of `IoSliceMut` buffers to read into
     ///
     /// # Returns
     ///

@@ -30,11 +30,12 @@ pub struct JsonDecoder {
 
 impl JsonDecoder {
     /// Create a new JSON decoder.
+    #[must_use]
     pub fn new() -> Self {
         Self { _private: () }
     }
 
-    /// Decode a JSON string into a DecodedMessage.
+    /// Decode a JSON string into a `DecodedMessage`.
     ///
     /// # Arguments
     ///
@@ -46,7 +47,7 @@ impl JsonDecoder {
         self.json_value_to_message(&value)
     }
 
-    /// Decode JSON bytes into a DecodedMessage.
+    /// Decode JSON bytes into a `DecodedMessage`.
     ///
     /// # Arguments
     ///
@@ -111,7 +112,7 @@ impl JsonDecoder {
         }
     }
 
-    /// Encode a DecodedMessage to a JSON string.
+    /// Encode a `DecodedMessage` to a JSON string.
     ///
     /// # Arguments
     ///
@@ -154,7 +155,7 @@ impl JsonDecoder {
             CodecValue::UInt16(u) => Ok(serde_json::Value::Number(serde_json::Number::from(*u))),
             CodecValue::UInt32(u) => Ok(serde_json::Value::Number(serde_json::Number::from(*u))),
             CodecValue::UInt64(u) => Ok(serde_json::Value::Number(serde_json::Number::from(*u))),
-            CodecValue::Float32(f) => serde_json::Number::from_f64(*f as f64)
+            CodecValue::Float32(f) => serde_json::Number::from_f64(f64::from(*f))
                 .map(serde_json::Value::Number)
                 .ok_or_else(|| CodecError::parse("float32", "not representable as JSON number")),
             CodecValue::Float64(f) => serde_json::Number::from_f64(*f)

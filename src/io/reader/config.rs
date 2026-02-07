@@ -73,7 +73,7 @@ impl Default for ReaderConfig {
 }
 
 impl ReaderConfig {
-    /// Create a new builder for ReaderConfig.
+    /// Create a new builder for `ReaderConfig`.
     #[must_use]
     pub fn builder() -> ReaderConfigBuilder {
         ReaderConfigBuilder::new()

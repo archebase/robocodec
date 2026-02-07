@@ -104,10 +104,10 @@ pub trait AsStreamingParser {
     /// Message type for this parser
     type Message;
 
-    /// Get a reference as a StreamingParser trait object.
+    /// Get a reference as a `StreamingParser` trait object.
     fn as_streaming_parser(&self) -> &dyn StreamingParser<Message = Self::Message>;
 
-    /// Get a mutable reference as a StreamingParser trait object.
+    /// Get a mutable reference as a `StreamingParser` trait object.
     fn as_streaming_parser_mut(&mut self) -> &mut dyn StreamingParser<Message = Self::Message>;
 }
 

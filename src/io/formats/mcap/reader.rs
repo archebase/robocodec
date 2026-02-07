@@ -40,7 +40,7 @@ impl McapFormat {
 
     /// Create an MCAP writer with the given configuration.
     ///
-    /// Returns a boxed FormatWriter trait object for unified writer API.
+    /// Returns a boxed `FormatWriter` trait object for unified writer API.
     pub fn create_writer<P: AsRef<Path>>(
         path: P,
         _config: &WriterConfig,
@@ -52,7 +52,7 @@ impl McapFormat {
 
     /// Check if an MCAP file has a summary with chunk indexes.
     ///
-    /// Returns (has_summary, has_chunk_indexes).
+    /// Returns (`has_summary`, `has_chunk_indexes`).
     pub fn check_summary<P: AsRef<Path>>(path: P) -> Result<(bool, bool)> {
         ParallelMcapReader::check_summary(path)
     }
@@ -120,31 +120,37 @@ impl McapReader {
     }
 
     /// Get all channel information.
+    #[must_use]
     pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }
 
     /// Get channel info by topic name.
+    #[must_use]
     pub fn channel_by_topic(&self, topic: &str) -> Option<&ChannelInfo> {
         self.channels.values().find(|c| c.topic == topic)
     }
 
     /// Get total message count.
+    #[must_use]
     pub fn message_count(&self) -> u64 {
         self.inner.message_count()
     }
 
     /// Get start timestamp in nanoseconds.
+    #[must_use]
     pub fn start_time(&self) -> Option<u64> {
         self.inner.start_time()
     }
 
     /// Get end timestamp in nanoseconds.
+    #[must_use]
     pub fn end_time(&self) -> Option<u64> {
         self.inner.end_time()
     }
 
     /// Get the file path.
+    #[must_use]
     pub fn path(&self) -> &str {
         &self.path
     }
@@ -252,6 +258,14 @@ impl FormatReader for McapReader {
         self.inner.file_size()
     }
 
+    fn decoded_with_timestamp_boxed(
+        &self,
+    ) -> Result<Box<dyn crate::io::traits::DecodedMessageIterator + Send + Sync + '_>> {
+        let iter = self.decode_messages_with_timestamp()?;
+        let stream = iter.stream()?;
+        Ok(Box::new(stream))
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -269,6 +283,7 @@ pub struct RawMessageIter<'a> {
 
 impl<'a> RawMessageIter<'a> {
     /// Get the channels for this iterator.
+    #[must_use]
     pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }
@@ -435,8 +450,7 @@ impl<'a> RawMessageStream<'a> {
             "" | "none" => compressed_data.to_vec(),
             other => {
                 return Err(CodecError::unsupported(format!(
-                    "Unsupported compression: {}",
-                    other
+                    "Unsupported compression: {other}"
                 )));
             }
         };
@@ -509,7 +523,7 @@ impl<'a> RawMessageStream<'a> {
                             log_time,
                             publish_time,
                             data,
-                            sequence: Some(sequence as u64),
+                            sequence: Some(u64::from(sequence)),
                         },
                         channel_info.clone(),
                     )));
@@ -586,7 +600,7 @@ impl<'a> RawMessageStream<'a> {
                             log_time,
                             publish_time,
                             data,
-                            sequence: Some(sequence as u64),
+                            sequence: Some(u64::from(sequence)),
                         },
                         channel_info.clone(),
                     )));
@@ -598,7 +612,7 @@ impl<'a> RawMessageStream<'a> {
     }
 }
 
-impl<'a> Iterator for RawMessageStream<'a> {
+impl Iterator for RawMessageStream<'_> {
     type Item = std::result::Result<(RawMessage, ChannelInfo), CodecError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -638,6 +652,7 @@ pub struct DecodedMessageIter<'a> {
 
 impl<'a> DecodedMessageIter<'a> {
     /// Get the channels for this iterator.
+    #[must_use]
     pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }
@@ -654,7 +669,7 @@ impl<'a> DecodedMessageIter<'a> {
     }
 }
 
-impl<'a> Iterator for DecodedMessageIter<'a> {
+impl Iterator for DecodedMessageIter<'_> {
     type Item = std::result::Result<(DecodedMessage, ChannelInfo), CodecError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -690,7 +705,7 @@ impl<'a> DecodedMessageStream<'a> {
     }
 }
 
-impl<'a> Iterator for DecodedMessageStream<'a> {
+impl Iterator for DecodedMessageStream<'_> {
     type Item = std::result::Result<(DecodedMessage, ChannelInfo), CodecError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -775,6 +790,7 @@ pub struct DecodedMessageWithTimestampIter<'a> {
 
 impl<'a> DecodedMessageWithTimestampIter<'a> {
     /// Get the channels for this iterator.
+    #[must_use]
     pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }
@@ -791,7 +807,7 @@ impl<'a> DecodedMessageWithTimestampIter<'a> {
     }
 }
 
-impl<'a> Iterator for DecodedMessageWithTimestampIter<'a> {
+impl Iterator for DecodedMessageWithTimestampIter<'_> {
     type Item = std::result::Result<(TimestampedDecodedMessage, ChannelInfo), CodecError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -827,7 +843,7 @@ impl<'a> DecodedMessageWithTimestampStream<'a> {
     }
 }
 
-impl<'a> Iterator for DecodedMessageWithTimestampStream<'a> {
+impl Iterator for DecodedMessageWithTimestampStream<'_> {
     type Item = std::result::Result<(TimestampedDecodedMessage, ChannelInfo), CodecError>;
 
     fn next(&mut self) -> Option<Self::Item> {

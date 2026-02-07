@@ -8,7 +8,7 @@
 //!
 //! The format supports:
 //! - Simple field lists (root message)
-//! - Dependency blocks with "MSG: TypeName" headers
+//! - Dependency blocks with "MSG: `TypeName`" headers
 //! - Array types: T[] (dynamic) or T\[n\] (fixed)
 //! - Nested types: package/MessageName
 //! - Comments (# style)
@@ -41,6 +41,7 @@ impl RosVersion {
     /// * `Ros1` if encoding is "ros1msg"
     /// * `Ros2` if encoding is "cdr"
     /// * `Unknown` otherwise
+    #[must_use]
     pub fn from_encoding(encoding: &str) -> Self {
         let encoding_lower = encoding.to_lowercase();
         if encoding_lower.contains("ros1") {
@@ -56,6 +57,7 @@ impl RosVersion {
     ///
     /// ROS2 types use `/msg/` in their path (e.g., `std_msgs/msg/Header`).
     /// ROS1 types use just `/` (e.g., `std_msgs/Header`).
+    #[must_use]
     pub fn from_type_name(type_name: &str) -> Self {
         if type_name.contains("/msg/") {
             RosVersion::Ros2
@@ -283,7 +285,7 @@ pub fn parse_with_version(
     Ok(schema)
 }
 
-/// Parse a single msg_line into a Field, if possible.
+/// Parse a single `msg_line` into a Field, if possible.
 fn parse_msg_line(pair: pest::iterators::Pair<Rule>) -> Option<Field> {
     if pair.as_rule() != Rule::msg_line {
         return None;
@@ -309,11 +311,11 @@ fn parse_msg_line(pair: pest::iterators::Pair<Rule>) -> Option<Field> {
     let (base_type_str, is_array, array_size) = if let Some(bracket_pos) = type_part.find('[') {
         let base = &type_part[..bracket_pos];
         let array_part = &type_part[bracket_pos..];
-        let digits: String = array_part.chars().filter(|c| c.is_ascii_digit()).collect();
-        let size = if !digits.is_empty() {
-            digits.parse().ok()
-        } else {
+        let digits: String = array_part.chars().filter(char::is_ascii_digit).collect();
+        let size = if digits.is_empty() {
             None
+        } else {
+            digits.parse().ok()
         };
         (base.to_string(), true, size)
     } else {
@@ -334,7 +336,7 @@ fn parse_msg_line(pair: pest::iterators::Pair<Rule>) -> Option<Field> {
     })
 }
 
-/// Build a FieldType from a base type string and array info.
+/// Build a `FieldType` from a base type string and array info.
 fn build_field_type(base_type_str: &str, is_array: bool, array_size: Option<usize>) -> FieldType {
     let base_type_str = base_type_str.trim();
     let base = if let Some(prim) = PrimitiveType::try_from_str(base_type_str) {
@@ -354,10 +356,10 @@ fn build_field_type(base_type_str: &str, is_array: bool, array_size: Option<usiz
     }
 }
 
-/// Add seq field to all std_msgs/Header variants for ROS1 compatibility.
+/// Add seq field to all `std_msgs/Header` variants for ROS1 compatibility.
 ///
-/// ROS1 Header has: uint32 seq, time stamp, string frame_id
-/// ROS2 Header has: builtin_interfaces/Time stamp, string frame_id
+/// ROS1 Header has: uint32 seq, time stamp, string `frame_id`
+/// ROS2 Header has: `builtin_interfaces/Time` stamp, string `frame_id`
 ///
 /// This function adds the seq field to Header types when parsing ROS1 data.
 fn add_seq_field_to_header_types(schema: &mut MessageSchema) {
