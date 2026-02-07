@@ -22,7 +22,12 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
-description = "High-performance robotics data codec library for reading, writing, and converting MCAP and ROS1 bag files with support for CDR, Protobuf, and JSON encodings"
+description = "High-performance robotics data codec library for reading, writing, and converting MCAP, ROS1 bag, and RRF2 files"
+keywords = ["robotics", "mcap", "ros", "rosbag", "codec"]
+categories = ["parser-implementations", "encoding", "science::robotics"]
+readme = "README.md"
+repository = "https://github.com/archebase/robocodec"
+documentation = "https://docs.rs/robocodec"
 
 [lib]
 crate-type = ["rlib", "cdylib"]

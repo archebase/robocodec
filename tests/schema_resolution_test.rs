@@ -209,30 +209,30 @@ uint32 nanosec
     assert!(result.contains_key("effort"), "Should have effort field");
 
     // Verify the decoded float64 values are correct
-    if let Some(robocodec::CodecValue::Array(positions)) = result.get("position") {
+    if let Some(robocodec::core::CodecValue::Array(positions)) = result.get("position") {
         assert_eq!(positions.len(), 2, "Should have 2 positions");
-        if let robocodec::CodecValue::Float64(v) = &positions[0] {
+        if let robocodec::core::CodecValue::Float64(v) = &positions[0] {
             assert_eq!(*v, 1.0, "position[0] should be 1.0");
         }
-        if let robocodec::CodecValue::Float64(v) = &positions[1] {
+        if let robocodec::core::CodecValue::Float64(v) = &positions[1] {
             assert_eq!(*v, 2.0, "position[1] should be 2.0");
         }
     }
 
-    if let Some(robocodec::CodecValue::Array(velocities)) = result.get("velocity") {
+    if let Some(robocodec::core::CodecValue::Array(velocities)) = result.get("velocity") {
         assert_eq!(velocities.len(), 2, "Should have 2 velocities");
-        if let robocodec::CodecValue::Float64(v) = &velocities[0] {
+        if let robocodec::core::CodecValue::Float64(v) = &velocities[0] {
             assert!((*v - 0.1).abs() < f64::EPSILON, "velocity[0] should be 0.1");
         }
-        if let robocodec::CodecValue::Float64(v) = &velocities[1] {
+        if let robocodec::core::CodecValue::Float64(v) = &velocities[1] {
             assert!((*v - 0.2).abs() < f64::EPSILON, "velocity[1] should be 0.2");
         }
     }
 
-    if let Some(robocodec::CodecValue::Array(efforts)) = result.get("effort") {
+    if let Some(robocodec::core::CodecValue::Array(efforts)) = result.get("effort") {
         assert_eq!(efforts.len(), 2, "Should have 2 effort values");
         for (i, e) in efforts.iter().enumerate() {
-            if let robocodec::CodecValue::Float64(v) = e {
+            if let robocodec::core::CodecValue::Float64(v) = e {
                 assert_eq!(*v, 0.0, "effort[{}] should be 0.0", i);
             }
         }

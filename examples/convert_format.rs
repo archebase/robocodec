@@ -2,19 +2,19 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Format conversion example.
+//! File rewriting example.
 //!
-//! Demonstrates converting between robotics data formats (MCAP ↔ ROS1 bag)
-//! using the unified RoboRewriter API.
+//! Demonstrates rewriting a robotics data file with the same format.
+//! The rewriter can apply topic and type transformations during the process.
 //!
 //! # Usage
 //!
 //! ```bash
-//! # Convert MCAP to ROS1 bag
-//! cargo run --example convert_format -- input.mcap output.bag
+//! # Rewrite MCAP file (same format, can apply transformations)
+//! cargo run --example convert_format -- input.mcap output.mcap
 //!
-//! # Convert ROS1 bag to MCAP
-//! cargo run --example convert_format -- input.bag output.mcap
+//! # Rewrite ROS1 bag file (same format, can apply transformations)
+//! cargo run --example convert_format -- input.bag output.bag
 //! ```
 
 use robocodec::RoboRewriter;
@@ -26,37 +26,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() != 3 {
         eprintln!("Usage: cargo run --example convert_format -- <input-file> <output-file>");
         eprintln!();
+        eprintln!("Rewrites a file in the same format. Output format must match input format.");
+        eprintln!();
         eprintln!("Examples:");
-        eprintln!("  cargo run --example convert_format -- input.mcap output.bag");
-        eprintln!("  cargo run --example convert_format -- input.bag output.mcap");
+        eprintln!("  cargo run --example convert_format -- input.mcap output.mcap");
+        eprintln!("  cargo run --example convert_format -- input.bag output.bag");
+        eprintln!();
+        eprintln!("Note: See transform.rs for examples of applying topic/type transformations.");
         std::process::exit(1);
     }
 
     let input_path = &args[1];
     let output_path = &args[2];
 
-    println!("🔄 Converting {} → {}", input_path, output_path);
+    // Validate that input and output have the same extension
+    let input_ext = input_path.rsplit('.').next().unwrap_or("");
+    let output_ext = output_path.rsplit('.').next().unwrap_or("");
+
+    if input_ext != output_ext {
+        eprintln!("Error: Input and output formats must match.");
+        eprintln!("  Input format: {}", input_ext);
+        eprintln!("  Output format: {}", output_ext);
+        eprintln!();
+        eprintln!("Note: Cross-format conversion is not currently supported.");
+        eprintln!("      The rewriter preserves the same format as the input file.");
+        std::process::exit(1);
+    }
+
+    println!("🔄 Rewriting {} → {}", input_path, output_path);
 
     // Create rewriter (format auto-detected from input)
     let mut rewriter = RoboRewriter::open(input_path)?;
-    println!("   Input format: {:?}", input_path.rsplit('.').next());
+    println!("   Format: {}", input_ext.to_uppercase());
     println!("   Input: {}", rewriter.input_path().display());
 
-    // Detect output format from extension
-    let output_format = if output_path.ends_with(".mcap") {
-        "MCAP"
-    } else if output_path.ends_with(".bag") {
-        "ROS1 Bag"
-    } else {
-        "Unknown"
-    };
-    println!("   Output format: {}", output_format);
-
-    // Convert
+    // Rewrite (same format)
     let stats = rewriter.rewrite(output_path)?;
 
     println!();
-    println!("✅ Conversion complete!");
+    println!("✅ Rewrite complete!");
     println!("   Messages processed: {}", stats.message_count);
     println!("   Channels processed: {}", stats.channel_count);
     if stats.decode_failures > 0 {

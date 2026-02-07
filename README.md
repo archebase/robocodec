@@ -122,48 +122,6 @@ export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
 
 > **Note:** While we use AWS-standard environment variable names for compatibility, robocodec works with any S3-compatible storage service.
 
-### Read from HTTP/HTTPS
-
-Robocodec also supports reading directly from HTTP/HTTPS URLs:
-
-```rust
-use robocodec::RoboReader;
-
-// Format detected from URL path, access via HTTP
-let reader = RoboReader::open("https://example.com/data.mcap")?;
-println!("Found {} channels", reader.channels().len());
-```
-
-> **Note:** HTTP reading supports range requests for efficient access to large files.
-
-#### HTTP Authentication
-
-For authenticated HTTP endpoints, robocodec supports Bearer tokens and Basic authentication via `ReaderConfig`:
-
-```rust
-use robocodec::io::{RoboReader, ReaderConfig};
-
-// Bearer token (OAuth2/JWT)
-let config = ReaderConfig::default().with_http_bearer_token("your-token-here");
-let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
-
-// Basic authentication
-let config = ReaderConfig::default().with_http_basic_auth("username", "password");
-let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
-```
-
-Alternatively, you can provide authentication via URL query parameters:
-
-```rust
-use robocodec::RoboReader;
-
-// Bearer token via URL
-let reader = RoboReader::open("https://example.com/data.mcap?bearer_token=your-token")?;
-
-// Basic auth via URL (user:pass encoded)
-let reader = RoboReader::open("https://example.com/data.mcap?basic_auth=user:pass")?;
-```
-
 ### Write to S3
 
 ```rust
@@ -200,14 +158,18 @@ let reader = RoboReader::open(
 )?;
 ```
 
-### Convert between formats
+### Rewrite files with transformations
+
+The rewriter processes files in the same format, optionally applying topic and type transformations:
 
 ```rust
 use robocodec::RoboRewriter;
 
-let rewriter = RoboRewriter::open("input.bag")?;
+let rewriter = RoboRewriter::open("input.mcap")?;
 rewriter.rewrite("output.mcap")?;
 ```
+
+**Note:** Cross-format conversion is not currently supported. Use the rewriter to transform data within the same format.
 
 ### Rename topics during conversion
 

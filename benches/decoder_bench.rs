@@ -180,9 +180,9 @@ fn bench_value_operations(c: &mut Criterion) {
 
     // Benchmark string value access
     group.bench_function("access_string_value", |b| {
-        let value = robocodec::CodecValue::String("test string value".to_string());
+        let value = robocodec::core::CodecValue::String("test string value".to_string());
         b.iter(|| {
-            if let robocodec::CodecValue::String(s) = black_box(&value) {
+            if let robocodec::core::CodecValue::String(s) = black_box(&value) {
                 black_box(s.len());
             }
         })
@@ -190,15 +190,15 @@ fn bench_value_operations(c: &mut Criterion) {
 
     // Benchmark array value access
     group.bench_function("access_array_value", |b| {
-        let value = robocodec::CodecValue::Array(vec![
-            robocodec::CodecValue::Int64(1),
-            robocodec::CodecValue::Int64(2),
-            robocodec::CodecValue::Int64(3),
-            robocodec::CodecValue::Int64(4),
-            robocodec::CodecValue::Int64(5),
+        let value = robocodec::core::CodecValue::Array(vec![
+            robocodec::core::CodecValue::Int64(1),
+            robocodec::core::CodecValue::Int64(2),
+            robocodec::core::CodecValue::Int64(3),
+            robocodec::core::CodecValue::Int64(4),
+            robocodec::core::CodecValue::Int64(5),
         ]);
         b.iter(|| {
-            if let robocodec::CodecValue::Array(arr) = black_box(&value) {
+            if let robocodec::core::CodecValue::Array(arr) = black_box(&value) {
                 black_box(arr.len());
             }
         })
@@ -210,13 +210,13 @@ fn bench_value_operations(c: &mut Criterion) {
         for i in 0..10 {
             fields.insert(
                 format!("field_{}", i),
-                robocodec::CodecValue::Int64(i as i64),
+                robocodec::core::CodecValue::Int64(i as i64),
             );
         }
-        let value = robocodec::CodecValue::Struct(fields);
+        let value = robocodec::core::CodecValue::Struct(fields);
 
         b.iter(|| {
-            if let robocodec::CodecValue::Struct(fields) = black_box(&value) {
+            if let robocodec::core::CodecValue::Struct(fields) = black_box(&value) {
                 black_box(fields.len());
             }
         })

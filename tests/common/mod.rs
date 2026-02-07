@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use robocodec::CodecValue;
+use robocodec::core::CodecValue;
 
 // ============================================================================
 // Test Expectations

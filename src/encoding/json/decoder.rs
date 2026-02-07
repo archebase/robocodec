@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use crate::{CodecError, CodecValue, DecodedMessage, Result as CoreResult};
+use crate::core::{CodecError, CodecValue, DecodedMessage, Result as CoreResult};
 
 /// JSON decoder for decoding JSON data.
 pub struct JsonDecoder {

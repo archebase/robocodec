@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use crate::{CodecError, CodecValue, DecodedMessage, Result as CoreResult};
+use crate::core::{CodecError, CodecValue, DecodedMessage, Result as CoreResult};
 
 /// Protobuf decoder for decoding protobuf binary data.
 pub struct ProtobufDecoder {
