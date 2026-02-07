@@ -41,14 +41,47 @@ cargo bench --bench large_file_bench -- large_mcap_read
 
 ### Save Baseline
 
+**Important:** You must specify which benchmark to run. The `--save-baseline` option is a Criterion flag passed to the benchmark binary, not to cargo itself.
+
 ```bash
-cargo bench -- --save-baseline main
+# Save baseline for a specific benchmark
+cargo bench --bench decoder_bench -- --save-baseline main
+
+# Save baseline for all benchmarks (run each one)
+cargo bench --bench decoder_bench -- --save-baseline main
+cargo bench --bench reader_bench -- --save-baseline main
+cargo bench --bench rewriter_bench -- --save-baseline main
+cargo bench --bench large_file_bench -- --save-baseline main
 ```
+
+**Note:** Do NOT use `cargo bench -- --save-baseline main` without `--bench <name>` - this will fail because it attempts to run unit tests (which don't use Criterion).
 
 ### Compare Against Baseline
 
 ```bash
-cargo bench -- --baseline main
+# Compare a specific benchmark against baseline
+cargo bench --bench decoder_bench -- --baseline main
+
+# Compare all benchmarks against baseline
+for bench in decoder_bench reader_bench rewriter_bench large_file_bench; do
+    cargo bench --bench $bench -- --baseline main
+done
+```
+
+### Using cargo-criterion (Optional)
+
+For enhanced baseline management and comparison reports:
+
+```bash
+# Install cargo-criterion
+cargo install cargo-criterion
+
+# Run all benchmarks with automatic baseline handling
+cargo criterion
+
+# Save and compare baselines easily
+cargo criterion -- --save-baseline main
+cargo criterion -- --baseline main
 ```
 
 ## Benchmark Files

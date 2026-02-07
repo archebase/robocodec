@@ -106,3 +106,19 @@ wiremock = "0.6"
 tokio-test = "0.4"
 tempfile = "3.10"
 criterion = "0.5"
+
+[[bench]]
+name = "decoder_bench"
+harness = false
+
+[[bench]]
+name = "reader_bench"
+harness = false
+
+[[bench]]
+name = "large_file_bench"
+harness = false
+
+[[bench]]
+name = "rewriter_bench"
+harness = false
