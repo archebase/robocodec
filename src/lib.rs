@@ -48,6 +48,20 @@
 //! # }
 //! ```
 //!
+//! ## Example: S3 Support
+//!
+//! For reading from S3-compatible storage:
+//!
+//! ```rust,no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use robocodec::RoboReader;
+//!
+//! // Read directly from S3
+//! let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! ## Example: Rewriting with Transformations
 //!
 //! ```rust,no_run
