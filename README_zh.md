@@ -14,7 +14,7 @@
 - **自动检测** - 从文件扩展名或 URL scheme 自动检测格式
 - **高性能** - 使用 rayon 并行处理，零拷贝内存映射文件
 - **原生 S3 支持** - 对 `s3://` URL 的一流支持（AWS S3、MinIO、阿里云 OSS 等）
-- **数据转换** - 内置主题/类型重命名和格式转换功能
+- **数据转换** - 内置主题/类型重命名和文件重写功能
 
 ## 快速开始
 
@@ -124,60 +124,6 @@ export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
 
 > **注意：** 虽然我们使用 AWS 标准的环境变量名称以确保兼容性，但 robocodec 可与任何兼容 S3 的存储服务配合使用。
 
-### 从 HTTP/HTTPS 读取
-
-Robocodec 也支持直接从 HTTP/HTTPS URL 读取数据：
-
-```rust
-use robocodec::RoboReader;
-
-// 格式从 URL 路径检测，通过 HTTP 访问
-let reader = RoboReader::open("https://example.com/data.mcap")?;
-println!("找到 {} 个通道", reader.channels().len());
-```
-
-> **注意：** HTTP 读取支持范围请求，可高效访问大文件。
-
-#### HTTP 身份验证
-
-对于需要身份验证的 HTTP 端点，robocodec 通过 `ReaderConfig` 支持 Bearer 令牌和基本身份验证：
-
-```rust
-use robocodec::io::{RoboReader, ReaderConfig};
-
-// Bearer 令牌（OAuth2/JWT）
-let config = ReaderConfig::default().with_http_bearer_token("your-token-here");
-let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
-
-// 基本身份验证
-let config = ReaderConfig::default().with_http_basic_auth("username", "password");
-let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
-```
-
-或者，您可以通过 URL 查询参数提供身份验证：
-
-```rust
-use robocodec::RoboReader;
-
-// 通过 URL 提供 Bearer 令牌
-let reader = RoboReader::open("https://example.com/data.mcap?bearer_token=your-token")?;
-
-// 通过 URL 提供基本身份验证（user:pass 编码）
-let reader = RoboReader::open("https://example.com/data.mcap?basic_auth=user:pass")?;
-```
-
-### 写入到 S3
-
-```rust
-use robocodec::RoboWriter;
-
-// 格式从 .mcap 扩展名检测，S3 从 s3:// URL 检测
-let mut writer = RoboWriter::create("s3://my-bucket/output.mcap")?;
-let channel_id = writer.add_channel("/topic", "MessageType", "cdr", None)?;
-// ... 写入消息 ...
-writer.finish()?;
-```
-
 ### 自定义 S3 端点
 
 对于具有自定义端点的兼容 S3 服务：
@@ -201,30 +147,23 @@ let reader = RoboReader::open(
 )?;
 ```
 
-### 格式之间转换
+### 使用转换重写文件
+
+重写器以相同格式处理文件，可选择应用主题和类型转换：
 
 ```rust
-use robocodec::RoboRewriter;
-
-let rewriter = RoboRewriter::open("input.bag")?;
-rewriter.rewrite("output.mcap")?;
-```
-
-### 转换时重命名主题
-
-```rust
-use robocodec::{RoboRewriter, TransformBuilder};
+use robocodec::{RoboRewriter, TransformBuilder, RewriteOptions};
 
 let transform = TransformBuilder::new()
     .with_topic_rename("/old/topic", "/new/topic")
     .build();
 
-let rewriter = RoboRewriter::with_options(
-    "input.mcap",
-    robocodec::RewriteOptions::default().with_transforms(transform)
-)?;
+let options = RewriteOptions::default().with_transforms(transform);
+let rewriter = RoboRewriter::with_options("input.mcap", options)?;
 rewriter.rewrite("output.mcap")?;
 ```
+
+**注意：** 重写器保持相同的格式。目前不支持跨格式转换。
 
 ## 安装
 
