@@ -154,22 +154,22 @@ impl PrimitiveType {
 
     /// Convert to the core `PrimitiveType`.
     #[must_use]
-    pub fn to_core(self) -> crate::PrimitiveType {
+    pub fn to_core(self) -> crate::core::PrimitiveType {
         match self {
-            PrimitiveType::Bool => crate::PrimitiveType::Bool,
-            PrimitiveType::Int8 => crate::PrimitiveType::Int8,
-            PrimitiveType::Int16 => crate::PrimitiveType::Int16,
-            PrimitiveType::Int32 => crate::PrimitiveType::Int32,
-            PrimitiveType::Int64 => crate::PrimitiveType::Int64,
-            PrimitiveType::UInt8 => crate::PrimitiveType::UInt8,
-            PrimitiveType::UInt16 => crate::PrimitiveType::UInt16,
-            PrimitiveType::UInt32 => crate::PrimitiveType::UInt32,
-            PrimitiveType::UInt64 => crate::PrimitiveType::UInt64,
-            PrimitiveType::Float32 => crate::PrimitiveType::Float32,
-            PrimitiveType::Float64 => crate::PrimitiveType::Float64,
-            PrimitiveType::String | PrimitiveType::WString => crate::PrimitiveType::String,
-            PrimitiveType::Byte | PrimitiveType::Char => crate::PrimitiveType::Byte,
-            PrimitiveType::Time | PrimitiveType::Duration => crate::PrimitiveType::Int64, // Fallback
+            PrimitiveType::Bool => crate::core::PrimitiveType::Bool,
+            PrimitiveType::Int8 => crate::core::PrimitiveType::Int8,
+            PrimitiveType::Int16 => crate::core::PrimitiveType::Int16,
+            PrimitiveType::Int32 => crate::core::PrimitiveType::Int32,
+            PrimitiveType::Int64 => crate::core::PrimitiveType::Int64,
+            PrimitiveType::UInt8 => crate::core::PrimitiveType::UInt8,
+            PrimitiveType::UInt16 => crate::core::PrimitiveType::UInt16,
+            PrimitiveType::UInt32 => crate::core::PrimitiveType::UInt32,
+            PrimitiveType::UInt64 => crate::core::PrimitiveType::UInt64,
+            PrimitiveType::Float32 => crate::core::PrimitiveType::Float32,
+            PrimitiveType::Float64 => crate::core::PrimitiveType::Float64,
+            PrimitiveType::String | PrimitiveType::WString => crate::core::PrimitiveType::String,
+            PrimitiveType::Byte | PrimitiveType::Char => crate::core::PrimitiveType::Byte,
+            PrimitiveType::Time | PrimitiveType::Duration => crate::core::PrimitiveType::Int64, // Fallback
         }
     }
 }
@@ -586,11 +586,17 @@ mod tests {
 
     #[test]
     fn test_primitive_type_to_core_basic() {
-        assert_eq!(PrimitiveType::Bool.to_core(), crate::PrimitiveType::Bool);
-        assert_eq!(PrimitiveType::Int32.to_core(), crate::PrimitiveType::Int32);
+        assert_eq!(
+            PrimitiveType::Bool.to_core(),
+            crate::core::PrimitiveType::Bool
+        );
+        assert_eq!(
+            PrimitiveType::Int32.to_core(),
+            crate::core::PrimitiveType::Int32
+        );
         assert_eq!(
             PrimitiveType::Float64.to_core(),
-            crate::PrimitiveType::Float64
+            crate::core::PrimitiveType::Float64
         );
     }
 
@@ -598,27 +604,36 @@ mod tests {
     fn test_primitive_type_to_core_string() {
         assert_eq!(
             PrimitiveType::String.to_core(),
-            crate::PrimitiveType::String
+            crate::core::PrimitiveType::String
         );
         assert_eq!(
             PrimitiveType::WString.to_core(),
-            crate::PrimitiveType::String
+            crate::core::PrimitiveType::String
         );
     }
 
     #[test]
     fn test_primitive_type_to_core_byte_char() {
-        assert_eq!(PrimitiveType::Byte.to_core(), crate::PrimitiveType::Byte);
-        assert_eq!(PrimitiveType::Char.to_core(), crate::PrimitiveType::Byte);
+        assert_eq!(
+            PrimitiveType::Byte.to_core(),
+            crate::core::PrimitiveType::Byte
+        );
+        assert_eq!(
+            PrimitiveType::Char.to_core(),
+            crate::core::PrimitiveType::Byte
+        );
     }
 
     #[test]
     fn test_primitive_type_to_core_time_duration() {
         // Time and Duration fallback to Int64
-        assert_eq!(PrimitiveType::Time.to_core(), crate::PrimitiveType::Int64);
+        assert_eq!(
+            PrimitiveType::Time.to_core(),
+            crate::core::PrimitiveType::Int64
+        );
         assert_eq!(
             PrimitiveType::Duration.to_core(),
-            crate::PrimitiveType::Int64
+            crate::core::PrimitiveType::Int64
         );
     }
 

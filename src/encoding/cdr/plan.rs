@@ -24,7 +24,7 @@ pub enum DecodeOp {
         /// Field path for the value (e.g., "position.x")
         field_path: String,
         /// Primitive type to read
-        type_name: crate::PrimitiveType,
+        type_name: crate::core::PrimitiveType,
     },
 
     /// Read a string value (4-byte length prefix + UTF-8 bytes).
@@ -77,7 +77,7 @@ pub enum DecodeOp {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ElementType {
     /// Primitive element
-    Primitive(crate::PrimitiveType),
+    Primitive(crate::core::PrimitiveType),
     /// String element (for string arrays)
     String,
     /// Bytes element (for bytes arrays)
@@ -148,7 +148,7 @@ impl fmt::Display for DecodePlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PrimitiveType;
+    use crate::core::PrimitiveType;
 
     #[test]
     fn test_decode_op_align_variant() {

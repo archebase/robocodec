@@ -19,7 +19,7 @@
 //!
 //! ```no_run
 //! use robocodec::encoding::CodecFactory;
-//! use robocodec::Encoding;
+//! use robocodec::core::Encoding;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut factory = CodecFactory::new();
@@ -91,7 +91,7 @@ impl CodecFactory {
     ///
     /// ```
     /// use robocodec::encoding::CodecFactory;
-    /// use robocodec::Encoding;
+    /// use robocodec::core::Encoding;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let factory = CodecFactory::new();
@@ -115,7 +115,7 @@ impl CodecFactory {
     ///
     /// ```
     /// use robocodec::encoding::CodecFactory;
-    /// use robocodec::Encoding;
+    /// use robocodec::core::Encoding;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut factory = CodecFactory::new();

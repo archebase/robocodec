@@ -12,7 +12,7 @@
 - **Auto-Detection** - Format detected from file extension or URL scheme
 - **Fast** - Parallel processing with rayon, zero-copy memory-mapped files
 - **S3-Native** - First-class support for `s3://` URLs (AWS S3, MinIO, Alibaba OSS, etc.)
-- **Transformations** - Topic/type renaming and format conversion built-in
+- **Transformations** - Topic/type renaming during file rewriting
 
 ## Quick Start
 
@@ -122,61 +122,6 @@ export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
 
 > **Note:** While we use AWS-standard environment variable names for compatibility, robocodec works with any S3-compatible storage service.
 
-### Read from HTTP/HTTPS
-
-Robocodec also supports reading directly from HTTP/HTTPS URLs:
-
-```rust
-use robocodec::RoboReader;
-
-// Format detected from URL path, access via HTTP
-let reader = RoboReader::open("https://example.com/data.mcap")?;
-println!("Found {} channels", reader.channels().len());
-```
-
-> **Note:** HTTP reading supports range requests for efficient access to large files.
-
-#### HTTP Authentication
-
-For authenticated HTTP endpoints, robocodec supports Bearer tokens and Basic authentication via `ReaderConfig`:
-
-```rust
-use robocodec::io::{RoboReader, ReaderConfig};
-
-// Bearer token (OAuth2/JWT)
-let config = ReaderConfig::default().with_http_bearer_token("your-token-here");
-let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
-
-// Basic authentication
-let config = ReaderConfig::default().with_http_basic_auth("username", "password");
-let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
-```
-
-Alternatively, you can provide authentication via URL query parameters:
-
-```rust
-use robocodec::RoboReader;
-
-// Bearer token via URL
-let reader = RoboReader::open("https://example.com/data.mcap?bearer_token=your-token")?;
-
-// Basic auth via URL (user:pass encoded)
-let reader = RoboReader::open("https://example.com/data.mcap?basic_auth=user:pass")?;
-```
-
-### Write to S3
-
-```rust
-use robocodec::RoboWriter;
-
-// Format detected from .mcap extension, S3 from s3:// URL
-let mut writer = RoboWriter::create("s3://my-bucket/output.mcap")?;
-let channel_id = writer.add_channel("/topic", "MessageType", "cdr", None)?;
-// ... write messages ...
-writer.finish()?;
-}
-```
-
 ### Custom S3 endpoints
 
 For S3-compatible services with custom endpoints:
@@ -200,30 +145,24 @@ let reader = RoboReader::open(
 )?;
 ```
 
-### Convert between formats
+### Rewrite files with transformations
+
+The rewriter processes files in the same format, optionally applying topic and type transformations:
 
 ```rust
-use robocodec::RoboRewriter;
-
-let rewriter = RoboRewriter::open("input.bag")?;
-rewriter.rewrite("output.mcap")?;
-```
-
-### Rename topics during conversion
-
-```rust
-use robocodec::{RoboRewriter, TransformBuilder};
+use robocodec::{RoboRewriter, TransformBuilder, RewriteOptions};
 
 let transform = TransformBuilder::new()
     .with_topic_rename("/old/topic", "/new/topic")
     .build();
 
-let rewriter = RoboRewriter::with_options(
-    "input.mcap",
-    robocodec::RewriteOptions::default().with_transforms(transform)
-)?;
+let options = RewriteOptions::default().with_transforms(transform);
+let rewriter = RoboRewriter::with_options("input.mcap", options)?;
 rewriter.rewrite("output.mcap")?;
 ```
+
+**Note:** The rewriter preserves the same format. Cross-format conversion is not currently supported.
+
 
 ## Installation
 
@@ -245,6 +184,8 @@ robocodec = { version = "0.1", features = ["jemalloc"] }
 | Feature | Description | Default |
 |---------|-------------|---------|
 | `s3` | S3-compatible storage support (AWS S3, MinIO, etc.) | ✅ Yes |
+| `python` | Python bindings | ❌ No |
+| `jemalloc` | Use jemalloc allocator (Linux only) | ❌ No |
 | `python` | Python bindings | ❌ No |
 | `jemalloc` | Use jemalloc allocator (Linux only) | ❌ No |
 

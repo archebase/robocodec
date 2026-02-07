@@ -5,7 +5,7 @@
 //! Parallel MCAP reader with memory-mapped file access.
 //!
 //! This module provides MCAP-specific readers that implement the unified I/O traits
-//! using the arena-based ownership model for safe lifetime management.
+//! using memory-mapped files for efficient zero-copy access.
 //!
 //! **Note:** This implementation uses a custom MCAP parser with no external dependencies.
 //! It supports:

@@ -285,7 +285,7 @@ impl TimestampedDecodedMessage {
 
 /// Metadata about a single message.
 ///
-/// Lightweight version of `RawMessage` for references into arena data.
+/// Lightweight version containing only message metadata without the data payload.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MessageMetadata {
     /// Channel ID this message belongs to

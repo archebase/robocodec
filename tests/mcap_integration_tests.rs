@@ -13,8 +13,8 @@ use common::*;
 use std::collections::HashMap;
 use std::path::Path;
 
-use robocodec::CodecValue;
 use robocodec::FormatReader;
+use robocodec::core::CodecValue;
 use robocodec::io::RoboReader;
 
 /// Path to the fixtures directory.

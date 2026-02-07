@@ -4,7 +4,7 @@ This directory contains practical examples demonstrating the public API of the r
 
 ## Running Examples
 
-Each example accepts a file path as an argument:
+### Local Files
 
 ```bash
 # Inspect a file
@@ -13,8 +13,25 @@ cargo run --example read_file -- tests/fixtures/robocodec_test_14.mcap
 # Decode and display messages
 cargo run --example decode_messages -- tests/fixtures/robocodec_test_14.mcap
 
-# Convert between formats
-cargo run --example convert_format -- tests/fixtures/robocodec_test_14.mcap output.bag
+# Rewrite a file (same format)
+cargo run --example convert_format -- tests/fixtures/robocodec_test_14.mcap output.mcap
+
+# Transform topics and types
+cargo run --example transform -- tests/fixtures/robocodec_test_14.mcap output.mcap
+```
+
+### Remote Files (S3)
+
+```bash
+# Set S3 credentials (for AWS S3, MinIO, Alibaba OSS, etc.)
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+
+# Read from S3
+cargo run --example s3_example -- s3://my-bucket/path/to/data.mcap
+
+# Read from S3 with custom endpoint (MinIO, Alibaba OSS, etc.)
+cargo run --example s3_example -- "s3://bucket/data.mcap?endpoint=http://localhost:9000"
 ```
 
 ## Examples
@@ -28,13 +45,15 @@ Demonstrates opening a robotics data file and inspecting its metadata, channels,
 - Accessing file metadata
 - Listing channels with their properties
 
-### `convert_format.rs` - Format Conversion
+### `convert_format.rs` - File Rewriting
 
-Demonstrates converting between MCAP and ROS1 bag formats.
+Demonstrates rewriting a robotics data file in the same format.
 
 **What you'll learn:**
-- Using `RoboRewriter` for format conversion
-- Understanding conversion statistics
+- Using `RoboRewriter` to rewrite files
+- Understanding rewrite statistics
+
+**Note:** The rewriter preserves the same format as the input file. Cross-format conversion is not currently supported.
 
 ### `decode_messages.rs` - Message Decoding
 
@@ -43,6 +62,25 @@ Demonstrates iterating through decoded messages with timestamps.
 **What you'll learn:**
 - Using the `decoded()` iterator
 - Accessing message data, timestamps, and channel info
+
+### `s3_example.rs` - S3 Remote File Access
+
+Demonstrates reading robotics data files from S3-compatible storage.
+
+**What you'll learn:**
+- Reading from S3-compatible storage (AWS S3, MinIO, Alibaba OSS, etc.)
+- S3 authentication via environment variables
+- Custom S3 endpoints via URL parameters
+
+### `transform.rs` - Topic and Type Transformations
+
+Demonstrates renaming topics and message types during format conversion.
+
+**What you'll learn:**
+- Using `TransformBuilder` to create transformation pipelines
+- Topic renaming with exact name matching
+- Type renaming for schema migration
+- Combining transformations with `RoboRewriter`
 
 ## Public API
 

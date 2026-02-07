@@ -263,10 +263,10 @@ impl McapRewriteEngine {
     fn create_schema_metadata(
         &self,
         channel: &ChannelInfo,
-        encoding: &crate::Encoding,
+        encoding: &crate::core::Encoding,
     ) -> Result<SchemaMetadata> {
         match encoding {
-            crate::Encoding::Cdr => {
+            crate::core::Encoding::Cdr => {
                 let schema_text = channel
                     .schema
                     .as_ref()
@@ -284,7 +284,7 @@ impl McapRewriteEngine {
                     schema_encoding,
                 ))
             }
-            crate::Encoding::Protobuf => {
+            crate::core::Encoding::Protobuf => {
                 let schema_data = channel
                     .schema_data
                     .as_ref()
@@ -300,7 +300,7 @@ impl McapRewriteEngine {
                     schema_data,
                 ))
             }
-            crate::Encoding::Json => {
+            crate::core::Encoding::Json => {
                 let schema_text = channel
                     .schema
                     .as_ref()

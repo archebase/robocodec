@@ -285,7 +285,7 @@ impl Encoding {
     /// # Example
     ///
     /// ```
-    /// use robocodec::Encoding;
+    /// use robocodec::core::Encoding;
     ///
     /// assert!(Encoding::Cdr.is_cdr());
     /// assert!(!Encoding::Protobuf.is_cdr());
@@ -300,7 +300,7 @@ impl Encoding {
     /// # Example
     ///
     /// ```
-    /// use robocodec::Encoding;
+    /// use robocodec::core::Encoding;
     ///
     /// assert!(Encoding::Protobuf.is_protobuf());
     /// assert!(!Encoding::Cdr.is_protobuf());
@@ -315,7 +315,7 @@ impl Encoding {
     /// # Example
     ///
     /// ```
-    /// use robocodec::Encoding;
+    /// use robocodec::core::Encoding;
     ///
     /// assert!(Encoding::Json.is_json());
     /// assert!(!Encoding::Cdr.is_json());
@@ -330,7 +330,7 @@ impl Encoding {
     /// # Example
     ///
     /// ```
-    /// use robocodec::Encoding;
+    /// use robocodec::core::Encoding;
     ///
     /// assert_eq!(Encoding::Cdr.as_str(), "cdr");
     /// assert_eq!(Encoding::Protobuf.as_str(), "protobuf");
