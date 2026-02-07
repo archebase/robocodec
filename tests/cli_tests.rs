@@ -15,7 +15,8 @@ use std::{
 };
 
 /// Get the path to the built robocodec binary
-fn robocodec_bin() -> PathBuf {
+#[allow(dead_code)]
+pub(crate) fn robocodec_bin() -> PathBuf {
     let mut path = std::env::current_exe().unwrap();
     // The test binary is in target/debug/deps/
     // The robocodec binary is in target/debug/
@@ -26,7 +27,8 @@ fn robocodec_bin() -> PathBuf {
 }
 
 /// Get the path to a test fixture file
-fn fixture_path(name: &str) -> PathBuf {
+#[allow(dead_code)]
+pub(crate) fn fixture_path(name: &str) -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(manifest_dir)
         .join("tests")
@@ -35,7 +37,8 @@ fn fixture_path(name: &str) -> PathBuf {
 }
 
 /// Run robocodec with arguments
-fn run(args: &[&str]) -> Output {
+#[allow(dead_code)]
+pub(crate) fn run(args: &[&str]) -> Output {
     let bin = robocodec_bin();
     Command::new(&bin)
         .args(args)
@@ -44,7 +47,8 @@ fn run(args: &[&str]) -> Output {
 }
 
 /// Run robocodec and assert success
-fn run_ok(args: &[&str]) -> String {
+#[allow(dead_code)]
+pub(crate) fn run_ok(args: &[&str]) -> String {
     let output = run(args);
     assert!(
         output.status.success(),
@@ -57,7 +61,8 @@ fn run_ok(args: &[&str]) -> String {
 }
 
 /// Run robocodec and assert failure
-fn run_err(args: &[&str]) -> String {
+#[allow(dead_code)]
+pub(crate) fn run_err(args: &[&str]) -> String {
     let output = run(args);
     assert!(
         !output.status.success(),

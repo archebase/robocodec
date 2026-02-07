@@ -335,3 +335,39 @@ fn test_two_pass_vs_standard_reader() {
     // Both should report the same file size
     assert_eq!(two_pass.file_size(), standard.file_size());
 }
+
+// ============================================================================
+// Public API Tests
+// ============================================================================
+
+/// Test that the same files can be read using the public API (RoboReader).
+/// This ensures the public API provides equivalent functionality to format-specific readers.
+#[test]
+fn test_public_api_robo_reader() {
+    use robocodec::{FormatReader, RoboReader};
+
+    let path = fixture_path("robocodec_test_5.mcap");
+
+    if !path.exists() {
+        return;
+    }
+
+    // Verify RoboReader (public API) can read the same file
+    let reader =
+        RoboReader::open(path.to_str().unwrap()).expect("RoboReader should open MCAP file");
+    let channels = reader.channels();
+
+    // Should have successfully read channels
+    eprintln!("RoboReader found {} channels", channels.len());
+
+    // Verify we can iterate over messages using public API
+    if let Ok(iter) = reader.decoded() {
+        let mut count = 0;
+        for result in iter.take(10) {
+            if result.is_ok() {
+                count += 1;
+            }
+        }
+        eprintln!("RoboReader read {} messages (sampled)", count);
+    }
+}

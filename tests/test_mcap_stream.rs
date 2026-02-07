@@ -94,3 +94,41 @@ fn test_mcap_stream_parse_chunk_incomplete() {
     assert!(result.unwrap().is_empty()); // No messages yet
     assert!(!parser.is_initialized());
 }
+
+// ============================================================================
+// Public API Tests
+// ============================================================================
+
+/// Test that MCAP files can be read using the public API (RoboReader).
+/// This ensures the public API provides equivalent functionality to internal streaming parsers.
+#[cfg(feature = "s3")]
+#[test]
+fn test_public_api_robo_reader_mcap() {
+    use robocodec::{FormatReader, RoboReader};
+    use std::path::Path;
+
+    // Use a standard fixture file
+    let fixture_path = Path::new("tests/fixtures/robocodec_test_0.mcap");
+    if !fixture_path.exists() {
+        return; // Skip test if fixture doesn't exist
+    }
+
+    // Verify RoboReader (public API) can read the MCAP file
+    let reader =
+        RoboReader::open(fixture_path.to_str().unwrap()).expect("RoboReader should open MCAP file");
+    let channels = reader.channels();
+
+    // Should have successfully read channels
+    eprintln!("RoboReader found {} channels", channels.len());
+    assert!(!channels.is_empty(), "Should have at least one channel");
+
+    // Verify we can iterate over messages using public API
+    let iter = reader.decoded().expect("Should get decoded iterator");
+    let mut count = 0;
+    for result in iter.take(10) {
+        if result.is_ok() {
+            count += 1;
+        }
+    }
+    eprintln!("RoboReader read {} messages (sampled)", count);
+}

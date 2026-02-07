@@ -5,7 +5,7 @@
 //! Constants for RRD (Rerun Data) file format.
 //!
 //! This implements the RRF2 format as defined by rerun:
-//! https://github.com/rerun-io/rerun/tree/main/crates/store/re_log_encoding/src/rrd
+//! <https://github.com/rerun-io/rerun/tree/main/crates/store/re_log_encoding/src/rrd>
 
 /// RRF2 magic number - current Rerun RRD format.
 ///

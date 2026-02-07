@@ -530,7 +530,7 @@ mod two_tier_tests {
 mod golden_tests {
     use super::*;
 
-    /// Verify the regular McapReader can parse the test file correctly.
+    /// Verify the regular RoboReader can parse the test file correctly.
     /// This serves as a baseline to verify the test files are valid.
     #[test]
     fn test_regular_reader_works() {
@@ -539,8 +539,8 @@ mod golden_tests {
             return;
         }
 
-        use robocodec::io::formats::mcap::McapReader;
-        let reader = McapReader::open(&path).unwrap();
+        use robocodec::RoboReader;
+        let reader = RoboReader::open(path.to_str().unwrap()).unwrap();
         eprintln!("Regular reader: {} channels", reader.channels().len());
         eprintln!("Regular reader: {} messages", reader.message_count());
 
@@ -556,8 +556,8 @@ mod golden_tests {
             return;
         }
 
-        use robocodec::io::formats::bag::SequentialBagReader;
-        let reader = SequentialBagReader::open(&path).unwrap();
+        use robocodec::RoboReader;
+        let reader = RoboReader::open(path.to_str().unwrap()).unwrap();
         eprintln!("BAG reader: {} channels", reader.channels().len());
         eprintln!("BAG reader: {} messages", reader.message_count());
 

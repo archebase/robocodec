@@ -4,7 +4,7 @@
 
 //! In-memory transport implementation for testing.
 //!
-//! This module provides [`MemoryTransport`], which implements the [`Transport`]
+//! This module provides [`MemoryTransport`], which implements the [`Transport`](crate::io::transport::Transport)
 //! trait for in-memory byte data. This is primarily useful for testing format
 //! readers without needing actual files or network access.
 //!

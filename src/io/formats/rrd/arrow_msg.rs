@@ -45,7 +45,7 @@
 //! }
 //! ```
 //!
-//! Reference: https://github.com/rerun-io/rerun/tree/main/crates/store/re_protos/proto/rerun/v1alpha1
+//! Reference: <https://github.com/rerun-io/rerun/tree/main/crates/store/re_protos/proto/rerun/v1alpha1>
 
 use std::io;
 

@@ -4,7 +4,7 @@
 
 //! HTTP transport implementation using the Transport trait.
 //!
-//! This module provides [`HttpTransport`], which implements the [`Transport`]
+//! This module provides [`HttpTransport`], which implements the [`Transport`](crate::io::transport::Transport)
 //! trait for HTTP/HTTPS URLs. Supports range requests for seeking and buffers
 //! data for efficient reading.
 //!
