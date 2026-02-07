@@ -117,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    println!("\nRun tests with: cargo test --features remote minio_tests");
+    println!("\nRun tests with: cargo test --features remote s3_integration_tests");
 
     Ok(())
 }
