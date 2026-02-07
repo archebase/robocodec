@@ -78,8 +78,15 @@ pub struct MessageRecord {
 
 /// Streaming MCAP parser.
 ///
+/// **DEPRECATED**: Use `McapS3Adapter` instead, which wraps the `mcap` crate's
+/// `LinearReader` for more robust parsing and better compatibility.
+///
 /// This parser maintains state across chunks and can parse MCAP records
 /// incrementally as data arrives from any byte stream.
+#[deprecated(
+    since = "0.1.0",
+    note = "Use McapS3Adapter instead for better compatibility"
+)]
 pub struct StreamingMcapParser {
     /// Discovered schemas indexed by schema ID
     schemas: HashMap<u16, SchemaInfo>,
