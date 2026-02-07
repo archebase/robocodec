@@ -125,7 +125,7 @@ impl StreamingParser for McapStreamingParser {
                 self.magic_buffer.push(byte);
                 // Check if we've completed the magic
                 if self.magic_buffer.len() >= MCAP_MAGIC.len() {
-                    if &self.magic_buffer[..MCAP_MAGIC.len()] == MCAP_MAGIC {
+                    if self.magic_buffer[..MCAP_MAGIC.len()] == MCAP_MAGIC {
                         self.magic_seen = true;
                     }
                     break; // Only check up to magic length
