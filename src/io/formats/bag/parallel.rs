@@ -50,13 +50,15 @@ impl BagFormat {
 
     /// Create a BAG writer with the given configuration.
     ///
-    /// Returns a boxed FormatWriter trait object for unified writer API.
+    /// Returns a boxed `FormatWriter` trait object for unified writer API.
     pub fn create_writer<P: AsRef<Path>>(
         path: P,
         _config: &crate::io::writer::WriterConfig,
     ) -> Result<Box<dyn crate::io::traits::FormatWriter>> {
-        // For now, we create a simple writer
-        // TODO: Use config options for compression, chunk size, etc.
+        // For now, we create a simple writer with default settings.
+        // The WriterConfig options (compression, chunk_size) should be
+        // used to configure the writer behavior.
+        // See: https://github.com/archebase/robocodec/issues/55
         let writer = BagWriter::create(path)?;
         Ok(Box::new(writer))
     }
@@ -71,9 +73,9 @@ pub struct ParallelBagReader {
     path: String,
     /// Custom BAG parser
     parser: BagParser,
-    /// Channel information (channel_id -> ChannelInfo)
+    /// Channel information (`channel_id` -> `ChannelInfo`)
     channels: HashMap<u16, ChannelInfo>,
-    /// Connection ID to channel ID mapping (conn_id -> channel_id)
+    /// Connection ID to channel ID mapping (`conn_id` -> `channel_id`)
     conn_id_map: HashMap<u32, u16>,
     /// Total message count (estimated from chunks)
     message_count: u64,
@@ -103,7 +105,7 @@ impl ParallelBagReader {
 
         // Sort connections by conn_id to ensure deterministic channel ID assignment
         let mut sorted_conn_ids: Vec<u32> = parser.connections().keys().copied().collect();
-        sorted_conn_ids.sort();
+        sorted_conn_ids.sort_unstable();
 
         for conn_id in sorted_conn_ids {
             let conn = &parser.connections()[&conn_id];
@@ -144,7 +146,7 @@ impl ParallelBagReader {
 
         // Calculate message count and time bounds from chunks
         let chunks = parser.chunks();
-        let message_count = chunks.iter().map(|c| c.message_count as u64).sum();
+        let message_count = chunks.iter().map(|c| u64::from(c.message_count)).sum();
         let start_time = chunks.first().map(|c| c.start_time);
         let end_time = chunks.last().map(|c| c.end_time);
 
@@ -160,16 +162,19 @@ impl ParallelBagReader {
     }
 
     /// Get the connection ID to channel ID mapping.
+    #[must_use]
     pub fn conn_id_map(&self) -> &HashMap<u32, u16> {
         &self.conn_id_map
     }
 
     /// Get all chunk information from the parser.
+    #[must_use]
     pub fn chunks(&self) -> &[BagChunkInfo] {
         self.parser.chunks()
     }
 
     /// Get all connections from the parser.
+    #[must_use]
     pub fn connections(&self) -> &HashMap<u32, BagConnection> {
         self.parser.connections()
     }
@@ -216,7 +221,7 @@ impl ParallelBagReader {
 
     /// Decode messages with timestamps from the BAG file.
     ///
-    /// Returns an iterator that yields decoded messages with their log_time and publish_time.
+    /// Returns an iterator that yields decoded messages with their `log_time` and `publish_time`.
     /// Similar to `decode_messages` but includes timestamp information for each message.
     ///
     /// # Example
@@ -272,7 +277,7 @@ impl ParallelBagReader {
                     log_time: msg.log_time,
                     publish_time: msg.publish_time,
                     data: msg.data,
-                    sequence: Some(msg.sequence as u64),
+                    sequence: Some(u64::from(msg.sequence)),
                 };
                 chunk.add_message(raw_msg);
             }
@@ -287,6 +292,19 @@ impl ParallelBagReader {
 }
 
 impl FormatReader for ParallelBagReader {
+    #[cfg(feature = "remote")]
+    fn open_from_transport(
+        _transport: Box<dyn crate::io::transport::Transport>,
+        _path: String,
+    ) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        Err(CodecError::unsupported(
+            "ParallelBagReader requires local file access. Use a streaming reader for transport-based reading.",
+        ))
+    }
+
     fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }
@@ -315,6 +333,14 @@ impl FormatReader for ParallelBagReader {
         self.parser.file_size()
     }
 
+    fn decoded_with_timestamp_boxed(
+        &self,
+    ) -> Result<Box<dyn crate::io::traits::DecodedMessageIterator + Send + Sync + '_>> {
+        let iter = self.decode_messages_with_timestamp()?;
+        let stream = iter.stream()?;
+        Ok(Box::new(stream))
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -332,14 +358,11 @@ impl ParallelReader for ParallelBagReader {
     ) -> Result<ParallelReaderStats> {
         let num_threads = config.num_threads.unwrap_or_else(|| {
             std::thread::available_parallelism()
-                .map(|n| n.get())
+                .map(std::num::NonZero::get)
                 .unwrap_or(8)
         });
 
-        println!(
-            "Starting parallel BAG reader with {} worker threads...",
-            num_threads
-        );
+        println!("Starting parallel BAG reader with {num_threads} worker threads...");
         println!("  File: {}", self.path);
         println!("  Chunks to process: {}", self.parser.chunks().len());
 
@@ -354,7 +377,7 @@ impl ParallelReader for ParallelBagReader {
         // Create thread pool for controlled parallelism
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
-            .thread_name(|index| format!("bag-reader-{}", index))
+            .thread_name(|index| format!("bag-reader-{index}"))
             .build()
             .map_err(|e| {
                 CodecError::encode(
@@ -407,8 +430,8 @@ impl ParallelReader for ParallelBagReader {
         let duration = total_start.elapsed();
 
         println!("Parallel BAG reader complete:");
-        println!("  Chunks processed: {}", chunks_processed);
-        println!("  Messages read: {}", messages_read);
+        println!("  Chunks processed: {chunks_processed}");
+        println!("  Messages read: {messages_read}");
         println!(
             "  Total bytes: {:.2} MB",
             total_bytes as f64 / (1024.0 * 1024.0)
@@ -466,6 +489,7 @@ pub struct BagRawIter<'a> {
 
 impl<'a> BagRawIter<'a> {
     /// Create a new raw message iterator.
+    #[must_use]
     pub fn new(
         parser: &'a BagParser,
         channels: &'a HashMap<u16, ChannelInfo>,
@@ -504,7 +528,7 @@ impl<'a> BagRawIter<'a> {
     }
 }
 
-impl<'a> Iterator for BagRawIter<'a> {
+impl Iterator for BagRawIter<'_> {
     type Item = Result<(RawMessage, ChannelInfo)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -521,7 +545,7 @@ impl<'a> Iterator for BagRawIter<'a> {
                             log_time: msg.log_time,
                             publish_time: msg.publish_time,
                             data: msg.data.clone(),
-                            sequence: Some(msg.sequence as u64),
+                            sequence: Some(u64::from(msg.sequence)),
                         },
                         channel_info.clone(),
                     )));
@@ -574,6 +598,7 @@ impl<'a> BagDecodedMessageIter<'a> {
     }
 
     /// Get the channels for this iterator.
+    #[must_use]
     pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         self.channels
     }
@@ -589,7 +614,7 @@ impl<'a> BagDecodedMessageIter<'a> {
     }
 }
 
-impl<'a> Iterator for BagDecodedMessageIter<'a> {
+impl Iterator for BagDecodedMessageIter<'_> {
     type Item = std::result::Result<(DecodedMessage, ChannelInfo), CodecError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -603,7 +628,7 @@ impl<'a> Iterator for BagDecodedMessageIter<'a> {
 pub struct BagDecodedMessageStream<'a> {
     raw_iter: BagRawIter<'a>,
     decoder: Arc<CdrDecoder>,
-    /// Cache for parsed schemas (message_type -> MessageSchema)
+    /// Cache for parsed schemas (`message_type` -> `MessageSchema`)
     schema_cache: HashMap<String, crate::schema::MessageSchema>,
 }
 
@@ -644,7 +669,7 @@ impl<'a> BagDecodedMessageStream<'a> {
     }
 }
 
-impl<'a> Iterator for BagDecodedMessageStream<'a> {
+impl Iterator for BagDecodedMessageStream<'_> {
     type Item = std::result::Result<(DecodedMessage, ChannelInfo), CodecError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -711,6 +736,7 @@ impl<'a> BagDecodedMessageWithTimestampIter<'a> {
     }
 
     /// Get the channels for this iterator.
+    #[must_use]
     pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         self.channels
     }
@@ -726,7 +752,7 @@ impl<'a> BagDecodedMessageWithTimestampIter<'a> {
     }
 }
 
-impl<'a> Iterator for BagDecodedMessageWithTimestampIter<'a> {
+impl Iterator for BagDecodedMessageWithTimestampIter<'_> {
     type Item = std::result::Result<(TimestampedDecodedMessage, ChannelInfo), CodecError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -740,7 +766,7 @@ impl<'a> Iterator for BagDecodedMessageWithTimestampIter<'a> {
 pub struct BagDecodedMessageWithTimestampStream<'a> {
     raw_iter: BagRawIter<'a>,
     decoder: Arc<CdrDecoder>,
-    /// Cache for parsed schemas (message_type -> MessageSchema)
+    /// Cache for parsed schemas (`message_type` -> `MessageSchema`)
     schema_cache: HashMap<String, crate::schema::MessageSchema>,
 }
 
@@ -781,7 +807,7 @@ impl<'a> BagDecodedMessageWithTimestampStream<'a> {
     }
 }
 
-impl<'a> Iterator for BagDecodedMessageWithTimestampStream<'a> {
+impl Iterator for BagDecodedMessageWithTimestampStream<'_> {
     type Item = std::result::Result<(TimestampedDecodedMessage, ChannelInfo), CodecError>;
 
     fn next(&mut self) -> Option<Self::Item> {

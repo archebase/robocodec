@@ -1,4 +1,4 @@
-.PHONY: all build build-release build-python build-python-release build-python-dev test test-rust test-python test-examples examples examples-verify coverage coverage-rust coverage-python fmt fmt-python lint lint-python check check-license clean dev-up dev-down help
+.PHONY: all build build-release build-cli build-cli-release build-python build-python-release build-python-dev test test-rust test-python test-examples examples examples-verify coverage coverage-rust coverage-python fmt fmt-python lint lint-python check check-license clean dev-up dev-down bench bench-all fuzz fuzz-all fuzz-init fuzz-build help
 
 # Default target
 all: build
@@ -16,6 +16,16 @@ build-release: ## Build Rust library (release)
 	@echo "Building robocodec (release)..."
 	cargo build --release
 	@echo "✓ Build complete (release)"
+
+build-cli: ## Build CLI tool (debug)
+	@echo "Building robocodec-cli (debug)..."
+	cargo build --package robocodec-cli
+	@echo "✓ CLI build complete"
+
+build-cli-release: ## Build CLI tool (release)
+	@echo "Building robocodec-cli (release)..."
+	cargo build --release --package robocodec-cli
+	@echo "✓ CLI build complete (release)"
 
 build-python: ## Build Python wheel (debug)
 	@echo "Building Python wheel..."
@@ -210,6 +220,35 @@ lint-python: ## Lint Python code (requires ruff)
 
 check: fmt lint ## Run format check and lint
 
+# ============================================================================
+# Benchmarks
+# ============================================================================
+
+bench: ## Run performance benchmarks ( Criterion)
+	@echo "Running performance benchmarks..."
+	cargo bench
+	@echo ""
+	@echo "✓ Benchmarks complete"
+	@echo "  View results: open target/criterion/report/index.html"
+
+bench-all: ## Run all benchmarks with verbose output
+	@echo "Running all benchmarks (verbose)..."
+	cargo bench -- --verbose
+	@echo ""
+	@echo "✓ Benchmarks complete"
+
+bench-save: ## Run benchmarks and save baseline
+	@echo "Running benchmarks and saving baseline..."
+	cargo bench -- --save-baseline main
+	@echo ""
+	@echo "✓ Baseline saved as 'main'"
+
+bench-compare: ## Compare current performance against saved baseline
+	@echo "Comparing against baseline..."
+	cargo bench -- --baseline main
+	@echo ""
+	@echo "✓ Comparison complete"
+
 check-license: ## Check REUSE license compliance
 	@echo "Checking REUSE license compliance..."
 	@if command -v reuse >/dev/null 2>&1; then \
@@ -243,6 +282,64 @@ dev-logs: ## Show MinIO logs
 
 dev-status: ## Show MinIO container status
 	@docker compose -f docker-compose.dev.yml ps
+
+# ============================================================================
+# Fuzzing
+# ============================================================================
+
+fuzz-init: ## Initialize cargo-fuzz configuration (one-time setup)
+	@echo "Initializing cargo-fuzz..."
+	@if ! command -v cargo-fuzz >/dev/null 2>&1; then \
+		echo "Installing cargo-fuzz..."; \
+		cargo install cargo-fuzz --locked; \
+	fi
+	@rustup install nightly 2>/dev/null || echo "Nightly toolchain already installed"
+	@echo "✓ Fuzzing infrastructure initialized"
+
+fuzz-build: ## Build all fuzz targets
+	@echo "Building fuzz targets..."
+	cargo +nightly fuzz build
+	@echo "✓ Fuzz targets built"
+
+fuzz: ## Run fuzzers for a short duration (quick check)
+	@echo "Running fuzzers (quick check)..."
+	@echo "Fuzzing MCAP parser..."
+	cargo +nightly fuzz run mcap_parser -- -timeout=10 -max_total_time=30 || true
+	@echo "Fuzzing ROS1 bag parser..."
+	cargo +nightly fuzz run bag_parser -- -timeout=10 -max_total_time=30 || true
+	@echo "Fuzzing CDR decoder..."
+	cargo +nightly fuzz run cdr_decoder -- -timeout=10 -max_total_time=30 || true
+	@echo "✓ Quick fuzzing complete (no crashes found)"
+
+fuzz-all: ## Run all fuzz targets for a longer duration
+	@echo "Running all fuzz targets..."
+	@for target in mcap_parser bag_parser rrd_parser cdr_decoder schema_parser; do \
+		echo ""; \
+		echo "Fuzzing $$target..."; \
+		cargo +nightly fuzz run "$$target" -- -timeout=10 -max_total_time=60 || true; \
+	done
+	@echo ""
+	@echo "✓ Fuzzing complete"
+
+fuzz-mcap: ## Run MCAP parser fuzzer
+	@echo "Fuzzing MCAP parser..."
+	cargo +nightly fuzz run mcap_parser -- -timeout=10 -dict=fuzz/dictionaries/mcap.dict
+
+fuzz-bag: ## Run ROS1 bag parser fuzzer
+	@echo "Fuzzing ROS1 bag parser..."
+	cargo +nightly fuzz run bag_parser -- -timeout=10 -dict=fuzz/dictionaries/bag.dict
+
+fuzz-cdr: ## Run CDR decoder fuzzer
+	@echo "Fuzzing CDR decoder..."
+	cargo +nightly fuzz run cdr_decoder -- -timeout=10
+
+fuzz-schema: ## Run schema parser fuzzer
+	@echo "Fuzzing schema parser..."
+	cargo +nightly fuzz run schema_parser -- -timeout=10 -dict=fuzz/dictionaries/schema.dict
+
+fuzz-cmin-%: ## Minimize corpus for a specific fuzzer
+	@echo "Minimizing corpus for $*..."
+	cargo +nightly fuzz cmin $* -- -timeout=30
 
 # ============================================================================
 # Utilities

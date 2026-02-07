@@ -23,6 +23,7 @@ pub struct CdrCodec {
 
 impl CdrCodec {
     /// Create a new CDR codec.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             decoder: CdrDecoder::new(),
@@ -40,7 +41,7 @@ impl CdrCodec {
         if self.encoder.is_none() {
             self.encoder = Some(CdrEncoder::new());
         }
-        self.encoder.as_mut().unwrap()
+        self.encoder.as_mut().expect("encoder set to Some() above")
     }
 }
 
@@ -107,7 +108,10 @@ impl DynCodec for CdrCodec {
                 let encoder = self.encoder();
                 encoder.encode_message(message, &parsed_schema, type_name)?;
                 // Take ownership of encoder to call finish
-                let encoder = self.encoder.take().unwrap();
+                let encoder = self
+                    .encoder
+                    .take()
+                    .expect("encoder set by call to encoder() above");
                 Ok(encoder.finish())
             }
             _ => Err(CodecError::invalid_schema(

@@ -11,11 +11,9 @@
 
 pub mod ast;
 pub mod builtin_types;
-pub mod descriptor;
 pub mod parser;
 
 pub use ast::{Field, FieldType, MessageSchema, MessageType, PrimitiveType};
-pub use descriptor::{FieldInfo, SchemaDescriptor};
 pub use parser::{parse_schema, parse_schema_with_encoding};
 
 // Re-export parser-specific types
@@ -36,6 +34,7 @@ pub enum SchemaFormat {
 
 impl SchemaFormat {
     /// Parse from string.
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "msg" => Some(SchemaFormat::Msg),
@@ -45,6 +44,7 @@ impl SchemaFormat {
     }
 
     /// Get string representation.
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             SchemaFormat::Msg => "msg",

@@ -59,7 +59,7 @@ impl WildcardTopicMapping {
         for c in target_chars {
             if c == '*' {
                 group_idx += 1;
-                target_template.push_str(&format!("${{group{}}}", group_idx));
+                target_template.push_str(&format!("${{group{group_idx}}}"));
             } else {
                 target_template.push(c);
             }
@@ -67,7 +67,7 @@ impl WildcardTopicMapping {
 
         // Compile the regex
         let compiled = Regex::new(&regex_pattern)
-            .map_err(|e| format!("Invalid wildcard pattern '{}': {}", pattern, e))?;
+            .map_err(|e| format!("Invalid wildcard pattern '{pattern}': {e}"))?;
 
         Ok(Self {
             pattern: compiled,
@@ -77,13 +77,13 @@ impl WildcardTopicMapping {
 
     /// Apply this wildcard mapping to a topic.
     ///
-    /// Returns Some(new_topic) if the pattern matches, None otherwise.
+    /// Returns `Some(new_topic)` if the pattern matches, None otherwise.
     fn apply(&self, topic: &str) -> Option<String> {
         self.pattern.captures(topic).map(|caps| {
             let mut result = self.target_template.clone();
             // Replace ${group1}, ${group2}, etc. with captured values
             for i in 1..caps.len() {
-                let placeholder = format!("${{group{}}}", i);
+                let placeholder = format!("${{group{i}}}");
                 if let Some(captured) = caps.get(i) {
                     result = result.replace(&placeholder, captured.as_str());
                 }
@@ -130,6 +130,7 @@ impl Default for TopicRenameTransform {
 
 impl TopicRenameTransform {
     /// Create a new empty topic rename transform.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             mappings: HashMap::new(),
@@ -141,7 +142,7 @@ impl TopicRenameTransform {
     ///
     /// # Arguments
     ///
-    /// * `source` - Original topic name (e.g., "/camera_front/image_raw")
+    /// * `source` - Original topic name (e.g., "/`camera_front/image_raw`")
     /// * `target` - New topic name (e.g., "/camera/image")
     pub fn add_mapping(&mut self, source: impl Into<String>, target: impl Into<String>) {
         self.mappings.insert(source.into(), target.into());
@@ -182,7 +183,8 @@ impl TopicRenameTransform {
         Ok(())
     }
 
-    /// Create a transform from a HashMap of exact mappings.
+    /// Create a transform from a `HashMap` of exact mappings.
+    #[must_use]
     pub fn from_map(mappings: HashMap<String, String>) -> Self {
         Self {
             mappings,
@@ -207,21 +209,25 @@ impl TopicRenameTransform {
     }
 
     /// Get the number of exact mappings configured.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.mappings.len()
     }
 
     /// Get the number of wildcard mappings configured.
+    #[must_use]
     pub fn wildcard_len(&self) -> usize {
         self.wildcard_mappings.len()
     }
 
     /// Check if any mappings are configured.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.mappings.is_empty() && self.wildcard_mappings.is_empty()
     }
 
     /// Get all exact mappings.
+    #[must_use]
     pub fn mappings(&self) -> &HashMap<String, String> {
         &self.mappings
     }
@@ -229,6 +235,7 @@ impl TopicRenameTransform {
     /// Apply the transformation to a topic name.
     ///
     /// Returns `Some(new_name)` with the transformed topic.
+    #[must_use]
     pub fn apply(&self, topic: &str) -> Option<String> {
         // First check exact mappings
         if let Some(exact_target) = self.mappings.get(topic) {

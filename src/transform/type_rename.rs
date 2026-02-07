@@ -15,20 +15,20 @@ use super::{ChannelInfo, McapTransform, TransformError};
 
 /// A namespace rewrite rule with wildcard support.
 ///
-/// Represents a pattern like "genie_msgs/msg/*" -> "roboflow_msgs/msg/*"
+/// Represents a pattern like "`genie_msgs/msg`/*" -> "`roboflow_msgs/msg`/*"
 /// and provides methods to rewrite type references in schemas.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NamespaceRule {
-    /// The prefix before the wildcard (e.g., "genie_msgs/msg/")
+    /// The prefix before the wildcard (e.g., "`genie_msgs/msg`/")
     source_prefix: String,
-    /// The target prefix (e.g., "roboflow_msgs/msg/")
+    /// The target prefix (e.g., "`roboflow_msgs/msg`/")
     target_prefix: String,
     /// Whether this rule has a wildcard suffix
     has_wildcard: bool,
 }
 
 impl NamespaceRule {
-    /// Parse a wildcard pattern string into a NamespaceRule.
+    /// Parse a wildcard pattern string into a `NamespaceRule`.
     ///
     /// # Examples
     /// - "foo/msg/*" -> "bar/msg/*"
@@ -145,11 +145,11 @@ impl NamespaceRule {
 struct NamespaceRewriteStrategy {
     /// Original namespace mapping (channel format)
     channel_mapping: (String, String),
-    /// IDL format mappings (e.g., "genie_msgs::msg::" -> "roboflow_msgs::msg::")
+    /// IDL format mappings (e.g., "`genie_msgs::msg::`" -> "`roboflow_msgs::msg::`")
     idl_mappings: Vec<(String, String)>,
-    /// Dot-notation for schemas (e.g., "genie_msgs.msg." -> "roboflow_msgs.msg.")
+    /// Dot-notation for schemas (e.g., "`genie_msgs.msg`." -> "`roboflow_msgs.msg`.")
     dot_mappings: Vec<(String, String)>,
-    /// Module declaration rewrite (e.g., "module genie_msgs {" -> "module roboflow_msgs {")
+    /// Module declaration rewrite (e.g., "module `genie_msgs` {" -> "module `roboflow_msgs` {")
     module_mapping: Option<(String, String)>,
 }
 
@@ -166,7 +166,7 @@ impl NamespaceRewriteStrategy {
 
         if !source_module.is_empty() && source_module != target_module {
             // Module declaration: "module old {" -> "module new {"
-            module_mapping = Some((source_module.to_string(), target_module.to_string()));
+            module_mapping = Some((source_module.clone(), target_module.clone()));
 
             // IDL format: "old_pkg/msg/Type" -> "old_pkg::msg::Type"
             if source_prefix.contains('/') {
@@ -304,6 +304,7 @@ impl NamespaceRewriter {
     }
 
     /// Rewrite schema text using all compiled rules.
+    #[must_use]
     pub fn rewrite_schema(&self, schema_text: &str) -> String {
         let mut result = schema_text.to_string();
 
@@ -340,6 +341,7 @@ impl NamespaceRewriter {
     }
 
     /// Rewrite a specific type name using the compiled rules.
+    #[must_use]
     pub fn rewrite_type(&self, type_name: &str) -> String {
         // Try wildcard rules first
         for rule in &self.wildcard_rules {
@@ -372,9 +374,9 @@ impl fmt::Debug for NamespaceRewriter {
 /// Extract the namespace prefix from a type name.
 ///
 /// Examples:
-/// - "genie_msgs/msg/ArmState" -> "genie_msgs/msg"
+/// - "`genie_msgs/msg/ArmState`" -> "`genie_msgs/msg`"
 /// - "nmx.msg.LowdimData" -> "nmx.msg"
-/// - "sensor_msgs" -> "sensor_msgs"
+/// - "`sensor_msgs`" -> "`sensor_msgs`"
 fn extract_namespace_prefix(type_name: &str) -> String {
     if let Some(last_slash) = type_name.rfind('/') {
         type_name[..last_slash].to_string()
@@ -388,9 +390,9 @@ fn extract_namespace_prefix(type_name: &str) -> String {
 /// Extract the base module/package name for module declarations.
 ///
 /// Examples:
-/// - "genie_msgs/msg" -> "genie_msgs"
+/// - "`genie_msgs/msg`" -> "`genie_msgs`"
 /// - "nmx.msg" -> "nmx"
-/// - "sensor_msgs" -> "sensor_msgs"
+/// - "`sensor_msgs`" -> "`sensor_msgs`"
 fn extract_base_module(prefix: &str) -> String {
     if let Some(first_slash) = prefix.find('/') {
         prefix[..first_slash].to_string()
@@ -408,8 +410,8 @@ fn extract_base_module(prefix: &str) -> String {
 ///
 /// # Arguments
 ///
-/// * `old_type` - Original type name (e.g., "sensor_msgs/msg/JointState")
-/// * `new_type` - New type name (e.g., "my_msgs/JointState")
+/// * `old_type` - Original type name (e.g., "`sensor_msgs/msg/JointState`")
+/// * `new_type` - New type name (e.g., "`my_msgs/JointState`")
 /// * `schema_text` - Original schema text
 ///
 /// # Returns
@@ -443,7 +445,7 @@ fn rewrite_schema_package(old_type: &str, new_type: &str, schema_text: &str) -> 
 
 /// Rewrite IDL module declarations in schema text.
 ///
-/// Replaces patterns like "module old_name {" with "module new_name {".
+/// Replaces patterns like "module `old_name` {" with "module `new_name` {".
 fn rewrite_module_declarations(text: &str, old_module: &str, new_module: &str) -> String {
     // Match "module old_module {" patterns
     let pattern = format!("module {old_module} {{");
@@ -455,7 +457,7 @@ fn rewrite_module_declarations(text: &str, old_module: &str, new_module: &str) -
 /// Replace type references in schema text with word boundary handling.
 ///
 /// This ensures we only replace whole type references, not partial matches.
-/// For example, "sensor_msgs/Header" should not match inside "my_sensor_msgs/Header".
+/// For example, "`sensor_msgs/Header`" should not match inside "`my_sensor_msgs/Header`".
 fn replace_type_reference(text: &str, old_type: &str, new_type: &str) -> String {
     // Common delimiters that surround type references in schemas
     let delimiters = [
@@ -498,8 +500,8 @@ fn replace_type_reference(text: &str, old_type: &str, new_type: &str) -> String 
 /// Extract the package name from a type name.
 ///
 /// Handles different formats:
-/// - ROS2: "sensor_msgs/msg/JointState" -> "sensor_msgs/msg"
-/// - ROS1: "sensor_msgs/JointState" -> "sensor_msgs"
+/// - ROS2: "`sensor_msgs/msg/JointState`" -> "`sensor_msgs/msg`"
+/// - ROS1: "`sensor_msgs/JointState`" -> "`sensor_msgs`"
 /// - Proto: "nmx.msg.LowdimData" -> "nmx.msg"
 fn extract_package(type_name: &str) -> String {
     if let Some(last_slash) = type_name.rfind('/') {
@@ -524,9 +526,9 @@ fn extract_package(type_name: &str) -> String {
 /// Detect the encoding format from a type name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeFormat {
-    /// ROS2 format: "sensor_msgs/msg/JointState"
+    /// ROS2 format: "`sensor_msgs/msg/JointState`"
     Ros2,
-    /// ROS1 format: "sensor_msgs/JointState"
+    /// ROS1 format: "`sensor_msgs/JointState`"
     Ros1,
     /// Proto format: "nmx.msg.LowdimData"
     Proto,
@@ -536,6 +538,7 @@ pub enum TypeFormat {
 
 impl TypeFormat {
     /// Detect format from a type name string.
+    #[must_use]
     pub fn from_type_name(type_name: &str) -> Self {
         if type_name.contains('/') {
             if type_name.contains("/msg/") {
@@ -551,6 +554,7 @@ impl TypeFormat {
     }
 
     /// Get the separator for this format.
+    #[must_use]
     pub fn separator(&self) -> &str {
         match self {
             TypeFormat::Ros2 => "/",
@@ -561,6 +565,7 @@ impl TypeFormat {
     }
 
     /// Convert a type name from this format to another format.
+    #[must_use]
     pub fn convert_type_name(&self, type_name: &str, target_format: TypeFormat) -> String {
         // Extract components
         let (package, msg_part) = Self::parse_type_name(type_name);
@@ -591,7 +596,7 @@ impl TypeFormat {
                 } else if !package.is_empty() {
                     format!("{package}/{msg_part}")
                 } else {
-                    msg_part.to_string()
+                    msg_part.clone()
                 }
             }
             TypeFormat::Proto => {
@@ -604,14 +609,14 @@ impl TypeFormat {
                 } else if !package.is_empty() {
                     format!("{package}.{msg_part}")
                 } else {
-                    msg_part.to_string()
+                    msg_part.clone()
                 }
             }
             TypeFormat::Unknown => type_name.to_string(),
         }
     }
 
-    /// Parse a type name into (package, type_name) components.
+    /// Parse a type name into (package, `type_name`) components.
     fn parse_type_name(type_name: &str) -> (String, String) {
         if let Some(last_slash) = type_name.rfind('/') {
             (
@@ -654,7 +659,7 @@ impl TypeFormat {
 pub struct TypeRenameTransform {
     /// Type mappings: source -> target
     mappings: HashMap<String, String>,
-    /// Wildcard patterns: "prefix/*" -> target_prefix
+    /// Wildcard patterns: "prefix/*" -> `target_prefix`
     wildcard_patterns: Vec<(String, String)>,
     /// Cache for rewritten schemas (using string keys for flexibility)
     schema_cache: HashMap<String, String>,
@@ -670,6 +675,7 @@ impl Default for TypeRenameTransform {
 
 impl TypeRenameTransform {
     /// Create a new empty type rename transform.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             mappings: HashMap::new(),
@@ -679,7 +685,8 @@ impl TypeRenameTransform {
         }
     }
 
-    /// Create a transform from a HashMap of mappings.
+    /// Create a transform from a `HashMap` of mappings.
+    #[must_use]
     pub fn from_map(mappings: HashMap<String, String>) -> Self {
         // Pre-compile the namespace rewriter for immediate use
         let namespace_rewriter = NamespaceRewriter::from_mappings(&mappings, &[]);
@@ -717,8 +724,8 @@ impl TypeRenameTransform {
     ///
     /// # Arguments
     ///
-    /// * `source` - Original type name (e.g., "sensor_msgs/msg/JointState")
-    /// * `target` - New type name (e.g., "custom_msgs/JointState")
+    /// * `source` - Original type name (e.g., "`sensor_msgs/msg/JointState`")
+    /// * `target` - New type name (e.g., "`custom_msgs/JointState`")
     pub fn add_mapping(&mut self, source: impl Into<String>, target: impl Into<String>) {
         self.mappings.insert(source.into(), target.into());
         // Clear cache and recompile rewriter when mappings change
@@ -727,16 +734,19 @@ impl TypeRenameTransform {
     }
 
     /// Get the number of mappings configured.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.mappings.len()
     }
 
     /// Check if any mappings are configured.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.mappings.is_empty()
     }
 
     /// Get all mappings.
+    #[must_use]
     pub fn mappings(&self) -> &HashMap<String, String> {
         &self.mappings
     }
@@ -783,6 +793,7 @@ impl TypeRenameTransform {
     /// Apply the transformation to a type name.
     ///
     /// Returns the new type name, or the original if no mapping exists.
+    #[must_use]
     pub fn apply_type(&self, type_name: &str) -> String {
         // Check exact mappings first
         if let Some(target) = self.mappings.get(type_name) {
@@ -819,7 +830,10 @@ impl TypeRenameTransform {
             return cached.clone();
         }
 
-        let rewriter = self.namespace_rewriter.as_ref().unwrap();
+        let rewriter = self
+            .namespace_rewriter
+            .as_ref()
+            .expect("namespace_rewriter initialized by ensure_rewriter()");
         let rewritten = rewriter.rewrite_schema(schema_text);
         self.schema_cache.insert(cache_key, rewritten.clone());
         rewritten
@@ -857,7 +871,10 @@ impl TypeRenameTransform {
             });
             (target, rewritten_schema)
         } else {
-            (type_name.to_string(), schema_text.map(|s| s.to_string()))
+            (
+                type_name.to_string(),
+                schema_text.map(std::string::ToString::to_string),
+            )
         }
     }
 }
@@ -885,12 +902,16 @@ impl McapTransform for TypeRenameTransform {
             });
             (
                 target,
-                rewritten_schema.or(schema_text.map(|s| s.to_string())),
+                rewritten_schema.or(schema_text.map(std::string::ToString::to_string)),
             )
         } else if let Some(target) = self.apply_wildcard_type(type_name) {
             // For wildcard patterns, use the namespace rewriter first
             let rewritten_schema = self.namespace_rewriter.as_ref().and(schema_text).map(|s| {
-                let mut result = self.namespace_rewriter.as_ref().unwrap().rewrite_schema(s);
+                let mut result = self
+                    .namespace_rewriter
+                    .as_ref()
+                    .expect("namespace_rewriter is Some due to and() above")
+                    .rewrite_schema(s);
                 // Also replace the specific type that was matched
                 result = replace_type_reference(&result, type_name, &target);
                 // Handle schema format conversions
@@ -906,10 +927,13 @@ impl McapTransform for TypeRenameTransform {
             });
             (
                 target,
-                rewritten_schema.or(schema_text.map(|s| s.to_string())),
+                rewritten_schema.or(schema_text.map(std::string::ToString::to_string)),
             )
         } else {
-            (type_name.to_string(), schema_text.map(|s| s.to_string()))
+            (
+                type_name.to_string(),
+                schema_text.map(std::string::ToString::to_string),
+            )
         }
     }
 
@@ -957,7 +981,10 @@ impl McapTransform for TypeRenameTransform {
                 // If there's more than one unique schema, it's a collision
                 if schemas.len() > 1 {
                     return Err(TransformError::TypeCollision {
-                        sources: sources.iter().map(|s| s.to_string()).collect(),
+                        sources: sources
+                            .iter()
+                            .map(std::string::ToString::to_string)
+                            .collect(),
                         target: target.to_string(),
                     });
                 }
@@ -966,7 +993,10 @@ impl McapTransform for TypeRenameTransform {
             // Check if target conflicts with an existing type that isn't one of the sources
             if !sources.contains(target) && existing_types.contains(*target) {
                 return Err(TransformError::TypeCollision {
-                    sources: sources.iter().map(|s| s.to_string()).collect(),
+                    sources: sources
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect(),
                     target: target.to_string(),
                 });
             }
@@ -1015,7 +1045,7 @@ impl McapTransform for TypeRenameTransform {
 /// ```
 #[derive(Debug, Clone)]
 pub struct TopicAwareTypeRenameTransform {
-    /// Topic-specific type mappings: (topic, source_type) -> target_type
+    /// Topic-specific type mappings: (topic, `source_type`) -> `target_type`
     mappings: HashMap<(String, String), String>,
 }
 
@@ -1027,6 +1057,7 @@ impl Default for TopicAwareTypeRenameTransform {
 
 impl TopicAwareTypeRenameTransform {
     /// Create a new empty topic-aware type rename transform.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             mappings: HashMap::new(),
@@ -1050,22 +1081,26 @@ impl TopicAwareTypeRenameTransform {
             .insert((topic.into(), source_type.into()), target_type.into());
     }
 
-    /// Create a transform from a HashMap of mappings.
+    /// Create a transform from a `HashMap` of mappings.
+    #[must_use]
     pub fn from_map(mappings: HashMap<(String, String), String>) -> Self {
         Self { mappings }
     }
 
     /// Get the number of mappings configured.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.mappings.len()
     }
 
     /// Check if any mappings are configured.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.mappings.is_empty()
     }
 
     /// Get all mappings.
+    #[must_use]
     pub fn mappings(&self) -> &HashMap<(String, String), String> {
         &self.mappings
     }
@@ -1073,6 +1108,7 @@ impl TopicAwareTypeRenameTransform {
     /// Apply the transformation for a specific topic and type.
     ///
     /// Returns the new type name, or the original if no mapping exists for this (topic, type) pair.
+    #[must_use]
     pub fn apply_for_topic(&self, topic: &str, type_name: &str) -> String {
         if let Some(target) = self
             .mappings
@@ -1086,6 +1122,7 @@ impl TopicAwareTypeRenameTransform {
     /// Apply transformation for a specific topic, type, and schema.
     ///
     /// This method can be called from both mutable and immutable references.
+    #[must_use]
     pub fn apply_for_topic_with_schema(
         &self,
         topic: &str,
@@ -1100,18 +1137,23 @@ impl TopicAwareTypeRenameTransform {
                 schema_text.map(|s| rewrite_schema_package(type_name, target, s));
             (target.clone(), rewritten_schema)
         } else {
-            (type_name.to_string(), schema_text.map(|s| s.to_string()))
+            (
+                type_name.to_string(),
+                schema_text.map(std::string::ToString::to_string),
+            )
         }
     }
 
     /// Check if there's a mapping for a given source type across any topic.
     ///
     /// This is used to detect conflicts with global type mappings.
+    #[must_use]
     pub fn has_mapping_for_type(&self, type_name: &str) -> bool {
         self.mappings.keys().any(|(_, source)| source == type_name)
     }
 
     /// Get all topics that have a mapping for the given source type.
+    #[must_use]
     pub fn topics_for_type(&self, type_name: &str) -> Vec<&str> {
         self.mappings
             .keys()
@@ -1139,7 +1181,10 @@ impl McapTransform for TopicAwareTypeRenameTransform {
     ) -> (String, Option<String>) {
         // Without topic context, we can't apply topic-specific mappings
         // Return original - the topic-aware version should be used instead
-        (type_name.to_string(), schema_text.map(|s| s.to_string()))
+        (
+            type_name.to_string(),
+            schema_text.map(std::string::ToString::to_string),
+        )
     }
 
     fn validate(&self, channels: &[ChannelInfo]) -> std::result::Result<(), TransformError> {

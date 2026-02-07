@@ -20,11 +20,11 @@ pub struct PyChannelInfo {
     #[pyo3(get)]
     pub id: u16,
 
-    /// Topic name (e.g., "/joint_states", "/tf")
+    /// Topic name (e.g., "/`joint_states`", "/tf")
     #[pyo3(get)]
     pub topic: String,
 
-    /// Message type name (e.g., "sensor_msgs/msg/JointState")
+    /// Message type name (e.g., "`sensor_msgs/msg/JointState`")
     #[pyo3(get)]
     pub message_type: String,
 

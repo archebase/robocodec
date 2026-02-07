@@ -45,13 +45,13 @@
 //! }
 //! ```
 //!
-//! Reference: https://github.com/rerun-io/rerun/tree/main/crates/store/re_protos/proto/rerun/v1alpha1
+//! Reference: <https://github.com/rerun-io/rerun/tree/main/crates/store/re_protos/proto/rerun/v1alpha1>
 
 use std::io;
 
 use crate::core::Result;
 
-/// Compression type for ArrowMsg payload.
+/// Compression type for `ArrowMsg` payload.
 ///
 /// Matches Rerun's Compression enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +66,7 @@ pub enum ArrowCompression {
 
 impl ArrowCompression {
     /// Create from u32 value (Rerun's Compression enum values).
+    #[must_use]
     pub fn from_u32(value: u32) -> Self {
         match value {
             0 => Self::Unspecified,
@@ -76,22 +77,25 @@ impl ArrowCompression {
     }
 
     /// Convert to u32.
+    #[must_use]
     pub fn as_u32(self) -> u32 {
         self as u32
     }
 
     /// Check if compression is enabled.
+    #[must_use]
     pub fn is_compressed(self) -> bool {
         self == Self::Lz4
     }
 
     /// Returns true if compression is explicitly None
+    #[must_use]
     pub fn is_none(self) -> bool {
         self == Self::None
     }
 }
 
-/// Encoding type for ArrowMsg payload.
+/// Encoding type for `ArrowMsg` payload.
 ///
 /// Matches Rerun's Encoding enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +108,7 @@ pub enum ArrowEncoding {
 
 impl ArrowEncoding {
     /// Create from u32 value (Rerun's Encoding enum values).
+    #[must_use]
     pub fn from_u32(value: u32) -> Self {
         match value {
             0 => Self::Unspecified,
@@ -113,14 +118,15 @@ impl ArrowEncoding {
     }
 
     /// Convert to u32.
+    #[must_use]
     pub fn as_u32(self) -> u32 {
         self as u32
     }
 }
 
-/// Store kind for StoreId.
+/// Store kind for `StoreId`.
 ///
-/// Matches Rerun's StoreKind enum.
+/// Matches Rerun's `StoreKind` enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoreKind {
     /// Unspecified store kind
@@ -133,6 +139,7 @@ pub enum StoreKind {
 
 impl StoreKind {
     /// Create from u32 value.
+    #[must_use]
     pub fn from_u32(value: u32) -> Self {
         match value {
             0 => Self::Unspecified,
@@ -143,12 +150,13 @@ impl StoreKind {
     }
 
     /// Convert to u32.
+    #[must_use]
     pub fn as_u32(self) -> u32 {
         self as u32
     }
 }
 
-/// StoreId information (optional, can be omitted when writing).
+/// `StoreId` information (optional, can be omitted when writing).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreId {
     /// The kind of the store
@@ -160,7 +168,7 @@ pub struct StoreId {
 }
 
 impl StoreId {
-    /// Create a new minimal StoreId for a recording.
+    /// Create a new minimal `StoreId` for a recording.
     pub fn new_recording(recording_id: impl Into<String>) -> Self {
         Self {
             kind: StoreKind::Recording,
@@ -169,7 +177,8 @@ impl StoreId {
         }
     }
 
-    /// Create an empty/placeholder StoreId.
+    /// Create an empty/placeholder `StoreId`.
+    #[must_use]
     pub fn empty() -> Self {
         Self {
             kind: StoreKind::Recording,
@@ -179,9 +188,9 @@ impl StoreId {
     }
 }
 
-/// ArrowMsg protobuf structure.
+/// `ArrowMsg` protobuf structure.
 ///
-/// This represents a Rerun ArrowMsg message with potentially compressed
+/// This represents a Rerun `ArrowMsg` message with potentially compressed
 /// Arrow IPC data as the payload.
 #[derive(Debug, Clone)]
 pub struct ArrowMsg {
@@ -202,7 +211,8 @@ pub struct ArrowMsg {
 }
 
 impl ArrowMsg {
-    /// Create a new ArrowMsg with uncompressed payload.
+    /// Create a new `ArrowMsg` with uncompressed payload.
+    #[must_use]
     pub fn new(payload: Vec<u8>) -> Self {
         let uncompressed_size = payload.len() as u64;
         Self {
@@ -216,7 +226,7 @@ impl ArrowMsg {
         }
     }
 
-    /// Create a new ArrowMsg with LZ4 compressed payload.
+    /// Create a new `ArrowMsg` with LZ4 compressed payload.
     pub fn with_lz4(payload: Vec<u8>) -> Result<Self> {
         let uncompressed_size = payload.len() as u64;
         let compressed = lz4_flex::block::compress(&payload);
@@ -231,7 +241,7 @@ impl ArrowMsg {
         })
     }
 
-    /// Create an ArrowMsg with the specified compression.
+    /// Create an `ArrowMsg` with the specified compression.
     pub fn with_compression(payload: Vec<u8>, compression: ArrowCompression) -> Result<Self> {
         let uncompressed_size = payload.len() as u64;
         let (payload, compression) = match compression {
@@ -254,21 +264,23 @@ impl ArrowMsg {
         })
     }
 
-    /// Set the store_id for this ArrowMsg.
+    /// Set the `store_id` for this `ArrowMsg`.
+    #[must_use]
     pub fn with_store_id(mut self, store_id: StoreId) -> Self {
         self.store_id = Some(store_id);
         self
     }
 
-    /// Set the is_static flag for this ArrowMsg.
+    /// Set the `is_static` flag for this `ArrowMsg`.
+    #[must_use]
     pub fn with_is_static(mut self, is_static: bool) -> Self {
         self.is_static = Some(is_static);
         self
     }
 
-    /// Parse an ArrowMsg from bytes (protobuf format).
+    /// Parse an `ArrowMsg` from bytes (protobuf format).
     ///
-    /// This implements a protobuf parser for the ArrowMsg format defined in
+    /// This implements a protobuf parser for the `ArrowMsg` format defined in
     /// Rerun's official protobuf definition. See module-level docs for reference.
     ///
     /// Fields parsed:
@@ -409,9 +421,9 @@ impl ArrowMsg {
         })
     }
 
-    /// Serialize the ArrowMsg to bytes (protobuf format).
+    /// Serialize the `ArrowMsg` to bytes (protobuf format).
     ///
-    /// Writes a valid ArrowMsg protobuf that Rerun can read.
+    /// Writes a valid `ArrowMsg` protobuf that Rerun can read.
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
 
@@ -422,7 +434,7 @@ impl ArrowMsg {
 
         // Write compression field (field 2, varint)
         write_varint(&mut buf, 2 << 3); // tag
-        write_varint(&mut buf, self.compression.as_u32() as u64);
+        write_varint(&mut buf, u64::from(self.compression.as_u32()));
 
         // Write uncompressed_size field (field 3, varint)
         write_varint(&mut buf, 3 << 3); // tag
@@ -430,7 +442,7 @@ impl ArrowMsg {
 
         // Write encoding field (field 4, varint) - must be ArrowIpc=1
         write_varint(&mut buf, 4 << 3); // tag
-        write_varint(&mut buf, self.encoding.as_u32() as u64);
+        write_varint(&mut buf, u64::from(self.encoding.as_u32()));
 
         // Write payload field (field 5, length-delimited)
         write_varint(&mut buf, (5 << 3) | 2); // tag
@@ -440,7 +452,7 @@ impl ArrowMsg {
         // Write is_static field (field 7) if present
         if let Some(is_static) = self.is_static {
             write_varint(&mut buf, 7 << 3); // tag
-            write_varint(&mut buf, is_static as u64);
+            write_varint(&mut buf, u64::from(is_static));
         }
 
         Ok(buf)
@@ -481,9 +493,10 @@ impl ArrowMsg {
         }
     }
 
-    /// Get the compression ratio (compressed_size / uncompressed_size).
+    /// Get the compression ratio (`compressed_size` / `uncompressed_size`).
     ///
     /// Returns None if compression is not enabled.
+    #[must_use]
     pub fn compression_ratio(&self) -> Option<f64> {
         match self.compression {
             ArrowCompression::None | ArrowCompression::Unspecified => None,
@@ -497,18 +510,20 @@ impl ArrowMsg {
         }
     }
 
-    /// Returns true if this ArrowMsg has a store_id set
+    /// Returns true if this `ArrowMsg` has a `store_id` set
+    #[must_use]
     pub fn has_store_id(&self) -> bool {
         self.store_id.is_some()
     }
 
-    /// Returns true if this ArrowMsg is marked as static
+    /// Returns true if this `ArrowMsg` is marked as static
+    #[must_use]
     pub fn is_static_flag(&self) -> bool {
         self.is_static.unwrap_or(false)
     }
 }
 
-/// Parse a StoreId message from bytes.
+/// Parse a `StoreId` message from bytes.
 fn parse_store_id(data: &mut &[u8]) -> Result<StoreId> {
     let len = read_varint(data)? as usize;
     if len > data.len() {
@@ -603,14 +618,14 @@ fn parse_store_id(data: &mut &[u8]) -> Result<StoreId> {
     })
 }
 
-/// Write a StoreId message to a buffer.
+/// Write a `StoreId` message to a buffer.
 fn write_store_id(buf: &mut Vec<u8>, store_id: &StoreId) -> Result<()> {
     // Calculate total length first (for length prefix)
     let mut store_id_buf = Vec::new();
 
     // Write kind (field 1, varint)
     write_varint(&mut store_id_buf, 1 << 3);
-    write_varint(&mut store_id_buf, store_id.kind.as_u32() as u64);
+    write_varint(&mut store_id_buf, u64::from(store_id.kind.as_u32()));
 
     // Write recording_id (field 2, string)
     if !store_id.recording_id.is_empty() {
@@ -659,7 +674,7 @@ fn read_varint(data: &mut &[u8]) -> io::Result<u64> {
             b
         };
 
-        result |= ((byte & 0x7F) as u64) << shift;
+        result |= u64::from(byte & 0x7F) << shift;
         shift += 7;
 
         if byte & 0x80 == 0 {
@@ -727,7 +742,7 @@ fn skip_field(data: &mut &[u8], wire_type: u64) -> io::Result<()> {
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Unknown wire type: {}", wire_type),
+                format!("Unknown wire type: {wire_type}"),
             ));
         }
     }

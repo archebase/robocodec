@@ -122,6 +122,48 @@ export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
 
 > **Note:** While we use AWS-standard environment variable names for compatibility, robocodec works with any S3-compatible storage service.
 
+### Read from HTTP/HTTPS
+
+Robocodec also supports reading directly from HTTP/HTTPS URLs:
+
+```rust
+use robocodec::RoboReader;
+
+// Format detected from URL path, access via HTTP
+let reader = RoboReader::open("https://example.com/data.mcap")?;
+println!("Found {} channels", reader.channels().len());
+```
+
+> **Note:** HTTP reading supports range requests for efficient access to large files.
+
+#### HTTP Authentication
+
+For authenticated HTTP endpoints, robocodec supports Bearer tokens and Basic authentication via `ReaderConfig`:
+
+```rust
+use robocodec::io::{RoboReader, ReaderConfig};
+
+// Bearer token (OAuth2/JWT)
+let config = ReaderConfig::default().with_http_bearer_token("your-token-here");
+let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
+
+// Basic authentication
+let config = ReaderConfig::default().with_http_basic_auth("username", "password");
+let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
+```
+
+Alternatively, you can provide authentication via URL query parameters:
+
+```rust
+use robocodec::RoboReader;
+
+// Bearer token via URL
+let reader = RoboReader::open("https://example.com/data.mcap?bearer_token=your-token")?;
+
+// Basic auth via URL (user:pass encoded)
+let reader = RoboReader::open("https://example.com/data.mcap?basic_auth=user:pass")?;
+```
+
 ### Write to S3
 
 ```rust
@@ -244,7 +286,38 @@ make build-python-dev
 
 MulanPSL v2 - see [LICENSE](LICENSE)
 
+## Development
+
+### Testing
+
+```bash
+make test              # Run all tests
+make test-rust         # Run Rust tests only
+make test-python       # Run Python tests only
+```
+
+### Fuzzing
+
+Robocodec includes comprehensive fuzzing infrastructure for parser security and robustness testing:
+
+```bash
+./scripts/fuzz_init.sh  # Initialize fuzzing infrastructure (one-time setup)
+make fuzz               # Quick fuzzing check (30s per target)
+make fuzz-all           # Extended fuzzing (1min per target)
+make fuzz-mcap          # Fuzz MCAP parser only
+```
+
+For detailed fuzzing documentation, see [docs/FUZZING.md](docs/FUZZING.md).
+
+### Benchmarks
+
+```bash
+make bench              # Run performance benchmarks
+make bench-compare      # Compare against baseline
+```
+
 ## Links
 
 - [Issue Tracker](https://github.com/archebase/robocodec/issues)
 - [Security Policy](SECURITY.md)
+- [Fuzzing Guide](docs/FUZZING.md)

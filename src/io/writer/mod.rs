@@ -23,7 +23,7 @@ use crate::{CodecError, Result};
 ///
 /// This reuses a single runtime across all S3 operations, avoiding
 /// the overhead of creating a new runtime for each open/write.
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 fn shared_runtime() -> &'static tokio::runtime::Runtime {
     use std::sync::OnceLock;
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -39,11 +39,11 @@ pub struct RoboWriter {
 impl RoboWriter {
     /// Create a new writer with automatic format detection based on file extension.
     ///
-    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    /// Supports both local file paths and S3 URLs (<s3://bucket/key>).
     ///
     /// # Arguments
     ///
-    /// * `path` - Path to the output file, or S3 URL (s3://bucket/key)
+    /// * `path` - Path to the output file, or S3 URL (<s3://bucket/key>)
     ///
     /// # Example
     ///
@@ -63,11 +63,11 @@ impl RoboWriter {
 
     /// Create a writer with the specified configuration.
     ///
-    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    /// Supports both local file paths and S3 URLs (<s3://bucket/key>).
     ///
     /// # Arguments
     ///
-    /// * `path` - Path to the output file, or S3 URL (s3://bucket/key)
+    /// * `path` - Path to the output file, or S3 URL (<s3://bucket/key>)
     /// * `config` - Writer configuration
     ///
     /// # Example
@@ -82,11 +82,10 @@ impl RoboWriter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn create_with_config(path: &str, config: WriterConfig) -> Result<Self> {
-        let _ = config; // Config reserved for future use
-
-        // Check if this is an S3 URL
-        #[cfg(feature = "s3")]
+        // Check for S3 URLs (requires remote feature for tokio/reqwest)
+        #[cfg(feature = "remote")]
         {
+            // Check for S3 URLs first
             if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
                 // Use S3Writer for s3:// URLs
                 let rt = shared_runtime();
@@ -152,8 +151,7 @@ impl RoboWriter {
                         return Err(CodecError::parse(
                             "RoboWriter",
                             format!(
-                                "Unknown file format. Use .mcap, .bag, or .rrd extension: {}",
-                                path
+                                "Unknown file format. Use .mcap, .bag, or .rrd extension: {path}"
                             ),
                         ));
                     }
@@ -165,6 +163,7 @@ impl RoboWriter {
     }
 
     /// Get the file format being written.
+    #[must_use]
     pub fn format(&self) -> FileFormat {
         // Determine from path extension
         match self.path().rsplit('.').next() {
@@ -176,6 +175,7 @@ impl RoboWriter {
     }
 
     /// Downcast to the inner writer for format-specific operations.
+    #[must_use]
     pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
         self.inner.as_any().downcast_ref::<T>()
     }
@@ -626,4 +626,8 @@ mod tests {
         let any_mut = mock.as_any_mut();
         assert!(any_mut.is::<MockWriter>());
     }
+
+    // =========================================================================
+    // S3 URL Detection Tests
+    // =========================================================================
 }

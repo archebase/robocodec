@@ -51,11 +51,11 @@ pub fn should_passthrough_encoding(encoding: &str) -> bool {
 ///
 /// # Arguments
 ///
-/// * `type_name` - The full type name (e.g., "std_msgs/String")
+/// * `type_name` - The full type name (e.g., "`std_msgs/String`")
 ///
 /// # Returns
 ///
-/// The package name (e.g., "std_msgs") or empty string
+/// The package name (e.g., "`std_msgs`") or empty string
 #[must_use]
 pub fn extract_package_name(type_name: &str) -> &str {
     type_name.split('/').next().unwrap_or("")
@@ -83,6 +83,13 @@ pub fn determine_message_handling(encoding: &str, has_schema: bool) -> MessageHa
 }
 
 /// Rewrite a CDR message by decoding and re-encoding.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - Message decoding fails and `skip_decode_failures` is false
+/// - Message re-encoding fails
+/// - Writing the encoded message to the MCAP writer fails
 pub fn rewrite_cdr_message(
     mcap_writer: &mut ParallelMcapWriter<BufWriter<File>>,
     msg: &RawMessage,
@@ -93,8 +100,8 @@ pub fn rewrite_cdr_message(
     stats: &mut RewriteStats,
 ) -> Result<()> {
     // Decode the message (handles CDR header internally)
-    let decoder = CdrDecoder::new();
-    let decoded = match decoder.decode(schema, &msg.data, Some(&schema.name)) {
+    let cdr_decoder = CdrDecoder::new();
+    let decoded = match cdr_decoder.decode(schema, &msg.data, Some(&schema.name)) {
         Ok(d) => d,
         Err(e) => {
             warn!(
@@ -146,6 +153,10 @@ pub fn rewrite_cdr_message(
 }
 
 /// Write a raw message without re-encoding.
+///
+/// # Errors
+///
+/// Returns an error if writing the message to the MCAP writer fails.
 pub fn write_message_raw(
     mcap_writer: &mut ParallelMcapWriter<BufWriter<File>>,
     msg: &RawMessage,

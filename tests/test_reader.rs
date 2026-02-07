@@ -4,12 +4,12 @@
 
 //! Integration tests for S3 reader.
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 use robocodec::io::s3::{S3Location, S3ReaderConfig, S3ReaderState};
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 use robocodec::io::traits::FormatReader;
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_location_new() {
     let location = S3Location::new("my-bucket", "path/to/file.mcap");
@@ -19,7 +19,7 @@ fn test_s3_location_new() {
     assert!(location.endpoint().is_none());
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_location_is_mcap() {
     let location = S3Location::new("bucket", "file.mcap");
@@ -27,7 +27,7 @@ fn test_s3_location_is_mcap() {
     assert!(!location.is_bag());
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_location_is_bag() {
     let location = S3Location::new("bucket", "file.bag");
@@ -35,7 +35,7 @@ fn test_s3_location_is_bag() {
     assert!(!location.is_mcap());
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_location_url() {
     let location = S3Location::new("my-bucket", "path/to/file.mcap");
@@ -45,14 +45,14 @@ fn test_s3_location_url() {
     );
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_location_with_region() {
     let location = S3Location::new("my-bucket", "file.bag").with_region("us-west-2");
     assert_eq!(location.region(), Some("us-west-2"));
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_location_with_endpoint() {
     let location =
@@ -60,7 +60,7 @@ fn test_s3_location_with_endpoint() {
     assert_eq!(location.endpoint(), Some("https://minio.example.com"));
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_reader_config_default() {
     let config = S3ReaderConfig::default();
@@ -69,7 +69,7 @@ fn test_s3_reader_config_default() {
     assert_eq!(config.header_scan_limit(), 1024 * 1024);
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_reader_config_builder() {
     let config = S3ReaderConfig::default()
@@ -82,7 +82,7 @@ fn test_s3_reader_config_builder() {
     assert_eq!(config.header_scan_limit(), 2 * 1024 * 1024);
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_reader_state_display() {
     assert_eq!(format!("{}", S3ReaderState::Initial), "Initial");
@@ -93,7 +93,7 @@ fn test_s3_reader_state_display() {
     );
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_location_from_s3_url() {
     let location = S3Location::from_s3_url("s3://my-bucket/path/to/file.mcap").unwrap();
@@ -101,7 +101,7 @@ fn test_s3_location_from_s3_url() {
     assert_eq!(location.key(), "path/to/file.mcap");
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_reader_format_reader_trait() {
     // Test that S3Reader implements FormatReader
@@ -109,14 +109,14 @@ fn test_s3_reader_format_reader_trait() {
     assert_format_reader::<robocodec::io::s3::S3Reader>();
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_location_display() {
     let location = S3Location::new("my-bucket", "path/to/file.mcap");
     assert_eq!(format!("{}", location), "s3://my-bucket/path/to/file.mcap");
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_s3_location_extension() {
     let location = S3Location::new("bucket", "path/to/file.mcap");

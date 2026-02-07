@@ -52,12 +52,14 @@ impl Default for RewriteOptions {
 
 impl RewriteOptions {
     /// Add a transform pipeline to the rewrite options.
+    #[must_use]
     pub fn with_transforms(mut self, pipeline: MultiTransform) -> Self {
         self.transforms = Some(pipeline);
         self
     }
 
     /// Check if transformations are configured.
+    #[must_use]
     pub fn has_transforms(&self) -> bool {
         self.transforms.as_ref().is_some_and(|p| !p.is_empty())
     }
@@ -95,6 +97,7 @@ pub struct RewriteStats {
 
 impl RewriteStats {
     /// Create a new empty statistics struct.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -116,6 +119,13 @@ pub trait FormatRewriter: Send + Sync {
     /// # Returns
     ///
     /// Statistics about the rewrite operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The input file cannot be read
+    /// - The output file cannot be created
+    /// - Message decoding or encoding fails
     fn rewrite<P1, P2>(&mut self, input_path: P1, output_path: P2) -> Result<RewriteStats>
     where
         P1: AsRef<Path>,
@@ -135,6 +145,7 @@ pub trait FormatRewriter: Send + Sync {
 /// - `Some("mcap")` for `.mcap` files
 /// - `Some("bag")` for `.bag` files
 /// - `None` for unknown extensions
+#[must_use]
 pub fn detect_format(path: &Path) -> Option<&'static str> {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -250,6 +261,14 @@ impl RoboRewriter {
     /// # Returns
     ///
     /// Statistics about the rewrite operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The input file cannot be read
+    /// - The output file cannot be created
+    /// - Message decoding or encoding fails
+    /// - Transformation validation fails
     pub fn rewrite<P: AsRef<Path>>(&mut self, output_path: P) -> Result<RewriteStats> {
         match self {
             RoboRewriter::Mcap(rewriter, input_path) => rewriter.rewrite(input_path, output_path),
@@ -258,6 +277,7 @@ impl RoboRewriter {
     }
 
     /// Get the options used for rewriting.
+    #[must_use]
     pub fn options(&self) -> &RewriteOptions {
         match self {
             RoboRewriter::Mcap(rewriter, _) => rewriter.options(),
@@ -266,6 +286,7 @@ impl RoboRewriter {
     }
 
     /// Get the input file path.
+    #[must_use]
     pub fn input_path(&self) -> &Path {
         match self {
             RoboRewriter::Mcap(_, path) | RoboRewriter::Bag(_, path) => path,

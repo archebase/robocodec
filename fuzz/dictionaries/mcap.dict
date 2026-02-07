@@ -1,0 +1,65 @@
+# MCAP format dictionary for libFuzzer
+# SPDX-FileCopyrightText: 2026 ArcheBase
+# SPDX-License-Identifier: MulanPSL-2.0
+
+# MCAP magic number (little-endian)
+"\x14\x08\xB2\xC1\x43\x49\x0A\x0A"
+
+# MCAP opcodes
+"\x00"  # Unknown/Reserved
+"\x01"  # Header
+"\x02"  # Footer
+"\x03"  # Schema
+"\x04"  # Channel
+"\x05"  # Message
+"\x06"  # Chunk
+"\x07"  # Message Index
+"\x08"  # Chunk Index
+"\x09"  # Attachment
+"\x0A"  # Attachment Index
+"\x0B"  # Statistics
+"\x0C"  # Summary Offset
+"\x0D"  # Summary Ctx
+"\x0E"  # Data End
+"\x0F"  # Record End
+
+# Common compression identifiers
+"zstd"
+"lz4"
+""
+""
+
+# Message schema identifiers
+"ros2msg"
+"ros1msg"
+"json"
+"protobuf"
+"flatbuffers"
+"custom"
+
+# Channel topic names
+"/chatter"
+"/odom"
+"/cmd_vel"
+"/scan"
+"/image_raw"
+
+# Message type names
+"std_msgs/msg/String"
+"geometry_msgs/msg/Twist"
+"sensor_msgs/msg/LaserScan"
+"sensor_msgs/msg/Image"
+"nav_msgs/msg/Odometry"
+
+# Common field names
+"header"
+"stamp"
+"frame_id"
+"data"
+"seq"
+
+# String lengths
+"\x01\x00\x00\x00"  # 1
+"\x0A\x00\x00\x00"  # 10
+"\x64\x00\x00\x00"  # 100
+"\xE8\x03\x00\x00"  # 1000

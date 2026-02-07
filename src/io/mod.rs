@@ -13,12 +13,18 @@ pub(crate) mod detection;
 pub mod formats;
 pub mod metadata;
 
+// Streaming parser interface (unified across formats)
+// Only available with remote feature since it uses FatalError from s3 module
+#[cfg(feature = "remote")]
+#[doc(hidden)]
+pub mod streaming;
+
 // Transport layer for different data sources
 pub mod transport;
 
-// S3 streaming support (requires `s3` feature)
+// Remote storage support (requires `remote` feature)
 // Hidden from docs but accessible for advanced use and testing
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[doc(hidden)]
 pub mod s3;
 
@@ -28,7 +34,6 @@ pub use metadata::{
 };
 
 // Channel iterator (tightly coupled with pipeline - keep in roboflow)
-// pub mod channel_iterator;
 
 // Traits for format readers and writers
 // Hidden from docs but accessible for advanced use

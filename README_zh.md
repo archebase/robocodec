@@ -124,6 +124,48 @@ export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
 
 > **注意：** 虽然我们使用 AWS 标准的环境变量名称以确保兼容性，但 robocodec 可与任何兼容 S3 的存储服务配合使用。
 
+### 从 HTTP/HTTPS 读取
+
+Robocodec 也支持直接从 HTTP/HTTPS URL 读取数据：
+
+```rust
+use robocodec::RoboReader;
+
+// 格式从 URL 路径检测，通过 HTTP 访问
+let reader = RoboReader::open("https://example.com/data.mcap")?;
+println!("找到 {} 个通道", reader.channels().len());
+```
+
+> **注意：** HTTP 读取支持范围请求，可高效访问大文件。
+
+#### HTTP 身份验证
+
+对于需要身份验证的 HTTP 端点，robocodec 通过 `ReaderConfig` 支持 Bearer 令牌和基本身份验证：
+
+```rust
+use robocodec::io::{RoboReader, ReaderConfig};
+
+// Bearer 令牌（OAuth2/JWT）
+let config = ReaderConfig::default().with_http_bearer_token("your-token-here");
+let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
+
+// 基本身份验证
+let config = ReaderConfig::default().with_http_basic_auth("username", "password");
+let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
+```
+
+或者，您可以通过 URL 查询参数提供身份验证：
+
+```rust
+use robocodec::RoboReader;
+
+// 通过 URL 提供 Bearer 令牌
+let reader = RoboReader::open("https://example.com/data.mcap?bearer_token=your-token")?;
+
+// 通过 URL 提供基本身份验证（user:pass 编码）
+let reader = RoboReader::open("https://example.com/data.mcap?basic_auth=user:pass")?;
+```
+
 ### 写入到 S3
 
 ```rust

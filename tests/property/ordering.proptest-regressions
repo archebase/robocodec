@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc db8ba6f77ce93e38db464b6ebde437a7991cc25b571dce4e118d8c47510d1a3c # shrinks to channel_infos = [ChannelInfo { id: 1, topic: "/a", message_type: "_/A", encoding: "", schema: None, schema_data: None, schema_encoding: None, message_count: 0, callerid: None }, ChannelInfo { id: 1, topic: "/a", message_type: "a/A", encoding: "", schema: None, schema_data: None, schema_encoding: None, message_count: 0, callerid: None }]
+cc c0937af3c0a780a7036bd5c3a884c869d2201ed084c984638d50392812bb4def # shrinks to ids = [1, 1]

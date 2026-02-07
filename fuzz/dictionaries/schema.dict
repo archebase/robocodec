@@ -1,0 +1,98 @@
+# Schema parser dictionary for libFuzzer
+# SPDX-FileCopyrightText: 2026 ArcheBase
+# SPDX-License-Identifier: MulanPSL-2.0
+
+# ROS primitive types
+"bool"
+"int8"
+"uint8"
+"int16"
+"uint16"
+"int32"
+"uint32"
+"int64"
+"uint64"
+"float32"
+"float64"
+"string"
+"time"
+"duration"
+"byte"
+"char"
+
+# Common ROS message types
+"Header"
+"std_msgs/String"
+"geometry_msgs/Twist"
+"sensor_msgs/LaserScan"
+"nav_msgs/Odometry"
+
+# Array notation
+"[10]"
+"[100]"
+"[]"
+"[=]"
+"[*]"
+
+# Common field names
+"header"
+"stamp"
+"frame_id"
+"data"
+"value"
+"seq"
+"position"
+"orientation"
+"linear"
+"angular"
+"x"
+"y"
+"z"
+"w"
+
+# IDL keywords
+"struct"
+"interface"
+"module"
+"sequence"
+"array"
+"string"
+"wstring"
+"boolean"
+"octet"
+"any"
+
+# ROS2 IDL specific
+"#include"
+"#pragma"
+"map"
+"bounded"
+
+# Default values
+"=0"
+"=-1"
+"=0.0"
+"=1.0"
+"=\"\""
+"=\"default\""
+
+# Comments
+"# Single line comment"
+"// C++ style comment"
+"# "
+
+# Constants
+"const"
+"enum"
+
+# Multi-line definitions
+"\nHeader header\n"
+"\ngeometry_msgs/Twist twist\n"
+"\nint32 value\n"
+
+# Common patterns
+"string data\n"
+"int32 seq\n"
+"time stamp\n"
+"string frame_id\n"
+"float64[] data\n"

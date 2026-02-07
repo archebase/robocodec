@@ -101,6 +101,7 @@ impl<'a> CdrCursor<'a> {
     ///
     /// * `data` - The CDR-encoded binary data WITHOUT 4-byte header
     /// * `little_endian` - Whether the data uses little endian encoding
+    #[must_use]
     pub fn new_headerless(data: &'a [u8], little_endian: bool) -> Self {
         Self {
             data,
@@ -122,6 +123,7 @@ impl<'a> CdrCursor<'a> {
     ///
     /// * `data` - The CDR-encoded binary data WITHOUT any headers
     /// * `little_endian` - Whether the data uses little endian encoding
+    #[must_use]
     pub fn new_headerless_ros1(data: &'a [u8], little_endian: bool) -> Self {
         Self {
             data,
@@ -165,24 +167,28 @@ impl<'a> CdrCursor<'a> {
 
     /// Get the current position relative to the data start.
     #[inline]
+    #[must_use]
     pub fn position(&self) -> usize {
         self.offset
     }
 
     /// Get the remaining bytes available to read.
     #[inline]
+    #[must_use]
     pub fn remaining(&self) -> usize {
         self.data.len().saturating_sub(self.offset)
     }
 
     /// Check if at end of buffer.
     #[inline]
+    #[must_use]
     pub fn is_at_end(&self) -> bool {
         self.offset >= self.data.len()
     }
 
     /// Check if this cursor is for ROS1 encoded data.
     #[inline]
+    #[must_use]
     pub fn is_ros1(&self) -> bool {
         self.is_ros1
     }
@@ -191,7 +197,7 @@ impl<'a> CdrCursor<'a> {
     ///
     /// This matches the TypeScript implementation: `(offset - origin) % size`
     ///
-    /// Note: For ROS1 data (is_ros1 = true), alignment is skipped because
+    /// Note: For ROS1 data (`is_ros1` = true), alignment is skipped because
     /// ROS1 serialization is packed (no padding between fields).
     ///
     /// # Arguments
@@ -432,6 +438,7 @@ impl<'a> CdrCursor<'a> {
     }
 
     /// Peek at the next byte without advancing the position.
+    #[must_use]
     pub fn peek(&self) -> Option<u8> {
         if self.offset < self.data.len() {
             Some(self.data[self.offset])

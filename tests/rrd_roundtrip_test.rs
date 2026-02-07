@@ -11,9 +11,9 @@ use std::fs;
 use std::path::Path;
 
 use robocodec::io::formats::rrd::stream::{MessageKind, RRD_STREAM_MAGIC, StreamingRrdParser};
-use robocodec::io::formats::rrd::{RrdReader, RrdWriter};
 use robocodec::io::s3::StreamingParser;
 use robocodec::io::{FormatWriter, RawMessage};
+use robocodec::{DecodedMessageResult, FormatReader, RoboReader, RoboWriter};
 
 /// Helper function to load a test fixture file.
 fn load_fixture(name: &str) -> Vec<u8> {
@@ -21,37 +21,35 @@ fn load_fixture(name: &str) -> Vec<u8> {
     fs::read(&path).unwrap_or_else(|_| panic!("Failed to read fixture: {}", name))
 }
 
-/// Test that we can read a Rerun RRD file using RrdReader.
+/// Test that we can read a Rerun RRD file using RoboReader (public API).
 #[test]
-fn test_read_rerun_rrd_with_rrd_reader() {
+fn test_read_rerun_rrd_with_robo_reader() {
     let path = "tests/fixtures/rrd/file1.rrd";
     assert!(Path::new(path).exists(), "Fixture file1.rrd should exist");
 
-    // Open the file with RrdReader
-    let reader = RrdReader::open(path).expect("Failed to open RRD file");
-    println!("Opened: {}", reader.path());
+    // Open the file with RoboReader (public API)
+    let reader = RoboReader::open(path).expect("Failed to open RRD file");
     println!("Channels: {}", reader.channels().len());
     assert!(
         !reader.channels().is_empty(),
         "Should have at least one channel"
     );
 
-    // Get decoded iterator
-    let iter = reader
-        .decode_messages()
-        .expect("Failed to get decoded iterator");
+    // Get decoded iterator using public API
+    let iter = reader.decoded().expect("Failed to get decoded iterator");
     let mut message_count = 0;
     for result in iter {
-        let (decoded, channel) = result.expect("Failed to read message");
+        let decoded: DecodedMessageResult = result.expect("Failed to read message");
         message_count += 1;
         let data_len = decoded
+            .message
             .get("data")
             .and_then(|v| v.as_bytes())
             .map(|b| b.len())
             .unwrap_or(0);
         println!(
             "Message {}: channel={}, topic={}, data_len={}",
-            message_count, channel.id, channel.topic, data_len
+            message_count, decoded.channel.id, decoded.channel.topic, data_len
         );
     }
 
@@ -59,7 +57,7 @@ fn test_read_rerun_rrd_with_rrd_reader() {
     assert!(message_count > 0, "Should have read at least one message");
 }
 
-/// Test reading all Rerun RRD files.
+/// Test reading all Rerun RRD files using public API.
 #[test]
 fn test_read_all_rerun_rrd_files() {
     let rerun_files = [
@@ -93,9 +91,9 @@ fn test_read_all_rerun_rrd_files() {
         }
 
         let reader =
-            RrdReader::open(&path).unwrap_or_else(|_| panic!("Failed to open {}", filename));
+            RoboReader::open(&path).unwrap_or_else(|_| panic!("Failed to open {}", filename));
         let iter = reader
-            .decode_messages()
+            .decoded()
             .unwrap_or_else(|_| panic!("Failed to get decoded iterator for {}", filename));
 
         let mut count = 0;
@@ -110,16 +108,17 @@ fn test_read_all_rerun_rrd_files() {
     }
 }
 
-/// Test that we can write a valid RRD file.
+/// Test that we can write a valid RRD file using RoboWriter (public API).
 #[test]
 fn test_write_rrd_file() {
-    use tempfile::NamedTempFile;
+    use tempfile::TempDir;
 
-    let temp = NamedTempFile::new().expect("Failed to create temp file");
-    let path = temp.path().to_str().unwrap().to_string();
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let path = temp_dir.path().join("test.rrd");
+    let path_str = path.to_str().expect("Invalid path");
 
-    // Create a writer
-    let mut writer = RrdWriter::create(&path).expect("Failed to create writer");
+    // Create a writer using public API
+    let mut writer = RoboWriter::create(path_str).expect("Failed to create writer");
 
     // Add a channel
     let channel_id = writer
@@ -145,11 +144,9 @@ fn test_write_rrd_file() {
     let written = fs::read(&path).expect("Failed to read written file");
     assert_eq!(&written[0..4], RRD_STREAM_MAGIC);
 
-    // Verify we can read it back with RrdReader
-    let reader = RrdReader::open(&path).expect("Failed to open written file");
-    let iter = reader
-        .decode_messages()
-        .expect("Failed to get decoded iterator");
+    // Verify we can read it back with RoboReader (public API)
+    let reader = RoboReader::open(path_str).expect("Failed to open written file");
+    let iter = reader.decoded().expect("Failed to get decoded iterator");
     let mut count = 0;
     for result in iter {
         let _msg = result.expect("Failed to read message back");
@@ -158,34 +155,35 @@ fn test_write_rrd_file() {
     assert_eq!(count, 5, "Should have read back 5 messages");
 }
 
-/// Test round-trip: read Rerun file -> write -> read again.
+/// Test round-trip: read Rerun file -> write -> read again using public API.
 #[test]
 fn test_round_trip_rerun_file() {
-    use tempfile::NamedTempFile;
+    use tempfile::TempDir;
 
     let original_path = "tests/fixtures/rrd/file1.rrd";
     assert!(Path::new(original_path).exists(), "file1.rrd should exist");
 
-    // Read original file using RrdReader
-    let original_reader = RrdReader::open(original_path).expect("Failed to open original file");
+    // Read original file using RoboReader (public API)
+    let original_reader = RoboReader::open(original_path).expect("Failed to open original file");
     let original_iter = original_reader
-        .decode_messages()
+        .decoded()
         .expect("Failed to get decoded iterator");
 
     // Collect messages
     let mut messages = Vec::new();
     for result in original_iter {
-        let (decoded, channel) = result.expect("Failed to read message");
-        messages.push((decoded, channel));
+        let decoded = result.expect("Failed to read message");
+        messages.push(decoded);
     }
 
     println!("Original: {} messages", messages.len());
 
-    // Write to a new file
-    let temp = NamedTempFile::new().expect("Failed to create temp file");
-    let output_path = temp.path().to_str().unwrap().to_string();
+    // Write to a new file using RoboWriter (public API)
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let output_path = temp_dir.path().join("output.rrd");
+    let output_path_str = output_path.to_str().expect("Invalid path");
 
-    let mut writer = RrdWriter::create(&output_path).expect("Failed to create writer");
+    let mut writer = RoboWriter::create(output_path_str).expect("Failed to create writer");
 
     // Add channel (RRD uses single channel with id 0)
     let channel_id = writer
@@ -193,17 +191,17 @@ fn test_round_trip_rerun_file() {
         .expect("Failed to add channel");
 
     // Write messages
-    for (decoded, _channel) in &messages {
-        if let Some(data_value) = decoded.get("data")
+    for decoded in &messages {
+        if let Some(data_value) = decoded.message.get("data")
             && let Some(bytes) = data_value.as_bytes()
         {
             let data = bytes.to_vec();
             let raw_msg = RawMessage {
                 channel_id,
-                log_time: 0,
-                publish_time: 0,
+                log_time: decoded.log_time.unwrap_or(0),
+                publish_time: decoded.publish_time.unwrap_or(0),
                 data,
-                sequence: None,
+                sequence: decoded.sequence,
             };
             writer.write(&raw_msg).expect("Failed to write message");
         }
@@ -211,10 +209,10 @@ fn test_round_trip_rerun_file() {
 
     writer.finish().expect("Failed to finish");
 
-    // Read back the written file
-    let new_reader = RrdReader::open(&output_path).expect("Failed to open written file");
+    // Read back the written file using RoboReader (public API)
+    let new_reader = RoboReader::open(output_path_str).expect("Failed to open written file");
     let new_iter = new_reader
-        .decode_messages()
+        .decoded()
         .expect("Failed to get decoded iterator");
 
     let mut new_count = 0;
@@ -230,6 +228,10 @@ fn test_round_trip_rerun_file() {
 }
 
 /// Test streaming parser with real Rerun file verifies message kinds.
+///
+/// Note: This test uses internal RRD types (StreamingRrdParser, MessageKind)
+/// which are format-specific. This is acceptable for testing format-specific
+/// behavior, but the main reading/writing tests should use the public API.
 #[test]
 fn test_rerun_file_message_kinds() {
     let data = load_fixture("file1.rrd");
@@ -264,15 +266,16 @@ fn test_rerun_file_message_kinds() {
     );
 }
 
-/// Test that written RRD file has correct structure.
+/// Test that written RRD file has correct structure using public API.
 #[test]
 fn test_written_rrd_structure() {
-    let temp = tempfile::NamedTempFile::new().expect("Failed to create temp file");
-    let path = temp.path().to_str().unwrap().to_string();
+    let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
+    let path = temp_dir.path().join("test.rrd");
+    let path_str = path.to_str().unwrap().to_string();
 
-    // Write a simple RRD file
+    // Write a simple RRD file using public API
     {
-        let mut writer = RrdWriter::create(&path).expect("Failed to create writer");
+        let mut writer = RoboWriter::create(&path_str).expect("Failed to create writer");
         let channel_id = writer
             .add_channel("/test", "rerun.ArrowMsg", "protobuf", None)
             .expect("Failed to add channel");
@@ -289,7 +292,7 @@ fn test_written_rrd_structure() {
     }
 
     // Read and verify structure
-    let data = fs::read(&path).expect("Failed to read file");
+    let data = fs::read(&path_str).expect("Failed to read file");
 
     // Check magic
     assert_eq!(&data[0..4], RRD_STREAM_MAGIC);

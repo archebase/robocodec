@@ -88,6 +88,7 @@ pub enum ElementType {
 
 impl ElementType {
     /// Get the alignment for this element type.
+    #[must_use]
     pub fn alignment(&self) -> u64 {
         match self {
             ElementType::Primitive(p) => p.alignment(),
@@ -108,6 +109,7 @@ pub struct DecodePlan {
 
 impl DecodePlan {
     /// Create a new decode plan.
+    #[must_use]
     pub fn new(type_name: String) -> Self {
         Self {
             ops: Vec::new(),
@@ -121,11 +123,13 @@ impl DecodePlan {
     }
 
     /// Get the current length (number of operations).
+    #[must_use]
     pub fn len(&self) -> usize {
         self.ops.len()
     }
 
     /// Check if the plan is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.ops.is_empty()
     }

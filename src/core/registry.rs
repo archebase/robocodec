@@ -20,6 +20,10 @@ pub trait SchemaProvider {
     type Schema;
 
     /// Parse a schema from a string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the schema definition is invalid or malformed.
     fn parse_schema(&self, name: &str, definition: &str) -> Result<Self::Schema>;
 }
 
@@ -35,15 +39,15 @@ pub trait TypeAccessor {
     ///
     /// Tries multiple resolution strategies:
     /// - Exact match
-    /// - With /msg/ suffix (e.g., "std_msgs/Header" → "std_msgs/msg/Header")
-    /// - Without /msg/ suffix (e.g., "std_msgs/msg/Header" → "std_msgs/Header")
-    /// - Short name match (e.g., "Pose" → "geometry_msgs/Pose")
+    /// - With /msg/ suffix (e.g., "`std_msgs/Header`" → "`std_msgs/msg/Header`")
+    /// - Without /msg/ suffix (e.g., "`std_msgs/msg/Header`" → "`std_msgs/Header`")
+    /// - Short name match (e.g., "Pose" → "`geometry_msgs/Pose`")
     fn get_type_variants(&self, type_name: &str) -> Option<&Self::TypeDescriptor>;
 }
 
 /// Thread-safe registry for parsed schemas and type descriptors.
 ///
-/// Uses RwLock for concurrent read access with exclusive write access.
+/// Uses `RwLock` for concurrent read access with exclusive write access.
 /// Suitable for use across multiple decoder instances.
 pub struct TypeRegistry<T> {
     inner: RwLock<TypeRegistryInner<T>>,
@@ -55,6 +59,7 @@ struct TypeRegistryInner<T> {
 
 impl<T> TypeRegistry<T> {
     /// Create a new empty type registry.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: RwLock::new(TypeRegistryInner {
@@ -64,6 +69,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Register a schema with this registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn register(&self, name: impl Into<String>, schema: T) -> Result<()> {
         let mut inner = self
             .inner
@@ -74,6 +83,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Get a schema by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn get(&self, name: &str) -> Result<Option<T>>
     where
         T: Clone,
@@ -86,6 +99,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Check if a schema is registered.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn contains(&self, name: &str) -> Result<bool> {
         let inner = self
             .inner
@@ -95,6 +112,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Get all registered schema names.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn names(&self) -> Result<Vec<String>> {
         let inner = self
             .inner
@@ -104,6 +125,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Remove a schema from the registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn remove(&self, name: &str) -> Result<bool> {
         let mut inner = self
             .inner
@@ -113,6 +138,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Clear all schemas from the registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn clear(&self) -> Result<()> {
         let mut inner = self
             .inner
@@ -123,6 +152,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Get the number of registered schemas.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn len(&self) -> Result<usize> {
         let inner = self
             .inner
@@ -132,6 +165,10 @@ impl<T> TypeRegistry<T> {
     }
 
     /// Check if the registry is empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the registry lock is poisoned.
     pub fn is_empty(&self) -> Result<bool> {
         Ok(self.len()? == 0)
     }
@@ -140,40 +177,6 @@ impl<T> TypeRegistry<T> {
 impl<T> Default for TypeRegistry<T> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Encoding format identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Encoding {
-    /// CDR (Common Data Representation) - used by ROS1/ROS2
-    Cdr,
-    /// Protobuf binary format
-    Protobuf,
-    /// JSON text format
-    Json,
-}
-
-impl std::str::FromStr for Encoding {
-    type Err = ();
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "cdr" | "ros1" | "ros2" => Ok(Encoding::Cdr),
-            "protobuf" | "proto" | "pb" => Ok(Encoding::Protobuf),
-            "json" => Ok(Encoding::Json),
-            _ => Err(()),
-        }
-    }
-}
-
-impl std::fmt::Display for Encoding {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Encoding::Cdr => write!(f, "cdr"),
-            Encoding::Protobuf => write!(f, "protobuf"),
-            Encoding::Json => write!(f, "json"),
-        }
     }
 }
 
@@ -194,15 +197,6 @@ mod tests {
         assert!(registry.remove("test").unwrap());
         assert!(!registry.contains("test").unwrap());
         assert!(registry.is_empty().unwrap());
-    }
-
-    #[test]
-    fn test_encoding_from_str() {
-        assert_eq!("cdr".parse::<Encoding>(), Ok(Encoding::Cdr));
-        assert_eq!("CDR".parse::<Encoding>(), Ok(Encoding::Cdr));
-        assert_eq!("protobuf".parse::<Encoding>(), Ok(Encoding::Protobuf));
-        assert_eq!("json".parse::<Encoding>(), Ok(Encoding::Json));
-        assert!("unknown".parse::<Encoding>().is_err());
     }
 }
 
@@ -300,105 +294,4 @@ fn test_type_registry_register_override() {
     registry.register("test", 1).unwrap();
     registry.register("test", 2).unwrap(); // Override
     assert_eq!(registry.get("test").unwrap(), Some(2));
-}
-
-// =========================================================================
-// Encoding enum tests
-// =========================================================================
-
-#[test]
-fn test_encoding_debug() {
-    assert!(format!("{:?}", Encoding::Cdr).contains("Cdr"));
-    assert!(format!("{:?}", Encoding::Protobuf).contains("Protobuf"));
-    assert!(format!("{:?}", Encoding::Json).contains("Json"));
-}
-
-#[test]
-fn test_encoding_clone() {
-    let enc = Encoding::Protobuf;
-    let cloned = enc;
-    assert_eq!(enc, cloned);
-}
-
-#[test]
-fn test_encoding_copy() {
-    let enc = Encoding::Json;
-    let copied = enc;
-    assert_eq!(enc, copied);
-}
-
-#[test]
-fn test_encoding_partial_eq() {
-    assert_eq!(Encoding::Cdr, Encoding::Cdr);
-    assert_ne!(Encoding::Cdr, Encoding::Protobuf);
-    assert_ne!(Encoding::Protobuf, Encoding::Json);
-}
-
-// =========================================================================
-// Encoding::FromStr extended tests
-// =========================================================================
-
-#[test]
-fn test_encoding_from_str_ros1() {
-    assert_eq!("ros1".parse::<Encoding>(), Ok(Encoding::Cdr));
-    assert_eq!("ROS1".parse::<Encoding>(), Ok(Encoding::Cdr));
-}
-
-#[test]
-fn test_encoding_from_str_ros2() {
-    assert_eq!("ros2".parse::<Encoding>(), Ok(Encoding::Cdr));
-    assert_eq!("ROS2".parse::<Encoding>(), Ok(Encoding::Cdr));
-}
-
-#[test]
-fn test_encoding_from_str_proto() {
-    assert_eq!("proto".parse::<Encoding>(), Ok(Encoding::Protobuf));
-    assert_eq!("PROTO".parse::<Encoding>(), Ok(Encoding::Protobuf));
-}
-
-#[test]
-fn test_encoding_from_str_pb() {
-    assert_eq!("pb".parse::<Encoding>(), Ok(Encoding::Protobuf));
-    assert_eq!("PB".parse::<Encoding>(), Ok(Encoding::Protobuf));
-}
-
-#[test]
-fn test_encoding_from_str_various_invalid() {
-    assert!("".parse::<Encoding>().is_err());
-    assert!("xml".parse::<Encoding>().is_err());
-    assert!("yaml".parse::<Encoding>().is_err());
-    assert!("cbor".parse::<Encoding>().is_err());
-}
-
-// =========================================================================
-// Encoding::Display tests
-// =========================================================================
-
-#[test]
-fn test_encoding_display_cdr() {
-    assert_eq!(format!("{}", Encoding::Cdr), "cdr");
-}
-
-#[test]
-fn test_encoding_display_protobuf() {
-    assert_eq!(format!("{}", Encoding::Protobuf), "protobuf");
-}
-
-#[test]
-fn test_encoding_display_json() {
-    assert_eq!(format!("{}", Encoding::Json), "json");
-}
-
-// =========================================================================
-// Encoding::Hash tests
-// =========================================================================
-
-#[test]
-fn test_encoding_hash() {
-    use std::collections::HashSet;
-    let mut set = HashSet::new();
-    set.insert(Encoding::Cdr);
-    set.insert(Encoding::Protobuf);
-    set.insert(Encoding::Json);
-    assert_eq!(set.len(), 3);
 }

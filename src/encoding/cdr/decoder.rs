@@ -33,6 +33,7 @@ pub struct CdrDecoder {
 
 impl CdrDecoder {
     /// Create a new CDR decoder.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             plan_cache: std::sync::Mutex::new(HashMap::new()),
@@ -357,12 +358,11 @@ impl CdrDecoder {
             }
             FieldType::Nested(type_name) => schema
                 .get_type_variants(type_name)
-                .map(|t| t.max_alignment)
-                .unwrap_or(DEFAULT_CDR_ALIGNMENT),
+                .map_or(DEFAULT_CDR_ALIGNMENT, |t| t.max_alignment),
         }
     }
 
-    /// Check if a primitive type is a string type (String or WString).
+    /// Check if a primitive type is a string type (String or `WString`).
     fn is_string_type(prim: &IdlPrimitiveType) -> bool {
         matches!(prim, IdlPrimitiveType::String | IdlPrimitiveType::WString)
     }
@@ -389,8 +389,7 @@ impl CdrDecoder {
             FieldType::Nested(type_name) => {
                 let alignment = schema
                     .get_type_variants(type_name)
-                    .map(|t| t.max_alignment)
-                    .unwrap_or(DEFAULT_CDR_ALIGNMENT);
+                    .map_or(DEFAULT_CDR_ALIGNMENT, |t| t.max_alignment);
                 Ok(ElementType::Nested {
                     type_name: type_name.clone(),
                     alignment,
@@ -583,7 +582,7 @@ impl CdrDecoder {
         }
     }
 
-    /// Read a string value (matches TS CdrReader.string()).
+    /// Read a string value (matches TS `CdrReader.string()`).
     fn read_string(&self, cursor: &mut CdrCursor) -> CoreResult<CodecValue> {
         // Read length prefix (4 bytes)
         let len = cursor.read_u32()? as usize;
@@ -636,10 +635,10 @@ impl CdrDecoder {
         cursor.align(4)?;
 
         // Read sec (int32)
-        let sec = cursor.read_i32()? as i64;
+        let sec = i64::from(cursor.read_i32()?);
 
         // Read nsec (uint32) - already aligned after sec
-        let nsec = cursor.read_u32()? as i64;
+        let nsec = i64::from(cursor.read_u32()?);
 
         // Convert to nanoseconds since Unix epoch
         // Timestamp in nanoseconds = sec * 1e9 + nsec
@@ -656,10 +655,10 @@ impl CdrDecoder {
         cursor.align(4)?;
 
         // Read sec (int32, can be negative)
-        let sec = cursor.read_i32()? as i64;
+        let sec = i64::from(cursor.read_i32()?);
 
         // Read nsec (uint32) - always positive
-        let nsec = cursor.read_u32()? as i64;
+        let nsec = i64::from(cursor.read_u32()?);
 
         // Convert to nanoseconds
         // For positive durations: nanos = sec * 1e9 + nsec
@@ -728,17 +727,16 @@ impl CdrDecoder {
             // Read the 4-byte length first, then data follows (optionally aligned).
 
             // Read length prefix (for dynamic arrays)
-            let len = match fixed_count {
-                Some(n) => n,
-                None => {
-                    let raw_len = cursor.read_u32()? as usize;
-                    if raw_len > MAX_ARRAY_LENGTH {
-                        return Err(CodecError::Other(format!(
-                            "Array length {raw_len} exceeds maximum allowed {MAX_ARRAY_LENGTH}"
-                        )));
-                    }
-                    raw_len
+            let len = if let Some(n) = fixed_count {
+                n
+            } else {
+                let raw_len = cursor.read_u32()? as usize;
+                if raw_len > MAX_ARRAY_LENGTH {
+                    return Err(CodecError::Other(format!(
+                        "Array length {raw_len} exceeds maximum allowed {MAX_ARRAY_LENGTH}"
+                    )));
                 }
+                raw_len
             };
 
             values.reserve(len.min(1024));
@@ -774,17 +772,16 @@ impl CdrDecoder {
             }
         } else {
             // Read length prefix (for dynamic arrays)
-            let len = match fixed_count {
-                Some(n) => n,
-                None => {
-                    let raw_len = cursor.read_u32()? as usize;
-                    if raw_len > MAX_ARRAY_LENGTH {
-                        return Err(CodecError::Other(format!(
-                            "Array length {raw_len} exceeds maximum allowed {MAX_ARRAY_LENGTH}"
-                        )));
-                    }
-                    raw_len
+            let len = if let Some(n) = fixed_count {
+                n
+            } else {
+                let raw_len = cursor.read_u32()? as usize;
+                if raw_len > MAX_ARRAY_LENGTH {
+                    return Err(CodecError::Other(format!(
+                        "Array length {raw_len} exceeds maximum allowed {MAX_ARRAY_LENGTH}"
+                    )));
                 }
+                raw_len
             };
 
             values.reserve(len.min(1024));
@@ -817,7 +814,7 @@ impl Default for CdrDecoder {
 impl crate::Decoder for CdrDecoder {
     /// Decode CDR data using a schema string.
     ///
-    /// This implementation parses the schema string into a MessageSchema
+    /// This implementation parses the schema string into a `MessageSchema`
     /// and delegates to the native decode method. For high-frequency use,
     /// consider parsing the schema once with `parse_schema()` and using
     /// `CdrDecoder::decode()` directly.

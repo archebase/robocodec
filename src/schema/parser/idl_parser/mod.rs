@@ -75,7 +75,7 @@ pub fn parse_with_version(
     Ok(schema)
 }
 
-/// Add seq field to all std_msgs::msg::Header variants if missing.
+/// Add seq field to all `std_msgs::msg::Header` variants if missing.
 /// This handles backward compatibility with ROS1/older ROS2 data that includes seq.
 fn add_seq_field_to_header_types(schema: &mut MessageSchema) {
     // Find all Header type variants in the schema (with different naming conventions)
@@ -182,7 +182,7 @@ fn parse_struct(
 
     // Get struct name
     let name = override_name
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| {
             inner_items
                 .iter()
@@ -230,7 +230,7 @@ fn parse_module(
         if let Some(ref mod_name) = module_name {
             Some(format!("{parent_path}/{mod_name}"))
         } else {
-            parent_module_path.map(|s| s.to_string())
+            parent_module_path.map(std::string::ToString::to_string)
         }
     } else {
         module_name.clone()

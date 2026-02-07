@@ -157,12 +157,26 @@ impl SequentialBagReader {
     }
 
     /// Get the connection ID to channel ID mapping.
+    #[must_use]
     pub fn conn_id_map(&self) -> &HashMap<u32, u16> {
         &self.conn_id_map
     }
 }
 
 impl FormatReader for SequentialBagReader {
+    #[cfg(feature = "remote")]
+    fn open_from_transport(
+        _transport: Box<dyn crate::io::transport::Transport>,
+        _path: String,
+    ) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        Err(CodecError::unsupported(
+            "SequentialBagReader requires local file access. Use a streaming reader for transport-based reading.",
+        ))
+    }
+
     fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }
@@ -214,7 +228,7 @@ pub struct SequentialBagRawIter {
     chunk_records: Vec<Vec<rosbag::record_types::MessageData<'static>>>,
     /// Current messages being processed
     current_messages: Option<Vec<rosbag::record_types::MessageData<'static>>>,
-    /// Current index within current_messages
+    /// Current index within `current_messages`
     current_index: usize,
     /// Current chunk index
     chunk_index: usize,
@@ -264,8 +278,28 @@ impl SequentialBagRawIter {
                             )
                         })?;
                         if let rosbag::MessageRecord::MessageData(msg) = msg_result {
-                            // SAFETY: We extend the lifetime to 'static for storage.
-                            // This is safe because we own the RosBag which owns the data.
+                            // # Safety
+                            //
+                            // This transmute extends the lifetime from `'_` to `'static`. This is safe because:
+                            //
+                            // 1. **Ownership**: The `RosBag` instance (`self.bag`) owns all the data that
+                            //    `MessageData` references. The bag is stored in this struct and lives for
+                            //    the entire duration of the iterator.
+                            //
+                            // 2. **Lifetime relationship**: The `MessageData<'_>` type has a lifetime
+                            //    tied to the `RosBag` it came from. By storing the bag in the same struct,
+                            //    we guarantee the data outlives the transmuted reference.
+                            //
+                            // 3. **No escape**: The transmuted `MessageData<'static>` is stored in
+                            //    `self.chunk_records` and only accessed through this iterator, which
+                            //    cannot outlive the `RosBag`.
+                            //
+                            // 4. **Memory layout**: `MessageData` is a struct with only references and
+                            //    Copy types. The transmute only changes lifetime parameters, not the
+                            //    actual memory layout.
+                            //
+                            // This pattern is necessary because the rosbag crate returns messages with
+                            // a lifetime tied to the bag, but we need to store them for chunked iteration.
                             let extended = unsafe {
                                 std::mem::transmute::<
                                     rosbag::record_types::MessageData<'_>,
@@ -307,7 +341,10 @@ impl Iterator for SequentialBagRawIter {
                 }
             }
 
-            let messages = self.current_messages.as_ref().unwrap();
+            let messages = self
+                .current_messages
+                .as_ref()
+                .expect("current_messages set by load_next_chunk() after is_none() check");
             if self.current_index >= messages.len() {
                 self.current_messages = None;
                 continue;

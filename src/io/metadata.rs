@@ -38,6 +38,7 @@ pub struct DecodedMessageResult {
 
 impl DecodedMessageResult {
     /// Create a new decoded message result.
+    #[must_use]
     pub fn new(
         message: DecodedMessage,
         channel: ChannelInfo,
@@ -54,6 +55,7 @@ impl DecodedMessageResult {
     }
 
     /// Create with sequence number.
+    #[must_use]
     pub fn with_sequence(mut self, sequence: u64) -> Self {
         self.sequence = Some(sequence);
         self
@@ -62,6 +64,7 @@ impl DecodedMessageResult {
     /// Get a reference to the decoded message.
     ///
     /// Provides access to the decoded message fields.
+    #[must_use]
     pub fn message(&self) -> &DecodedMessage {
         &self.message
     }
@@ -69,22 +72,25 @@ impl DecodedMessageResult {
     /// Get the topic name for this message.
     ///
     /// Returns the topic name from the channel metadata.
+    #[must_use]
     pub fn topic(&self) -> &str {
         &self.channel.topic
     }
 
     /// Get the message type name for this message.
     ///
-    /// Returns the fully-qualified message type (e.g., "std_msgs/String").
+    /// Returns the fully-qualified message type (e.g., "`std_msgs/String`").
+    #[must_use]
     pub fn message_type(&self) -> &str {
         &self.channel.message_type
     }
 
-    /// Get the time range as (log_time, publish_time).
+    /// Get the time range as (`log_time`, `publish_time`).
     ///
     /// Returns `None` for either timestamp if not available. Note that when
     /// using the `decoded()` method, both timestamps will always be `None`.
     /// Use `decode_messages_with_timestamp()` to get actual timestamp values.
+    #[must_use]
     pub fn times(&self) -> (Option<u64>, Option<u64>) {
         (self.log_time, self.publish_time)
     }
@@ -94,6 +100,7 @@ impl DecodedMessageResult {
     /// Returns `true` only if both `log_time` and `publish_time` are `Some`.
     /// When using the `decoded()` method, this will always return `false`.
     /// Use `decode_messages_with_timestamp()` for timestamped messages.
+    #[must_use]
     pub fn has_timestamps(&self) -> bool {
         self.log_time.is_some() && self.publish_time.is_some()
     }
@@ -107,15 +114,15 @@ impl DecodedMessageResult {
 pub struct ChannelInfo {
     /// Unique channel ID within the file
     pub id: u16,
-    /// Topic name (e.g., "/joint_states", "/tf")
+    /// Topic name (e.g., "/`joint_states`", "/tf")
     pub topic: String,
-    /// Message type name (e.g., "sensor_msgs/msg/JointState", "tf2_msgs/TFMessage")
+    /// Message type name (e.g., "`sensor_msgs/msg/JointState`", "`tf2_msgs/TFMessage`")
     pub message_type: String,
     /// Encoding format (e.g., "cdr", "protobuf", "json")
     pub encoding: String,
     /// Schema definition (message definition text for ROS messages)
     pub schema: Option<String>,
-    /// Schema binary data (e.g., protobuf FileDescriptorSet)
+    /// Schema binary data (e.g., protobuf `FileDescriptorSet`)
     pub schema_data: Option<Vec<u8>>,
     /// Schema encoding (e.g., "ros2msg", "protobuf", "ros1msg")
     pub schema_encoding: Option<String>,
@@ -126,7 +133,8 @@ pub struct ChannelInfo {
 }
 
 impl ChannelInfo {
-    /// Create a new ChannelInfo.
+    /// Create a new `ChannelInfo`.
+    #[must_use]
     pub fn new(id: u16, topic: impl Into<String>, message_type: impl Into<String>) -> Self {
         Self {
             id,
@@ -142,24 +150,28 @@ impl ChannelInfo {
     }
 
     /// Set the topic.
+    #[must_use]
     pub fn with_topic(mut self, topic: impl Into<String>) -> Self {
         self.topic = topic.into();
         self
     }
 
     /// Set the encoding.
+    #[must_use]
     pub fn with_encoding(mut self, encoding: impl Into<String>) -> Self {
         self.encoding = encoding.into();
         self
     }
 
     /// Set the schema.
+    #[must_use]
     pub fn with_schema(mut self, schema: impl Into<String>) -> Self {
         self.schema = Some(schema.into());
         self
     }
 
     /// Set the schema data.
+    #[must_use]
     pub fn with_schema_data(mut self, data: Vec<u8>, encoding: impl Into<String>) -> Self {
         self.schema_data = Some(data);
         self.schema_encoding = Some(encoding.into());
@@ -167,12 +179,14 @@ impl ChannelInfo {
     }
 
     /// Set the message count.
+    #[must_use]
     pub fn with_message_count(mut self, count: u64) -> Self {
         self.message_count = count;
         self
     }
 
     /// Set the caller ID.
+    #[must_use]
     pub fn with_callerid(mut self, callerid: impl Into<String>) -> Self {
         self.callerid = Some(callerid.into());
         self
@@ -198,7 +212,8 @@ pub struct RawMessage {
 }
 
 impl RawMessage {
-    /// Create a new RawMessage.
+    /// Create a new `RawMessage`.
+    #[must_use]
     pub fn new(channel_id: u16, log_time: u64, publish_time: u64, data: Vec<u8>) -> Self {
         Self {
             channel_id,
@@ -210,17 +225,20 @@ impl RawMessage {
     }
 
     /// Set the sequence number.
+    #[must_use]
     pub fn with_sequence(mut self, sequence: u64) -> Self {
         self.sequence = Some(sequence);
         self
     }
 
     /// Get the data length.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
     /// Check if the message has no data.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -242,7 +260,8 @@ pub struct TimestampedDecodedMessage {
 }
 
 impl TimestampedDecodedMessage {
-    /// Create a new TimestampedDecodedMessage.
+    /// Create a new `TimestampedDecodedMessage`.
+    #[must_use]
     pub fn new(message: DecodedMessage, log_time: u64, publish_time: u64) -> Self {
         Self {
             message,
@@ -252,11 +271,13 @@ impl TimestampedDecodedMessage {
     }
 
     /// Get a reference to the decoded message.
+    #[must_use]
     pub fn message(&self) -> &DecodedMessage {
         &self.message
     }
 
     /// Convert into the decoded message, discarding timestamps.
+    #[must_use]
     pub fn into_message(self) -> DecodedMessage {
         self.message
     }
@@ -264,7 +285,7 @@ impl TimestampedDecodedMessage {
 
 /// Metadata about a single message.
 ///
-/// Lightweight version of RawMessage for references into arena data.
+/// Lightweight version of `RawMessage` for references into arena data.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MessageMetadata {
     /// Channel ID this message belongs to
@@ -282,7 +303,8 @@ pub struct MessageMetadata {
 }
 
 impl MessageMetadata {
-    /// Create a new MessageMetadata.
+    /// Create a new `MessageMetadata`.
+    #[must_use]
     pub fn new(
         channel_id: u16,
         log_time: u64,
@@ -301,11 +323,16 @@ impl MessageMetadata {
     }
 
     /// Get the data range as a tuple.
+    #[must_use]
     pub fn data_range(&self) -> (u64, u64) {
-        (self.data_offset, self.data_offset + self.data_len as u64)
+        (
+            self.data_offset,
+            self.data_offset + u64::from(self.data_len),
+        )
     }
 
     /// Check if the data range is valid for a given file size.
+    #[must_use]
     pub fn is_valid_for_size(&self, file_size: u64) -> bool {
         let (start, end) = self.data_range();
         start < end && end <= file_size
@@ -336,7 +363,8 @@ pub struct FileInfo {
 }
 
 impl FileInfo {
-    /// Create a new FileInfo.
+    /// Create a new `FileInfo`.
+    #[must_use]
     pub fn new(path: impl Into<String>, format: FileFormat) -> Self {
         Self {
             path: path.into(),
@@ -351,11 +379,13 @@ impl FileInfo {
     }
 
     /// Check if the file has a specific topic.
+    #[must_use]
     pub fn has_topic(&self, topic: &str) -> bool {
         self.channels.values().any(|c| c.topic == topic)
     }
 
     /// Get all channels for a specific topic.
+    #[must_use]
     pub fn channels_for_topic(&self, topic: &str) -> Vec<&ChannelInfo> {
         self.channels
             .values()
@@ -364,6 +394,7 @@ impl FileInfo {
     }
 
     /// Get the total number of topics.
+    #[must_use]
     pub fn topic_count(&self) -> usize {
         use std::collections::HashSet;
         self.channels
@@ -392,6 +423,7 @@ pub enum FileFormat {
 
 impl FileFormat {
     /// Get the file extension for this format.
+    #[must_use]
     pub fn extension(&self) -> &'static str {
         match self {
             FileFormat::Mcap => "mcap",
@@ -402,6 +434,7 @@ impl FileFormat {
     }
 
     /// Get the default MIME type for this format.
+    #[must_use]
     pub fn mime_type(&self) -> &'static str {
         match self {
             FileFormat::Mcap => "application/x-mcap",

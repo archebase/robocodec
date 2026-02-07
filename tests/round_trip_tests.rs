@@ -497,15 +497,19 @@ fn test_round_trip_with_auto_strategy() {
 // RRD Format Tests
 // ============================================================================
 //
-// NOTE: RRD round-trip tests (Bag/MCAP ↔ RRD) are not yet implemented because
-// RrdReader::decode_messages() returns a placeholder iterator. This is a known
-// limitation - RRF2 stores messages as decoded Arrow/Protobuf data, while Bag/MCAP
-// store raw encoded messages.
+// NOTE: RRD round-trip tests (Bag/MCAP ↔ RRD) are not yet implemented due to
+// fundamental format differences:
 //
-// TODO: Implement RrdReader::decode_messages() to enable:
-// - Bag → RRD conversion (decode messages from Bag, write to RRD)
-// - RRD → Bag conversion (read from RRD, re-encode to Bag)
-// - MCAP → RRD and RRD → MCAP conversions
+// - RRF2 stores messages as decoded Arrow/Protobuf data
+// - Bag/MCAP store raw encoded messages (CDR, protobuf, etc.)
+//
+// While RrdReader::decode_messages() is implemented and working, format conversion
+// would require:
+// 1. Decoding Arrow IPC data to structured messages (for RRD → Bag/MCAP)
+// 2. Encoding structured messages back to Arrow IPC format (for Bag/MCAP → RRD)
+//
+// This is a significant feature that requires Arrow schema knowledge and is
+// tracked separately from basic format reading support.
 
 #[test]
 fn test_rrd_file_can_be_opened_with_public_api() {

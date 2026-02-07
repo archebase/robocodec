@@ -556,7 +556,7 @@ impl CdrEncoder {
         match prim {
             IdlPrimitiveType::Bool => {
                 if let CodecValue::Bool(b) = value {
-                    self.uint8(if *b { 1 } else { 0 })?;
+                    self.uint8(u8::from(*b))?;
                 } else {
                     return self.type_mismatch("bool", value);
                 }
@@ -643,7 +643,7 @@ impl CdrEncoder {
         Ok(())
     }
 
-    /// Coerce a CodecValue to i8 with bounds checking.
+    /// Coerce a `CodecValue` to i8 with bounds checking.
     fn coerce_to_i8(&self, value: &CodecValue) -> CoreResult<i8> {
         match value {
             CodecValue::Int8(i) => Ok(*i),
@@ -672,7 +672,7 @@ impl CdrEncoder {
         }
     }
 
-    /// Coerce a CodecValue to i16 with bounds checking.
+    /// Coerce a `CodecValue` to i16 with bounds checking.
     fn coerce_to_i16(&self, value: &CodecValue) -> CoreResult<i16> {
         match value {
             CodecValue::Int8(i) => Ok(i16::from(*i)),
@@ -697,7 +697,7 @@ impl CdrEncoder {
         }
     }
 
-    /// Coerce a CodecValue to i32 with bounds checking.
+    /// Coerce a `CodecValue` to i32 with bounds checking.
     fn coerce_to_i32(&self, value: &CodecValue) -> CoreResult<i32> {
         match value {
             CodecValue::Int8(i) => Ok(i32::from(*i)),
@@ -718,7 +718,7 @@ impl CdrEncoder {
         }
     }
 
-    /// Coerce a CodecValue to i64.
+    /// Coerce a `CodecValue` to i64.
     fn coerce_to_i64(&self, value: &CodecValue) -> CoreResult<i64> {
         match value {
             CodecValue::Int8(i) => Ok(i64::from(*i)),
@@ -735,7 +735,7 @@ impl CdrEncoder {
         }
     }
 
-    /// Coerce a CodecValue to u8 with bounds checking.
+    /// Coerce a `CodecValue` to u8 with bounds checking.
     fn coerce_to_u8(&self, value: &CodecValue) -> CoreResult<u8> {
         match value {
             CodecValue::UInt8(u) => Ok(*u),
@@ -764,7 +764,7 @@ impl CdrEncoder {
         }
     }
 
-    /// Coerce a CodecValue to u16 with bounds checking.
+    /// Coerce a `CodecValue` to u16 with bounds checking.
     fn coerce_to_u16(&self, value: &CodecValue) -> CoreResult<u16> {
         match value {
             CodecValue::UInt8(u) => Ok(u16::from(*u)),
@@ -791,7 +791,7 @@ impl CdrEncoder {
         }
     }
 
-    /// Coerce a CodecValue to u32 with bounds checking.
+    /// Coerce a `CodecValue` to u32 with bounds checking.
     fn coerce_to_u32(&self, value: &CodecValue) -> CoreResult<u32> {
         match value {
             CodecValue::UInt8(u) => Ok(u32::from(*u)),
@@ -816,7 +816,7 @@ impl CdrEncoder {
         }
     }
 
-    /// Coerce a CodecValue to u64 with bounds checking.
+    /// Coerce a `CodecValue` to u64 with bounds checking.
     fn coerce_to_u64(&self, value: &CodecValue) -> CoreResult<u64> {
         match value {
             CodecValue::UInt8(u) => Ok(u64::from(*u)),
@@ -839,24 +839,24 @@ impl CdrEncoder {
         }
     }
 
-    /// Coerce a CodecValue to f32.
+    /// Coerce a `CodecValue` to f32.
     fn coerce_to_f32(&self, value: &CodecValue) -> CoreResult<f32> {
         match value {
             CodecValue::Float32(f) => Ok(*f),
             CodecValue::Float64(f) => Ok(*f as f32), // Allow precision loss
-            CodecValue::Int8(i) => Ok(*i as f32),
-            CodecValue::Int16(i) => Ok(*i as f32),
+            CodecValue::Int8(i) => Ok(f32::from(*i)),
+            CodecValue::Int16(i) => Ok(f32::from(*i)),
             CodecValue::Int32(i) => Ok(*i as f32),
             CodecValue::Int64(i) => Ok(*i as f32),
-            CodecValue::UInt8(u) => Ok(*u as f32),
-            CodecValue::UInt16(u) => Ok(*u as f32),
+            CodecValue::UInt8(u) => Ok(f32::from(*u)),
+            CodecValue::UInt16(u) => Ok(f32::from(*u)),
             CodecValue::UInt32(u) => Ok(*u as f32),
             CodecValue::UInt64(u) => Ok(*u as f32),
             _ => Err(self.coerce_error("float32", value)),
         }
     }
 
-    /// Coerce a CodecValue to f64.
+    /// Coerce a `CodecValue` to f64.
     fn coerce_to_f64(&self, value: &CodecValue) -> CoreResult<f64> {
         match value {
             CodecValue::Float32(f) => Ok(f64::from(*f)),

@@ -25,26 +25,33 @@ pub struct RewriteContext {
 
 impl RewriteContext {
     /// Create a new empty rewrite context.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Get the new channel ID for an original channel ID.
+    #[must_use]
     pub fn get_channel_id(&self, old_id: u16) -> Option<u16> {
         self.channel_map.get(&old_id).copied()
     }
 
     /// Get the schema ID for a transformed type name.
+    #[must_use]
     pub fn get_schema_id(&self, type_name: &str) -> Option<u16> {
         self.schema_ids.get(type_name).copied()
     }
 
     /// Get the transformed message type for a channel.
+    #[must_use]
     pub fn get_transformed_type(&self, channel_id: u16) -> Option<&str> {
-        self.channel_type_map.get(&channel_id).map(|s| s.as_str())
+        self.channel_type_map
+            .get(&channel_id)
+            .map(std::string::String::as_str)
     }
 
     /// Check if a topic name has a collision and needs a suffix.
+    #[must_use]
     pub fn has_topic_collision(&self, topic: &str, _current_channel_id: u16) -> bool {
         // Check if we've already seen this topic (collision detection)
         if let Some(&count) = self.topic_counter.get(topic) {

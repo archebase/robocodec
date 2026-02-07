@@ -4,14 +4,14 @@
 
 //! Predefined ROS2 builtin message types.
 //!
-//! This module provides the standard builtin_interfaces and std_msgs types that are
+//! This module provides the standard `builtin_interfaces` and `std_msgs` types that are
 //! commonly referenced in ROS2 message definitions.
 //!
 //! ## Supported Types
 //!
 //! - `builtin_interfaces/Time` - Timestamp with seconds and nanoseconds
 //! - `builtin_interfaces/Duration` - Time duration with seconds and nanoseconds
-//! - `std_msgs/Header` - Standard ROS message header with stamp, frame_id
+//! - `std_msgs/Header` - Standard ROS message header with stamp, `frame_id`
 //!
 //! Time and Duration have the same structure:
 //! ```text
@@ -21,7 +21,7 @@
 
 use crate::schema::ast::{Field, FieldType, MessageType, PrimitiveType};
 
-/// Create the predefined builtin_interfaces/Time type.
+/// Create the predefined `builtin_interfaces/Time` type.
 fn builtin_time() -> MessageType {
     let mut msg_type = MessageType::new("builtin_interfaces/Time".to_string());
 
@@ -38,7 +38,7 @@ fn builtin_time() -> MessageType {
     msg_type
 }
 
-/// Create the predefined builtin_interfaces/msg/Time type (alternative naming).
+/// Create the predefined `builtin_interfaces/msg/Time` type (alternative naming).
 fn builtin_time_msg() -> MessageType {
     let mut msg_type = MessageType::new("builtin_interfaces/msg/Time".to_string());
 
@@ -55,7 +55,7 @@ fn builtin_time_msg() -> MessageType {
     msg_type
 }
 
-/// Create the predefined builtin_interfaces/Duration type.
+/// Create the predefined `builtin_interfaces/Duration` type.
 fn builtin_duration() -> MessageType {
     let mut msg_type = MessageType::new("builtin_interfaces/Duration".to_string());
 
@@ -72,7 +72,7 @@ fn builtin_duration() -> MessageType {
     msg_type
 }
 
-/// Create the predefined builtin_interfaces/msg/Duration type (alternative naming).
+/// Create the predefined `builtin_interfaces/msg/Duration` type (alternative naming).
 fn builtin_duration_msg() -> MessageType {
     let mut msg_type = MessageType::new("builtin_interfaces/msg/Duration".to_string());
 
@@ -89,7 +89,7 @@ fn builtin_duration_msg() -> MessageType {
     msg_type
 }
 
-/// Create the predefined std_msgs/Header type.
+/// Create the predefined `std_msgs/Header` type.
 ///
 /// Standard ROS message header with timestamp and frame ID.
 /// Note: This does not include the `seq` field which is only used in ROS1.
@@ -110,7 +110,7 @@ fn builtin_header() -> MessageType {
     msg_type
 }
 
-/// Create the predefined std_msgs/msg/Header type (alternative naming).
+/// Create the predefined `std_msgs/msg/Header` type (alternative naming).
 fn builtin_header_msg() -> MessageType {
     let mut msg_type = MessageType::new("std_msgs/msg/Header".to_string());
 
@@ -145,6 +145,7 @@ fn builtin_header_msg() -> MessageType {
 /// }
 /// # }
 /// ```
+#[must_use]
 pub fn get_all() -> Vec<MessageType> {
     vec![
         builtin_time(),

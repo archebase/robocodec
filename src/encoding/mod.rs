@@ -9,20 +9,18 @@
 //! - [`protobuf`] - Protobuf encoding/decoding
 //! - [`json`] - JSON encoding/decoding
 //! - [`codec`] - Unified codec interface
-//! - [`registry`] - Codec registry for plugin-based codec selection
+//! - [`transform`] - Schema transformation traits and types
 
 pub mod cdr;
 pub mod codec;
 pub mod json;
 pub mod protobuf;
-pub mod registry;
 pub mod transform;
 
 pub use cdr::{CdrDecoder, CdrEncoder};
 pub use codec::{
-    CdrSchemaTransformer, CodecFactory, DynCodec, MessageCodec, ProtobufCodec,
-    ProtobufSchemaTransformer, SchemaMetadata, SchemaTransformer,
+    CdrSchemaTransformer, CodecFactory, DynCodec, ProtobufCodec, ProtobufSchemaTransformer,
+    SchemaMetadata, SchemaTransformer,
 };
 pub use json::JsonDecoder;
 pub use protobuf::ProtobufDecoder;
-pub use registry::{Codec, CodecProviderFactory, CodecRegistry, global_registry};

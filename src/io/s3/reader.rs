@@ -8,10 +8,12 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
 use std::pin::Pin;
+use std::sync::OnceLock;
 use std::task::{Context, Poll};
 
 use futures::stream::Stream;
 
+use crate::CodecError;
 use crate::io::formats::mcap::constants::{
     MCAP_MAGIC, OP_ATTACHMENT, OP_ATTACHMENT_INDEX, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX,
     OP_DATA_END, OP_FOOTER, OP_HEADER, OP_MESSAGE, OP_MESSAGE_INDEX, OP_METADATA,
@@ -23,9 +25,9 @@ use crate::io::s3::{
 };
 // Re-export streaming parsers from format modules
 use crate::io::formats::bag::stream::{BagMessageRecord, StreamingBagParser};
-use crate::io::formats::mcap::stream::{MessageRecord, StreamingMcapParser};
+use crate::io::formats::mcap::s3_adapter::McapS3Adapter;
 use crate::io::formats::rrd::stream::{RrdMessageRecord, StreamingRrdParser};
-use crate::io::s3::StreamingParser;
+use crate::io::streaming::StreamingParser;
 use crate::io::traits::FormatReader;
 
 /// State machine for S3 streaming reader.
@@ -71,7 +73,7 @@ impl fmt::Display for S3ReaderState {
             S3ReaderState::Initial => write!(f, "Initial"),
             S3ReaderState::Ready { .. } => write!(f, "Ready"),
             S3ReaderState::Eof => write!(f, "End of file"),
-            S3ReaderState::Error(msg) => write!(f, "Error: {}", msg),
+            S3ReaderState::Error(msg) => write!(f, "Error: {msg}"),
         }
     }
 }
@@ -226,14 +228,27 @@ impl S3Reader {
         if footer_start > tail_data.len() {
             // Footer spans beyond our tail fetch, need to fetch more
             // For now, return empty and fall back to scanning
+            tracing::debug!(
+                context = "scan_mcap_for_metadata",
+                location = ?self.location,
+                footer_start,
+                tail_len = tail_data.len(),
+                "Footer spans beyond tail fetch, falling back to scanning"
+            );
             return Ok(HashMap::new());
         }
 
         // Parse footer to extract summary_offset
         let summary_offset = match self.parse_mcap_footer(&tail_data[footer_start..]) {
             Ok(offset) => offset,
-            Err(_) => {
+            Err(e) => {
                 // Footer parsing failed, fall back to scanning
+                tracing::debug!(
+                    context = "scan_mcap_for_metadata",
+                    location = ?self.location,
+                    error = %e,
+                    "Footer parsing failed, falling back to scanning"
+                );
                 return Ok(HashMap::new());
             }
         };
@@ -246,18 +261,17 @@ impl S3Reader {
     ///
     /// This is public for testing purposes only.
     pub fn parse_mcap_footer(&self, data: &[u8]) -> Result<u64, FatalError> {
-        // Footer structure (from MCAP spec):
-        // summary_offset: u64 (8 bytes)
-        // summary_section_start: u64 (8 bytes)
-        // summary_crc: u32 (4 bytes)
-        // ... (other fields we don't need)
-        // Total minimum: 20 bytes
+        const FOOTER_MIN_LEN: usize = 8;
 
-        if data.len() < 8 {
+        if data.len() < FOOTER_MIN_LEN {
             return Err(FatalError::invalid_format("MCAP footer", data.to_vec()));
         }
 
-        Ok(u64::from_le_bytes(data[0..8].try_into().unwrap()))
+        Ok(u64::from_le_bytes(
+            data[0..8]
+                .try_into()
+                .expect("FOOTER_MIN_LEN ensures 8 bytes"),
+        ))
     }
 
     /// Parse MCAP summary section to extract schemas and channels.
@@ -284,33 +298,49 @@ impl S3Reader {
         &self,
         data: &[u8],
     ) -> Result<HashMap<u16, ChannelInfo>, FatalError> {
+        const RECORD_HEADER_LEN: usize = 9; // opcode (1) + length (8)
+
         let mut schemas: HashMap<u16, SummarySchemaInfo> = HashMap::new();
         let mut channels: HashMap<u16, ChannelInfo> = HashMap::new();
         let mut pos = 0;
 
-        while pos + 9 <= data.len() {
+        while pos + RECORD_HEADER_LEN <= data.len() {
             let opcode = data[pos];
-            let length = u64::from_le_bytes(data[pos + 1..pos + 9].try_into().unwrap());
-            pos += 9;
+            let length = u64::from_le_bytes(
+                data[pos + 1..pos + 9]
+                    .try_into()
+                    .expect("RECORD_HEADER_LEN ensures 8 bytes"),
+            ) as usize;
+            pos += RECORD_HEADER_LEN;
 
-            if pos + length as usize > data.len() {
+            if pos + length > data.len() {
                 break;
             }
 
-            let body = &data[pos..pos + length as usize];
+            let body = &data[pos..pos + length];
+            pos += length;
 
             match opcode {
                 OP_SCHEMA => {
                     if let Ok(schema) = self.parse_schema_record(body) {
                         schemas.insert(schema.id, schema);
+                    } else {
+                        tracing::warn!(
+                            context = "parse_mcap_summary_data",
+                            location = ?self.location,
+                            opcode = "OP_SCHEMA",
+                            "Failed to parse schema record during summary, skipping"
+                        );
                     }
                 }
                 OP_CHANNEL => {
-                    if self
-                        .parse_channel_record(body, &schemas, &mut channels)
-                        .is_ok()
-                    {
-                        // Channel added
+                    if let Err(e) = self.parse_channel_record(body, &schemas, &mut channels) {
+                        tracing::warn!(
+                            context = "parse_mcap_summary_data",
+                            location = ?self.location,
+                            error = %e,
+                            "Failed to parse channel record during summary, skipping"
+                        );
                     }
                 }
                 OP_MESSAGE_INDEX | OP_CHUNK_INDEX | OP_ATTACHMENT | OP_ATTACHMENT_INDEX
@@ -318,13 +348,8 @@ impl S3Reader {
                 | OP_HEADER | OP_FOOTER | OP_DATA_END | OP_CHUNK | OP_MESSAGE => {
                     // Ignore these for channel discovery
                 }
-                _ => {
-                    // Unknown opcode, stop parsing
-                    break;
-                }
+                _ => break, // Unknown opcode, stop parsing
             }
-
-            pos += length as usize;
         }
 
         Ok(channels)
@@ -334,15 +359,25 @@ impl S3Reader {
     ///
     /// This is public for testing purposes only.
     pub fn parse_schema_record(&self, body: &[u8]) -> Result<SummarySchemaInfo, FatalError> {
-        if body.len() < 4 {
+        const SCHEMA_MIN_LEN: usize = 4;
+
+        if body.len() < SCHEMA_MIN_LEN {
             return Err(FatalError::invalid_format(
                 "MCAP Schema record",
                 body.to_vec(),
             ));
         }
 
-        let id = u16::from_le_bytes(body[0..2].try_into().unwrap());
-        let name_len = u16::from_le_bytes(body[2..4].try_into().unwrap()) as usize;
+        let id = u16::from_le_bytes(
+            body[0..2]
+                .try_into()
+                .expect("CHANNEL_MIN_LEN ensures 2 bytes for id"),
+        );
+        let name_len = u16::from_le_bytes(
+            body[2..4]
+                .try_into()
+                .expect("CHANNEL_MIN_LEN ensures 2 bytes for name_len"),
+        ) as usize;
 
         if body.len() < 4 + name_len {
             return Err(FatalError::invalid_format(
@@ -363,8 +398,11 @@ impl S3Reader {
             ));
         }
 
-        let encoding_len =
-            u16::from_le_bytes(body[offset..offset + 2].try_into().unwrap()) as usize;
+        let encoding_len = u16::from_le_bytes(
+            body[offset..offset + 2]
+                .try_into()
+                .expect("Length check ensures 2 bytes for encoding_len"),
+        ) as usize;
         if body.len() < offset + 2 + encoding_len {
             return Err(FatalError::invalid_format(
                 "MCAP Schema encoding",
@@ -397,15 +435,25 @@ impl S3Reader {
         schemas: &HashMap<u16, SummarySchemaInfo>,
         channels: &mut HashMap<u16, ChannelInfo>,
     ) -> Result<(), FatalError> {
-        if body.len() < 4 {
+        const CHANNEL_MIN_LEN: usize = 4;
+
+        if body.len() < CHANNEL_MIN_LEN {
             return Err(FatalError::invalid_format(
                 "MCAP Channel record",
                 body.to_vec(),
             ));
         }
 
-        let id = u16::from_le_bytes(body[0..2].try_into().unwrap());
-        let topic_len = u16::from_le_bytes(body[2..4].try_into().unwrap()) as usize;
+        let id = u16::from_le_bytes(
+            body[0..2]
+                .try_into()
+                .expect("CHANNEL_MIN_LEN ensures 2 bytes for id"),
+        );
+        let topic_len = u16::from_le_bytes(
+            body[2..4]
+                .try_into()
+                .expect("CHANNEL_MIN_LEN ensures 2 bytes for topic_len"),
+        ) as usize;
 
         if body.len() < 4 + topic_len {
             return Err(FatalError::invalid_format(
@@ -426,8 +474,11 @@ impl S3Reader {
             ));
         }
 
-        let encoding_len =
-            u16::from_le_bytes(body[offset..offset + 2].try_into().unwrap()) as usize;
+        let encoding_len = u16::from_le_bytes(
+            body[offset..offset + 2]
+                .try_into()
+                .expect("Length check ensures 2 bytes for encoding_len"),
+        ) as usize;
         if body.len() < offset + 2 + encoding_len {
             return Err(FatalError::invalid_format(
                 "MCAP Channel encoding",
@@ -450,8 +501,11 @@ impl S3Reader {
             ));
         }
 
-        let schema_id =
-            u16::from_le_bytes(body[schema_offset..schema_offset + 2].try_into().unwrap());
+        let schema_id = u16::from_le_bytes(
+            body[schema_offset..schema_offset + 2]
+                .try_into()
+                .expect("Length check ensures 2 bytes for schema_id"),
+        );
 
         let schema = schemas.get(&schema_id);
         let schema_text = schema.and_then(|s| String::from_utf8(s.data.clone()).ok());
@@ -483,43 +537,69 @@ impl S3Reader {
         &mut self,
         file_size: u64,
     ) -> Result<(HashMap<u16, ChannelInfo>, u64), FatalError> {
-        // Fetch larger initial portion for scanning
-        // For files without summary, we need to scan through records
-        // Fetch up to 10MB which should cover most schemas/channels
-        let scan_limit = 10 * 1024 * 1024;
-        let scan_limit = scan_limit.min(file_size) as usize;
+        const INITIAL_SCAN_LIMIT: usize = 10 * 1024 * 1024; // 10MB
+        const ADDITIONAL_SCAN_LIMIT: usize = 50 * 1024 * 1024; // 50MB
 
+        let initial_limit = INITIAL_SCAN_LIMIT.min(file_size as usize);
         let data = self
             .client
-            .fetch_range(&self.location, 0, scan_limit as u64)
+            .fetch_range(&self.location, 0, initial_limit as u64)
             .await?;
 
-        // Use streaming parser to collect channels
-        let mut parser = StreamingMcapParser::new();
-        let _ = parser.parse_chunk(&data);
+        let mut adapter = McapS3Adapter::new();
+        let initial_parse_failed = if let Err(e) = adapter.process_chunk(&data) {
+            tracing::warn!(
+                context = "scan_mcap_for_metadata",
+                location = ?self.location,
+                error = %e,
+                "Failed to parse initial MCAP chunk for channel discovery"
+            );
+            true
+        } else {
+            false
+        };
 
-        let channels = parser.channels();
-
-        if channels.is_empty() {
-            // Try fetching even more data
-            let additional_limit = 50 * 1024 * 1024; // 50MB more
-            let additional_limit =
-                additional_limit.min(file_size.saturating_sub(scan_limit as u64)) as usize;
-
-            if additional_limit > 0 {
-                let additional_data = self
-                    .client
-                    .fetch_range(&self.location, scan_limit as u64, additional_limit as u64)
-                    .await?;
-
-                let _ = parser.parse_chunk(&additional_data);
-                let channels = parser.channels();
-
-                return Ok((channels, 0));
-            }
+        let channels = adapter.channels();
+        if !channels.is_empty() {
+            return Ok((channels, 0));
         }
 
-        Ok((channels, 0))
+        // Try fetching more data
+        let additional_limit =
+            ADDITIONAL_SCAN_LIMIT.min(file_size.saturating_sub(initial_limit as u64) as usize);
+        if additional_limit > 0 {
+            let additional_data = self
+                .client
+                .fetch_range(
+                    &self.location,
+                    initial_limit as u64,
+                    additional_limit as u64,
+                )
+                .await?;
+
+            let _additional_parse_failed = if let Err(e) = adapter.process_chunk(&additional_data) {
+                tracing::warn!(
+                    context = "scan_mcap_for_metadata",
+                    location = ?self.location,
+                    error = %e,
+                    "Failed to parse additional MCAP chunk for channel discovery"
+                );
+                true
+            } else {
+                false
+            };
+            return Ok((adapter.channels(), 0));
+        }
+
+        // Both initial and additional scans failed to find any channels
+        if initial_parse_failed {
+            return Err(FatalError::invalid_format(
+                "MCAP file - unable to parse any records for channel discovery",
+                data[..data.len().min(100)].to_vec(),
+            ));
+        }
+
+        Ok((HashMap::new(), 0))
     }
 
     /// Initialize BAG reader.
@@ -584,7 +664,7 @@ impl S3Reader {
     /// Parse MCAP header to discover channels.
     ///
     /// This is a simple method used for testing. For production use,
-    /// prefer the two-tier approach (try_mcap_footer_first + scan_mcap_for_metadata).
+    /// prefer the two-tier approach (`try_mcap_footer_first` + `scan_mcap_for_metadata`).
     pub fn parse_mcap_header(
         &self,
         data: &[u8],
@@ -605,11 +685,18 @@ impl S3Reader {
             ));
         }
 
-        // Use streaming parser to discover channels
-        let mut parser = StreamingMcapParser::new();
+        // Use mcap crate-based adapter to discover channels
+        let mut adapter = McapS3Adapter::new();
         // Parse the header data to discover channels
-        let _ = parser.parse_chunk(data);
-        Ok((parser.channels(), 0))
+        if let Err(e) = adapter.process_chunk(data) {
+            tracing::warn!(
+                context = "parse_mcap_header",
+                location = ?self.location,
+                error = %e,
+                "Failed to parse MCAP header for channel discovery"
+            );
+        }
+        Ok((adapter.channels(), 0))
     }
 
     /// Parse BAG header to discover channels.
@@ -643,16 +730,19 @@ impl S3Reader {
     }
 
     /// Get the current reader state.
+    #[must_use]
     pub fn state(&self) -> &S3ReaderState {
         &self.state
     }
 
     /// Get the S3 location.
+    #[must_use]
     pub fn location(&self) -> &S3Location {
         &self.location
     }
 
     /// Get the file format.
+    #[must_use]
     pub fn format(&self) -> crate::io::metadata::FileFormat {
         self.format
     }
@@ -661,26 +751,44 @@ impl S3Reader {
     pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         match &self.state {
             S3ReaderState::Ready { channels, .. } => channels,
-            _ => empty_channels(),
+            _ => EMPTY_CHANNELS.get_or_init(HashMap::new),
         }
     }
 
     /// Create an iterator over messages in the file.
+    #[must_use]
     pub fn iter_messages(&self) -> S3MessageStream<'_> {
         S3MessageStream::new(self)
     }
 
     /// Check if the reader has more messages.
+    #[must_use]
     pub fn has_more(&self) -> bool {
         !matches!(self.state, S3ReaderState::Eof | S3ReaderState::Error(_))
     }
 }
 
 impl FormatReader for S3Reader {
+    #[cfg(feature = "remote")]
+    fn open_from_transport(
+        _transport: Box<dyn crate::io::transport::Transport>,
+        _path: String,
+    ) -> crate::Result<Self>
+    where
+        Self: Sized,
+    {
+        // S3Reader requires async initialization and S3-specific configuration
+        // It cannot be created from a generic transport
+        // Use S3Reader::open() or S3Reader::open_with_config() instead
+        Err(CodecError::unsupported(
+            "S3Reader requires S3-specific initialization. Use S3Reader::open() or S3Reader::open_with_config() instead.",
+        ))
+    }
+
     fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         match &self.state {
             S3ReaderState::Ready { channels, .. } => channels,
-            _ => empty_channels(),
+            _ => EMPTY_CHANNELS.get_or_init(HashMap::new),
         }
     }
 
@@ -725,14 +833,10 @@ impl FormatReader for S3Reader {
     }
 }
 
-// Empty channel map constant - use OnceLock for lazy initialization
-fn empty_channels() -> &'static HashMap<u16, ChannelInfo> {
-    use std::sync::OnceLock;
-    static EMPTY: OnceLock<HashMap<u16, ChannelInfo>> = OnceLock::new();
-    EMPTY.get_or_init(HashMap::new)
-}
+/// Empty channel map singleton.
+static EMPTY_CHANNELS: OnceLock<HashMap<u16, ChannelInfo>> = OnceLock::new();
 
-/// Test-only constructor for creating S3Reader instances directly.
+/// Test-only constructor for creating `S3Reader` instances directly.
 ///
 /// This is public for testing purposes only. Normal usage should use
 /// `S3Reader::open()` or `S3Reader::open_with_config()`.
@@ -743,14 +847,16 @@ pub struct S3ReaderConstructor {
 }
 
 impl S3ReaderConstructor {
+    #[must_use]
     pub fn new_mcap() -> Self {
         Self {
             location: S3Location::new("test-bucket", "test.mcap"),
             config: S3ReaderConfig::default(),
-            client: S3Client::default_client().unwrap(),
+            client: S3Client::default_client().expect("failed to create default S3 client"),
         }
     }
 
+    #[must_use]
     pub fn build(&self) -> S3Reader {
         S3Reader {
             location: self.location.clone(),
@@ -761,6 +867,7 @@ impl S3ReaderConstructor {
         }
     }
 
+    #[must_use]
     pub fn build_bag(&self) -> S3Reader {
         S3Reader {
             location: S3Location::new("test-bucket", "test.bag"),
@@ -778,14 +885,14 @@ impl S3ReaderConstructor {
 /// memory usage regardless of file size. Uses async iteration pattern
 /// to fetch from S3 without blocking.
 ///
-/// This stream borrows from the parent S3Reader, avoiding unnecessary
+/// This stream borrows from the parent `S3Reader`, avoiding unnecessary
 /// cloning of client, location, and config.
 pub struct S3MessageStream<'a> {
     /// Reference to the parent reader
     reader: &'a S3Reader,
 
     /// Format-specific streaming parser state
-    mcap_parser: Option<StreamingMcapParser>,
+    mcap_adapter: Option<McapS3Adapter>,
     bag_parser: Option<StreamingBagParser>,
     rrd_parser: Option<StreamingRrdParser>,
     channels: HashMap<u16, ChannelInfo>,
@@ -805,7 +912,7 @@ pub struct S3MessageStream<'a> {
 
 /// Parsed message from MCAP, BAG, or RRD format.
 enum ParsedMessage {
-    Mcap(MessageRecord),
+    Mcap(crate::io::formats::mcap::s3_adapter::MessageRecord),
     Bag(BagMessageRecord),
     Rrd(RrdMessageRecord),
 }
@@ -814,9 +921,9 @@ impl ParsedMessage {
     /// Get the channel ID for this message.
     fn channel_id(&self) -> u32 {
         match self {
-            ParsedMessage::Mcap(m) => m.channel_id as u32,
+            ParsedMessage::Mcap(m) => u32::from(m.channel_id),
             ParsedMessage::Bag(b) => b.conn_id,
-            ParsedMessage::Rrd(r) => r.index as u32, // RRF2 uses message index
+            ParsedMessage::Rrd(r) => r.index as u32,
         }
     }
 
@@ -826,16 +933,6 @@ impl ParsedMessage {
             ParsedMessage::Mcap(m) => m.data,
             ParsedMessage::Bag(b) => b.data,
             ParsedMessage::Rrd(r) => r.data,
-        }
-    }
-
-    /// Get the log time.
-    #[allow(dead_code)]
-    fn log_time(&self) -> u64 {
-        match self {
-            ParsedMessage::Mcap(m) => m.log_time,
-            ParsedMessage::Bag(b) => b.log_time,
-            ParsedMessage::Rrd(r) => r.index, // RRF2 uses message index as timestamp
         }
     }
 }
@@ -852,10 +949,10 @@ impl<'a> S3MessageStream<'a> {
             _ => (HashMap::new(), 0, 0),
         };
 
-        let (mcap_parser, bag_parser, rrd_parser) = match reader.format {
+        let (mcap_adapter, bag_parser, rrd_parser) = match reader.format {
             crate::io::metadata::FileFormat::Mcap => {
-                // Parser already initialized during header scan, create a new one for streaming
-                (Some(StreamingMcapParser::new()), None, None)
+                // Adapter already initialized during header scan, create a new one for streaming
+                (Some(McapS3Adapter::new()), None, None)
             }
             crate::io::metadata::FileFormat::Bag => (None, Some(StreamingBagParser::new()), None),
             crate::io::metadata::FileFormat::Rrd => (None, None, Some(StreamingRrdParser::new())),
@@ -864,7 +961,7 @@ impl<'a> S3MessageStream<'a> {
 
         Self {
             reader,
-            mcap_parser,
+            mcap_adapter,
             bag_parser,
             rrd_parser,
             channels,
@@ -876,28 +973,22 @@ impl<'a> S3MessageStream<'a> {
     }
 }
 
-impl<'a> Stream for S3MessageStream<'a> {
+impl Stream for S3MessageStream<'_> {
     type Item = Result<(ChannelInfo, Vec<u8>), FatalError>;
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // This is a simplified implementation that processes data synchronously.
-        // A fully async version would use a background task to fetch chunks.
-        // For now, use next_message() instead which properly fetches chunks.
-
-        // Try to return a pending message, filtering out unknown channels
+        // Return pending message if available, filtering out unknown channels
         while let Some(msg) = self.pending_messages.pop() {
-            let channel_id = msg.channel_id();
+            let channel_id = msg.channel_id() as u16;
             let data = msg.data();
 
-            // Find channel info - skip message if channel not found
-            if let Some(channel_info) = self.channels.get(&(channel_id as u16)).cloned() {
+            if let Some(channel_info) = self.channels.get(&channel_id).cloned() {
                 return Poll::Ready(Some(Ok((channel_info, data))));
             }
-            // Channel not found - log warning and continue to next message
             tracing::warn!(
                 context = "S3MessageStream",
                 channel_id,
-                "Unknown channel ID, skipping message"
+                "Unknown channel ID"
             );
         }
 
@@ -912,7 +1003,7 @@ impl<'a> Stream for S3MessageStream<'a> {
 }
 
 // Block on the stream for synchronous usage
-impl<'a> S3MessageStream<'a> {
+impl S3MessageStream<'_> {
     /// Get the next message synchronously (blocking).
     ///
     /// This method is provided for convenience when async runtime is available.
@@ -921,20 +1012,17 @@ impl<'a> S3MessageStream<'a> {
         loop {
             // Return pending message if available, filtering out unknown channels
             if let Some(msg) = self.pending_messages.pop() {
-                let channel_id = msg.channel_id();
+                let channel_id = msg.channel_id() as u16;
                 let data = msg.data();
 
-                // Find channel info - skip message if channel not found
-                if let Some(channel_info) = self.channels.get(&(channel_id as u16)).cloned() {
+                if let Some(channel_info) = self.channels.get(&channel_id).cloned() {
                     return Some(Ok((channel_info, data)));
                 }
-                // Channel not found - log warning and continue to next message
                 tracing::warn!(
                     context = "S3MessageStream",
                     channel_id,
-                    "Unknown channel ID, skipping message"
+                    "Unknown channel ID"
                 );
-                // Continue loop to try next message
                 continue;
             }
 
@@ -945,11 +1033,7 @@ impl<'a> S3MessageStream<'a> {
 
             // Fetch next chunk
             let remaining = self.file_size - self.stream_position;
-            // Convert remaining to usize for chunk size calculation
-            // Use saturating conversion to avoid panic on overflow
-            let remaining_usize =
-                remaining.min(self.reader.config.max_chunk_size() as u64) as usize;
-            let chunk_size = self.reader.config.max_chunk_size().min(remaining_usize) as u64;
+            let chunk_size = (self.reader.config.max_chunk_size() as u64).min(remaining);
 
             if chunk_size == 0 {
                 self.eof = true;
@@ -962,57 +1046,85 @@ impl<'a> S3MessageStream<'a> {
                 .fetch_range(&self.reader.location, self.stream_position, chunk_size)
                 .await
             {
+                Ok(chunk_data) if chunk_data.is_empty() => {
+                    self.eof = true;
+                    return None;
+                }
                 Ok(chunk_data) => {
-                    if chunk_data.is_empty() {
-                        self.eof = true;
-                        return None;
-                    }
-
-                    // Parse the chunk based on format
-                    match self.reader.format {
-                        crate::io::metadata::FileFormat::Mcap => {
-                            if let Some(ref mut parser) = self.mcap_parser
-                                && let Ok(msgs) = parser.parse_chunk(&chunk_data)
-                            {
-                                for msg in msgs {
-                                    self.pending_messages.push(ParsedMessage::Mcap(msg));
-                                }
-                            }
-                        }
-                        crate::io::metadata::FileFormat::Bag => {
-                            if let Some(ref mut parser) = self.bag_parser
-                                && let Ok(msgs) = parser.parse_chunk(&chunk_data)
-                            {
-                                for msg in msgs {
-                                    self.pending_messages.push(ParsedMessage::Bag(msg));
-                                }
-                            }
-                        }
-                        crate::io::metadata::FileFormat::Rrd => {
-                            if let Some(ref mut parser) = self.rrd_parser
-                                && let Ok(msgs) = parser.parse_chunk(&chunk_data)
-                            {
-                                for msg in msgs {
-                                    self.pending_messages.push(ParsedMessage::Rrd(msg));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-
+                    self.parse_chunk(&chunk_data);
                     self.stream_position += chunk_data.len() as u64;
-
-                    // If file is exhausted, mark EOF
-                    if self.stream_position >= self.file_size {
-                        self.eof = true;
-                    }
+                    self.eof = self.stream_position >= self.file_size;
                 }
                 Err(e) => {
                     self.eof = true;
                     return Some(Err(e));
                 }
             }
-            // Loop back to process the messages we just added
+        }
+    }
+}
+
+impl S3MessageStream<'_> {
+    fn parse_chunk(&mut self, chunk_data: &[u8]) {
+        match self.reader.format {
+            crate::io::metadata::FileFormat::Mcap => {
+                if let Some(ref mut adapter) = self.mcap_adapter {
+                    match adapter.process_chunk(chunk_data) {
+                        Ok(msgs) => {
+                            self.pending_messages
+                                .extend(msgs.into_iter().map(ParsedMessage::Mcap));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                context = "S3MessageStream::parse_chunk",
+                                location = ?self.reader.location,
+                                offset = self.stream_position,
+                                error = %e,
+                                "MCAP parse error, skipping chunk"
+                            );
+                        }
+                    }
+                }
+            }
+            crate::io::metadata::FileFormat::Bag => {
+                if let Some(ref mut parser) = self.bag_parser {
+                    match parser.parse_chunk(chunk_data) {
+                        Ok(msgs) => {
+                            self.pending_messages
+                                .extend(msgs.into_iter().map(ParsedMessage::Bag));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                context = "S3MessageStream::parse_chunk",
+                                location = ?self.reader.location,
+                                offset = self.stream_position,
+                                error = %e,
+                                "BAG parse error, skipping chunk"
+                            );
+                        }
+                    }
+                }
+            }
+            crate::io::metadata::FileFormat::Rrd => {
+                if let Some(ref mut parser) = self.rrd_parser {
+                    match parser.parse_chunk(chunk_data) {
+                        Ok(msgs) => {
+                            self.pending_messages
+                                .extend(msgs.into_iter().map(ParsedMessage::Rrd));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                context = "S3MessageStream::parse_chunk",
+                                location = ?self.reader.location,
+                                offset = self.stream_position,
+                                error = %e,
+                                "RRD parse error, skipping chunk"
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -1176,43 +1288,6 @@ mod tests {
 
         let stream = S3MessageStream::new(&reader);
         assert_eq!(stream.stream_position, 1000);
-    }
-
-    #[test]
-    fn test_parsed_message_log_time() {
-        use crate::io::formats::bag::stream::BagMessageRecord;
-        use crate::io::formats::mcap::stream::MessageRecord;
-        use crate::io::formats::rrd::stream::{MessageKind, RrdMessageRecord};
-
-        // MCAP message has timestamp
-        let mcap_msg = MessageRecord {
-            channel_id: 1,
-            log_time: 12345,
-            publish_time: 12340,
-            data: vec![1, 2, 3],
-            sequence: 5,
-        };
-        let parsed = ParsedMessage::Mcap(mcap_msg);
-        assert_eq!(parsed.log_time(), 12345);
-
-        // BAG message has timestamp
-        let bag_msg = BagMessageRecord {
-            conn_id: 2,
-            log_time: 67890,
-            data: vec![4, 5, 6],
-        };
-        let parsed = ParsedMessage::Bag(bag_msg);
-        assert_eq!(parsed.log_time(), 67890);
-
-        // RRD message uses index as timestamp (RRF2 format limitation)
-        let rrd_msg = RrdMessageRecord {
-            kind: MessageKind::ArrowMsg,
-            topic: "/entity".to_string(),
-            data: vec![7, 8, 9],
-            index: 42,
-        };
-        let parsed = ParsedMessage::Rrd(rrd_msg);
-        assert_eq!(parsed.log_time(), 42); // Uses index as timestamp
     }
 
     // =========================================================================
@@ -1552,7 +1627,7 @@ mod tests {
         let reader = S3Reader {
             location: location.clone(),
             config,
-            client: S3Client::default_client().unwrap(),
+            client: S3Client::default_client().expect("failed to create default S3 client"),
             state: S3ReaderState::Initial,
             format: crate::io::metadata::FileFormat::Rrd,
         };
@@ -1777,7 +1852,7 @@ mod tests {
     #[test]
     fn test_parsed_message_channel_id() {
         use crate::io::formats::bag::stream::BagMessageRecord;
-        use crate::io::formats::mcap::stream::MessageRecord;
+        use crate::io::formats::mcap::s3_adapter::MessageRecord;
         use crate::io::formats::rrd::stream::{MessageKind, RrdMessageRecord};
 
         let mcap_msg = ParsedMessage::Mcap(MessageRecord {
@@ -1808,7 +1883,7 @@ mod tests {
     #[test]
     fn test_parsed_message_data() {
         use crate::io::formats::bag::stream::BagMessageRecord;
-        use crate::io::formats::mcap::stream::MessageRecord;
+        use crate::io::formats::mcap::s3_adapter::MessageRecord;
         use crate::io::formats::rrd::stream::{MessageKind, RrdMessageRecord};
 
         let mcap_msg = ParsedMessage::Mcap(MessageRecord {

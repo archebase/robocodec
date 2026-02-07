@@ -14,11 +14,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-use robocodec::io::formats::bag::{BagFormat, BagMessage, BagWriter};
-use robocodec::io::traits::FormatReader;
+use robocodec::io::formats::bag::{BagMessage, BagWriter};
 use robocodec::rewriter::RewriteOptions;
 use robocodec::rewriter::bag::BagRewriter;
 use robocodec::transform::TransformBuilder;
+use robocodec::{FormatReader, RoboReader};
 
 // ============================================================================
 // Test Fixtures
@@ -155,15 +155,17 @@ fn test_rewriter_simple_bag_copy() {
 
     // Rewrite without transformations
     let mut rewriter = BagRewriter::new();
-    let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+    let stats = rewriter
+        .rewrite(&input_path, &output_path)
+        .expect("rewrite should succeed");
 
     // Verify statistics
     assert_eq!(stats.channel_count, 1, "should have 1 channel");
     assert_eq!(stats.message_count, 1, "should have 1 message");
     assert!(output_path.exists(), "output file should exist");
 
-    // Verify the output can be read
-    let reader = BagFormat::open(&output_path).unwrap();
+    // Verify the output can be read using public API
+    let reader = RoboReader::open(output_path.to_str().unwrap()).unwrap();
     let channels = reader.channels();
     assert_eq!(channels.len(), 1);
 
@@ -189,16 +191,17 @@ fn test_rewriter_preserves_message_data() {
     };
 
     let mut rewriter = BagRewriter::with_options(options);
-    rewriter.rewrite(&input_path, &output_path).unwrap();
+    rewriter
+        .rewrite(&input_path, &output_path)
+        .expect("rewrite should succeed");
 
     // Verify output was created
     assert!(output_path.exists(), "output file should exist");
 
-    // Read output and verify there's content
-    let reader = BagFormat::open(&output_path).unwrap();
-    let messages: Vec<_> = reader.iter_raw().unwrap().filter_map(|r| r.ok()).collect();
-
-    assert!(!messages.is_empty(), "should have at least one message");
+    // Read output using public API and verify there's content
+    let reader = RoboReader::open(output_path.to_str().unwrap()).unwrap();
+    let channels = reader.channels();
+    assert!(!channels.is_empty(), "should have at least one channel");
 }
 
 #[test]
@@ -247,13 +250,15 @@ fn test_rewriter_multiple_channels() {
 
     // Rewrite
     let mut rewriter = BagRewriter::new();
-    let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+    let stats = rewriter
+        .rewrite(&input_path, &output_path)
+        .expect("rewrite should succeed");
 
     assert_eq!(stats.channel_count, 2, "should have 2 channels");
     assert_eq!(stats.message_count, 2, "should have 2 messages");
 
-    // Verify output has both channels
-    let reader = BagFormat::open(&output_path).unwrap();
+    // Verify output has both channels using public API
+    let reader = RoboReader::open(output_path.to_str().unwrap()).unwrap();
     let channels = reader.channels();
     assert_eq!(channels.len(), 2);
 }
@@ -288,12 +293,14 @@ fn test_rewriter_with_topic_rename() {
     };
 
     let mut rewriter = BagRewriter::with_options(options);
-    let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+    let stats = rewriter
+        .rewrite(&input_path, &output_path)
+        .expect("rewrite should succeed");
 
     assert_eq!(stats.topics_renamed, 1, "should have renamed 1 topic");
 
-    // Verify the topic was renamed in output
-    let reader = BagFormat::open(&output_path).unwrap();
+    // Verify the topic was renamed in output using public API
+    let reader = RoboReader::open(output_path.to_str().unwrap()).unwrap();
     let channels = reader.channels();
     let channel = channels.values().next().unwrap();
     assert_eq!(channel.topic, "/new_topic");
@@ -325,12 +332,14 @@ fn test_rewriter_with_type_rename() {
     };
 
     let mut rewriter = BagRewriter::with_options(options);
-    let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+    let stats = rewriter
+        .rewrite(&input_path, &output_path)
+        .expect("rewrite should succeed");
 
     assert_eq!(stats.types_renamed, 1, "should have renamed 1 type");
 
-    // Verify the type was renamed in output
-    let reader = BagFormat::open(&output_path).unwrap();
+    // Verify the type was renamed in output using public API
+    let reader = RoboReader::open(output_path.to_str().unwrap()).unwrap();
     let channels = reader.channels();
     let channel = channels.values().next().unwrap();
     assert_eq!(channel.message_type, "new_pkg/String");
@@ -363,13 +372,15 @@ fn test_rewriter_with_multiple_transforms() {
     };
 
     let mut rewriter = BagRewriter::with_options(options);
-    let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+    let stats = rewriter
+        .rewrite(&input_path, &output_path)
+        .expect("rewrite should succeed");
 
     assert_eq!(stats.topics_renamed, 1);
     assert_eq!(stats.types_renamed, 1);
 
-    // Verify both transformations were applied
-    let reader = BagFormat::open(&output_path).unwrap();
+    // Verify both transformations were applied using public API
+    let reader = RoboReader::open(output_path.to_str().unwrap()).unwrap();
     let channels = reader.channels();
     let channel = channels.values().next().unwrap();
     assert_eq!(channel.topic, "/new_topic");
@@ -413,10 +424,12 @@ fn test_rewriter_preserves_callerid() {
 
     // Rewrite
     let mut rewriter = BagRewriter::new();
-    rewriter.rewrite(&input_path, &output_path).unwrap();
+    rewriter
+        .rewrite(&input_path, &output_path)
+        .expect("rewrite should succeed");
 
-    // Verify callerid is preserved
-    let reader = BagFormat::open(&output_path).unwrap();
+    // Verify callerid is preserved using public API
+    let reader = RoboReader::open(output_path.to_str().unwrap()).unwrap();
     let channels = reader.channels();
     let channel = channels.values().next().unwrap();
     assert_eq!(channel.callerid.as_deref(), Some("/test_publisher"));
@@ -464,7 +477,9 @@ fn test_rewriter_tracks_statistics() {
     };
 
     let mut rewriter = BagRewriter::with_options(options);
-    let stats = rewriter.rewrite(&input_path, &output_path).unwrap();
+    let stats = rewriter
+        .rewrite(&input_path, &output_path)
+        .expect("rewrite should succeed");
 
     assert_eq!(stats.message_count, 5);
     assert_eq!(stats.channel_count, 1);

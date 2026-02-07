@@ -31,12 +31,14 @@ impl Default for ReaderConfig {
 }
 
 impl ReaderConfig {
-    /// Create a new builder for ReaderConfig.
+    /// Create a new builder for `ReaderConfig`.
+    #[must_use]
     pub fn builder() -> ReaderConfigBuilder {
         ReaderConfigBuilder::new()
     }
 
     /// Create a config that prefers parallel reading.
+    #[must_use]
     pub fn parallel() -> Self {
         Self {
             prefer_parallel: true,
@@ -45,6 +47,7 @@ impl ReaderConfig {
     }
 
     /// Create a config that prefers sequential reading.
+    #[must_use]
     pub fn sequential() -> Self {
         Self {
             prefer_parallel: false,
@@ -74,35 +77,41 @@ pub struct ReaderConfigBuilder {
 
 impl ReaderConfigBuilder {
     /// Create a new builder with default configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set whether to prefer parallel reading.
+    #[must_use]
     pub fn prefer_parallel(mut self, value: bool) -> Self {
         self.config.prefer_parallel = value;
         self
     }
 
     /// Set the number of threads for parallel reading.
+    #[must_use]
     pub fn num_threads(mut self, count: usize) -> Self {
         self.config.num_threads = Some(count);
         self
     }
 
     /// Set whether chunk merging is enabled.
+    #[must_use]
     pub fn chunk_merge_enabled(mut self, enabled: bool) -> Self {
         self.config.chunk_merge_enabled = enabled;
         self
     }
 
     /// Set the target merged chunk size in bytes.
+    #[must_use]
     pub fn chunk_merge_target_size(mut self, size: usize) -> Self {
         self.config.chunk_merge_target_size = size;
         self
     }
 
     /// Build the configuration.
+    #[must_use]
     pub fn build(self) -> ReaderConfig {
         self.config
     }

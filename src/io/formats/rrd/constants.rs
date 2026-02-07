@@ -5,7 +5,7 @@
 //! Constants for RRD (Rerun Data) file format.
 //!
 //! This implements the RRF2 format as defined by rerun:
-//! https://github.com/rerun-io/rerun/tree/main/crates/store/re_log_encoding/src/rrd
+//! <https://github.com/rerun-io/rerun/tree/main/crates/store/re_log_encoding/src/rrd>
 
 /// RRF2 magic number - current Rerun RRD format.
 ///
@@ -28,13 +28,13 @@ pub const RRD_VERSION: [u8; 4] = [0, 0, 0, 1];
 /// [0, 0, 0, 0] is considered invalid/unversioned.
 pub const RRD_MIN_VERSION: [u8; 4] = [0, 0, 0, 1];
 
-/// StreamHeader size: fourcc(4) + version(4) + options(4).
+/// `StreamHeader` size: fourcc(4) + version(4) + options(4).
 pub const STREAM_HEADER_SIZE: usize = 12;
 
-/// MessageHeader size: kind(8) + len(8).
+/// `MessageHeader` size: kind(8) + len(8).
 pub const MESSAGE_HEADER_SIZE: usize = 16;
 
-/// StreamFooter size (single entry): entries(20) + fourcc(4) + identifier(4) + num_entries(4).
+/// `StreamFooter` size (single entry): entries(20) + fourcc(4) + identifier(4) + `num_entries(4)`.
 pub const STREAM_FOOTER_SIZE: usize = 32;
 
 /// Encoding options size: compression(1) + serializer(1) + reserved(2).
@@ -49,11 +49,11 @@ pub const COMPRESSION_LZ4: u8 = 1;
 /// Compression: Zstd (not used in RRF2 but reserved).
 pub const COMPRESSION_ZSTD: u8 = 2;
 
-/// Compression: None (alias for COMPRESSION_OFF).
+/// Compression: None (alias for `COMPRESSION_OFF`).
 #[deprecated(note = "Use COMPRESSION_OFF instead")]
 pub const COMPRESSION_NONE: u8 = COMPRESSION_OFF;
 
-/// Serializer: Removed MsgPack (historical).
+/// Serializer: Removed `MsgPack` (historical).
 pub const SERIALIZER_MSGPACK: u8 = 1;
 
 /// Serializer: Protobuf.
@@ -62,13 +62,13 @@ pub const SERIALIZER_PROTOBUF: u8 = 2;
 /// Message kind: End of stream.
 pub const MSG_KIND_END: u64 = 0;
 
-/// Message kind: SetStoreInfo.
+/// Message kind: `SetStoreInfo`.
 pub const MSG_KIND_SET_STORE_INFO: u64 = 1;
 
-/// Message kind: ArrowMsg.
+/// Message kind: `ArrowMsg`.
 pub const MSG_KIND_ARROW_MSG: u64 = 2;
 
-/// Message kind: BlueprintActivationCommand.
+/// Message kind: `BlueprintActivationCommand`.
 pub const MSG_KIND_BLUEPRINT_ACTIVATION_COMMAND: u64 = 3;
 
 /// CRC seed for stream footer (RERUN in base 26).

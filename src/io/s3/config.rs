@@ -55,16 +55,19 @@ impl AwsCredentials {
     }
 
     /// Get the access key ID.
+    #[must_use]
     pub fn access_key_id(&self) -> &str {
         &self.access_key_id
     }
 
     /// Get the secret access key.
+    #[must_use]
     pub fn secret_access_key(&self) -> &str {
         &self.secret_access_key
     }
 
     /// Get the session token if present.
+    #[must_use]
     pub fn session_token(&self) -> Option<&str> {
         self.session_token.as_deref()
     }
@@ -83,6 +86,7 @@ impl AwsCredentials {
     /// - `AWS_SESSION_TOKEN` (optional)
     ///
     /// Returns `None` if the required environment variables are not set.
+    #[must_use]
     pub fn from_env() -> Option<Self> {
         let access_key_id = std::env::var("AWS_ACCESS_KEY_ID")
             .or_else(|_| std::env::var("AWS_ACCESS_KEY"))
@@ -128,55 +132,65 @@ impl Default for RetryConfig {
 
 impl RetryConfig {
     /// Create a new retry configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Get the maximum number of retries.
+    #[must_use]
     pub fn max_retries(&self) -> usize {
         self.max_retries
     }
 
     /// Get the initial delay.
+    #[must_use]
     pub fn initial_delay(&self) -> Duration {
         self.initial_delay
     }
 
     /// Get the maximum delay.
+    #[must_use]
     pub fn max_delay(&self) -> Duration {
         self.max_delay
     }
 
     /// Check if exponential backoff is enabled.
+    #[must_use]
     pub fn exponential_backoff(&self) -> bool {
         self.exponential_backoff
     }
 
     /// Set the maximum number of retries.
+    #[must_use]
     pub fn with_max_retries(mut self, max_retries: usize) -> Self {
         self.max_retries = max_retries;
         self
     }
 
     /// Set the initial delay.
+    #[must_use]
     pub fn with_initial_delay(mut self, delay: Duration) -> Self {
         self.initial_delay = delay;
         self
     }
 
     /// Set the maximum delay.
+    #[must_use]
     pub fn with_max_delay(mut self, delay: Duration) -> Self {
         self.max_delay = delay;
         self
     }
 
     /// Set whether to use exponential backoff.
+    #[must_use]
     pub fn with_exponential_backoff(mut self, enabled: bool) -> Self {
         self.exponential_backoff = enabled;
         self
     }
 
     /// Calculate delay for a given retry attempt.
+    #[must_use]
     pub fn delay_for_attempt(&self, attempt: usize) -> Duration {
         if !self.exponential_backoff {
             return self.initial_delay;
@@ -236,46 +250,55 @@ impl Default for S3ReaderConfig {
 
 impl S3ReaderConfig {
     /// Create a new configuration with default settings.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Get the buffer size for S3 reads.
+    #[must_use]
     pub fn buffer_size(&self) -> usize {
         self.buffer_size
     }
 
     /// Get the maximum in-memory chunk size.
+    #[must_use]
     pub fn max_chunk_size(&self) -> usize {
         self.max_chunk_size
     }
 
     /// Get the header scan limit.
+    #[must_use]
     pub fn header_scan_limit(&self) -> usize {
         self.header_scan_limit
     }
 
     /// Get the AWS credentials.
+    #[must_use]
     pub fn credentials(&self) -> Option<&AwsCredentials> {
         self.credentials.as_ref()
     }
 
     /// Get the retry configuration.
+    #[must_use]
     pub fn retry(&self) -> &RetryConfig {
         &self.retry
     }
 
     /// Get the request timeout.
+    #[must_use]
     pub fn request_timeout(&self) -> Duration {
         self.request_timeout
     }
 
     /// Get the connection pool max idle connections.
+    #[must_use]
     pub fn pool_max_idle(&self) -> usize {
         self.pool_max_idle
     }
 
     /// Get whether to validate SSL certificates.
+    #[must_use]
     pub fn validate_ssl(&self) -> bool {
         self.validate_ssl
     }
@@ -283,6 +306,7 @@ impl S3ReaderConfig {
     /// Set the buffer size for S3 reads.
     ///
     /// Invalid values will be caught by [`validate()`](Self::validate).
+    #[must_use]
     pub fn with_buffer_size(mut self, size: usize) -> Self {
         self.buffer_size = size;
         self
@@ -291,6 +315,7 @@ impl S3ReaderConfig {
     /// Set the maximum in-memory chunk size.
     ///
     /// Invalid values will be caught by [`validate()`](Self::validate).
+    #[must_use]
     pub fn with_max_chunk_size(mut self, size: usize) -> Self {
         self.max_chunk_size = size;
         self
@@ -299,6 +324,7 @@ impl S3ReaderConfig {
     /// Set the header scan limit.
     ///
     /// Invalid values will be caught by [`validate()`](Self::validate).
+    #[must_use]
     pub fn with_header_scan_limit(mut self, limit: usize) -> Self {
         self.header_scan_limit = limit;
         self
@@ -308,6 +334,7 @@ impl S3ReaderConfig {
     ///
     /// Accepts `None` to use default credential chain, or `Some(creds)` for explicit credentials.
     /// Invalid credentials (empty access key or secret) will be ignored.
+    #[must_use]
     pub fn with_credentials(mut self, credentials: Option<AwsCredentials>) -> Self {
         self.credentials = credentials
             .filter(|c| !c.access_key_id().is_empty() && !c.secret_access_key().is_empty());
@@ -315,6 +342,7 @@ impl S3ReaderConfig {
     }
 
     /// Set the retry configuration.
+    #[must_use]
     pub fn with_retry(mut self, retry: RetryConfig) -> Self {
         self.retry = retry;
         self
@@ -323,6 +351,7 @@ impl S3ReaderConfig {
     /// Set the request timeout.
     ///
     /// Invalid values will be caught by [`validate()`](Self::validate).
+    #[must_use]
     pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
         self
@@ -331,12 +360,14 @@ impl S3ReaderConfig {
     /// Set the connection pool max idle connections.
     ///
     /// Invalid values will be caught by [`validate()`](Self::validate).
+    #[must_use]
     pub fn with_pool_max_idle(mut self, max_idle: usize) -> Self {
         self.pool_max_idle = max_idle;
         self
     }
 
     /// Set whether to validate SSL certificates.
+    #[must_use]
     pub fn with_validate_ssl(mut self, validate: bool) -> Self {
         self.validate_ssl = validate;
         self
@@ -391,7 +422,7 @@ pub enum ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigError::InvalidValue(msg) => write!(f, "Invalid configuration: {}", msg),
+            ConfigError::InvalidValue(msg) => write!(f, "Invalid configuration: {msg}"),
         }
     }
 }

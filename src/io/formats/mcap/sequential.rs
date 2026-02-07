@@ -24,7 +24,7 @@ use crate::{CodecError, Result};
 
 /// Sequential MCAP reader using the mcap crate.
 ///
-/// This reader uses memory-mapping and the mcap crate's MessageStream
+/// This reader uses memory-mapping and the mcap crate's `MessageStream`
 /// for sequential message iteration. It's reliable and works with
 /// all valid MCAP files, including those without summary sections.
 pub struct SequentialMcapReader {
@@ -64,6 +64,21 @@ impl SequentialMcapReader {
             })?
             .len();
 
+        // # Safety
+        //
+        // Memory mapping via `memmap2::Mmap::map` is safe when used correctly:
+        //
+        // 1. **File handle validity**: The file handle passed to `map` remains valid
+        //    for the lifetime of the mmap. The mmap is stored in the struct, ensuring
+        //    the file outlives it.
+        //
+        // 2. **Read-only access**: The file is opened only for reading, preventing
+        //    data races from concurrent modifications.
+        //
+        // 3. **Bounds safety**: The memmap2 library provides safe slice access.
+        //    All access is bounds-checked.
+        //
+        // 4. **Error handling**: mmap failures are properly propagated.
         let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
             CodecError::encode("SequentialMcapReader", format!("Failed to mmap file: {e}"))
         })?;
@@ -210,12 +225,27 @@ impl SequentialMcapReader {
     }
 
     /// Get the memory-mapped data.
+    #[must_use]
     pub fn mmap(&self) -> &memmap2::Mmap {
         &self.mmap
     }
 }
 
 impl FormatReader for SequentialMcapReader {
+    #[cfg(feature = "remote")]
+    fn open_from_transport(
+        _transport: Box<dyn crate::io::transport::Transport>,
+        _path: String,
+    ) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        Err(CodecError::unsupported(
+            "SequentialMcapReader requires local file access for memory mapping. \
+             Use McapTransportReader for transport-based reading.",
+        ))
+    }
+
     fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }
@@ -275,12 +305,13 @@ impl<'a> SequentialRawIter<'a> {
     }
 
     /// Get the channels.
+    #[must_use]
     pub fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }
 }
 
-impl<'a> Iterator for SequentialRawIter<'a> {
+impl Iterator for SequentialRawIter<'_> {
     type Item = Result<(RawMessage, ChannelInfo)>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -322,7 +353,7 @@ impl<'a> Iterator for SequentialRawIter<'a> {
                     log_time: message.log_time,
                     publish_time: message.publish_time,
                     data: message.data.to_vec(),
-                    sequence: Some(message.sequence as u64),
+                    sequence: Some(u64::from(message.sequence)),
                 },
                 channel_info,
             )));

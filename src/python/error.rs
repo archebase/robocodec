@@ -13,7 +13,7 @@ use crate::CodecError;
 // Python exception class that inherits from Exception.
 pyo3::create_exception!(_robocodec, RobocodecError, pyo3::exceptions::PyException);
 
-/// Convert a CodecError to structured (kind, context, message) tuple.
+/// Convert a `CodecError` to structured (kind, context, message) tuple.
 fn codec_error_to_tuple(err: &CodecError) -> (String, Option<String>, String) {
     match err {
         CodecError::ParseError { context, message } => (
@@ -32,7 +32,7 @@ fn codec_error_to_tuple(err: &CodecError) -> (String, Option<String>, String) {
         CodecError::TypeNotFound { type_name } => (
             "TypeNotFound".to_string(),
             Some(type_name.clone()),
-            format!("Type '{}' not found", type_name),
+            format!("Type '{type_name}' not found"),
         ),
         CodecError::BufferTooShort {
             requested,
@@ -40,19 +40,13 @@ fn codec_error_to_tuple(err: &CodecError) -> (String, Option<String>, String) {
             cursor_pos,
         } => (
             "BufferTooShort".to_string(),
-            Some(format!("cursor={}", cursor_pos)),
-            format!(
-                "Requested {} bytes but only {} bytes available",
-                requested, available
-            ),
+            Some(format!("cursor={cursor_pos}")),
+            format!("Requested {requested} bytes but only {available} bytes available"),
         ),
         CodecError::AlignmentError { expected, actual } => (
             "AlignmentError".to_string(),
             None,
-            format!(
-                "Expected alignment of {}, but position is {}",
-                expected, actual
-            ),
+            format!("Expected alignment of {expected}, but position is {actual}"),
         ),
         CodecError::LengthExceeded {
             length,
@@ -60,10 +54,9 @@ fn codec_error_to_tuple(err: &CodecError) -> (String, Option<String>, String) {
             buffer_len,
         } => (
             "LengthExceeded".to_string(),
-            Some(format!("position={}", position)),
+            Some(format!("position={position}")),
             format!(
-                "Length {} exceeds buffer at position {} (buffer length: {})",
-                length, position, buffer_len
+                "Length {length} exceeds buffer at position {position} (buffer length: {buffer_len})"
             ),
         ),
         CodecError::FieldDecodeError {
@@ -73,16 +66,15 @@ fn codec_error_to_tuple(err: &CodecError) -> (String, Option<String>, String) {
             cause,
         } => (
             "FieldDecodeError".to_string(),
-            Some(format!("{} @ {}", field_name, cursor_pos)),
+            Some(format!("{field_name} @ {cursor_pos}")),
             format!(
-                "Failed to decode field '{}' (type: '{}', cursor_pos: {}): {}",
-                field_name, field_type, cursor_pos, cause
+                "Failed to decode field '{field_name}' (type: '{field_type}', cursor_pos: {cursor_pos}): {cause}"
             ),
         ),
         CodecError::Unsupported { feature } => (
             "Unsupported".to_string(),
             Some(feature.clone()),
-            format!("Unsupported feature: '{}'", feature),
+            format!("Unsupported feature: '{feature}'"),
         ),
         CodecError::EncodeError { codec, message } => (
             "EncodeError".to_string(),
@@ -92,13 +84,13 @@ fn codec_error_to_tuple(err: &CodecError) -> (String, Option<String>, String) {
         CodecError::InvariantViolation { invariant } => (
             "InvariantViolation".to_string(),
             None,
-            format!("Invariant violation: {}", invariant),
+            format!("Invariant violation: {invariant}"),
         ),
         CodecError::Other(msg) => ("Error".to_string(), None, msg.clone()),
     }
 }
 
-/// Convert a CodecError directly to a PyErr.
+/// Convert a `CodecError` directly to a `PyErr`.
 ///
 /// The error data is passed as a tuple (kind, context, message) which
 /// becomes available in Python via the exception's args attribute.
@@ -110,6 +102,10 @@ impl From<CodecError> for PyErr {
 }
 
 /// Convert a Rust `Result` to a Python `PyResult`.
+///
+/// # Errors
+///
+/// Returns a Python exception if the Rust `Result` is an `Err`.
 pub fn to_py_result<T>(result: crate::Result<T>) -> PyResult<T> {
     result.map_err(PyErr::from)
 }

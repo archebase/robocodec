@@ -5,7 +5,7 @@
 //! Custom MCAP writer with manual chunk control and summary section writing.
 //!
 //! This writer accepts pre-compressed chunks and serializes them directly
-//! to the MCAP file format, bypassing the mcap::Writer's internal compression.
+//! to the MCAP file format, bypassing the `mcap::Writer`'s internal compression.
 //!
 //! # Summary Section
 //!
@@ -30,34 +30,30 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use crate::core::{CodecError, Result};
 use crate::io::formats::mcap::constants::{
     MCAP_MAGIC, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX, OP_DATA_END, OP_FOOTER, OP_HEADER,
-    OP_MESSAGE, OP_SCHEMA, OP_STATISTICS, OP_SUMMARY_OFFSET,
+    OP_MESSAGE, OP_SCHEMA, OP_STATISTICS,
 };
 use crate::io::formats::mcap::internal::CompressedChunk;
 use crate::io::metadata::RawMessage;
 use crate::io::traits::FormatWriter;
 
 /// MCAP compression identifiers.
-#[allow(dead_code)]
-const COMPRESSION_NONE: &str = "";
 const COMPRESSION_ZSTD: &str = "zstd";
-#[allow(dead_code)]
-const COMPRESSION_LZ4: &str = "lz4";
 
 /// Chunk index record for summary section.
 ///
 /// Tracks metadata for each chunk written to enable parallel reading.
-/// Format matches mcap::records::ChunkIndex exactly.
+/// Format matches `mcap::records::ChunkIndex` exactly.
 #[derive(Debug, Clone)]
 struct ChunkIndexRecord {
-    /// Earliest message log_time in chunk
+    /// Earliest message `log_time` in chunk
     message_start_time: u64,
-    /// Latest message log_time in chunk
+    /// Latest message `log_time` in chunk
     message_end_time: u64,
     /// Offset to chunk record from file start
     chunk_start_offset: u64,
     /// Total length of chunk record
     chunk_length: u64,
-    /// Message index offsets: channel_id -> offset (empty map for our chunks)
+    /// Message index offsets: `channel_id` -> offset (empty map for our chunks)
     message_index_offsets: BTreeMap<u16, u64>,
     /// Message index length (0 = no message index)
     message_index_length: u64,
@@ -103,7 +99,7 @@ struct BufferedMessage {
 
 /// Custom MCAP writer with manual chunk control.
 ///
-/// Unlike mcap::Writer, this writer accepts pre-compressed chunks
+/// Unlike `mcap::Writer`, this writer accepts pre-compressed chunks
 /// and writes them directly to the file, giving full control over
 /// compression parallelism and chunk boundaries.
 ///
@@ -137,7 +133,7 @@ pub struct ParallelMcapWriter<W: Write> {
     messages_written: u64,
     /// Write start position (for summary section)
     write_start: u64,
-    /// Current write position (tracked manually since BufWriter doesn't expose stream_position)
+    /// Current write position (tracked manually since `BufWriter` doesn't expose `stream_position`)
     current_position: u64,
 
     // === Summary section tracking ===
@@ -305,7 +301,7 @@ impl<W: Write> ParallelMcapWriter<W> {
     /// Schema record format:
     /// - opcode (u8 = 0x03)
     /// - record length (u64)
-    /// - schema_id (u16)
+    /// - `schema_id` (u16)
     /// - name (string: u32 length + bytes)
     /// - encoding (string: u32 length + bytes)
     /// - data (bytes: u32 length + data)
@@ -360,11 +356,11 @@ impl<W: Write> ParallelMcapWriter<W> {
     /// Channel record format:
     /// - opcode (u8 = 0x04)
     /// - record length (u64)
-    /// - channel_id (u16)
+    /// - `channel_id` (u16)
     /// - topic (string: u32 length + bytes)
-    /// - message_encoding (string: u32 length + bytes)
-    /// - schema_id (u16, 0 = no schema)
-    /// - metadata (string map: u32 byte length + [u32 key_len + key_bytes + u32 val_len + val_bytes]...)
+    /// - `message_encoding` (string: u32 length + bytes)
+    /// - `schema_id` (u16, 0 = no schema)
+    /// - metadata (string map: u32 byte length + [u32 `key_len` + `key_bytes` + u32 `val_len` + `val_bytes`]...)
     pub fn add_channel(
         &mut self,
         schema_id: u16,
@@ -475,12 +471,12 @@ impl<W: Write> ParallelMcapWriter<W> {
     /// Chunk record format:
     /// - opcode (u8 = 0x06)
     /// - record length (u64)
-    /// - message_start_time (u64)
-    /// - message_end_time (u64)
-    /// - uncompressed_size (u64)
-    /// - uncompressed_crc (u32)
+    /// - `message_start_time` (u64)
+    /// - `message_end_time` (u64)
+    /// - `uncompressed_size` (u64)
+    /// - `uncompressed_crc` (u32)
     /// - compression (string: u32 length + bytes)
-    /// - compressed_size (u64)
+    /// - `compressed_size` (u64)
     /// - [records...]
     ///
     /// Also tracks metadata for the summary section.
@@ -566,14 +562,14 @@ impl<W: Write> ParallelMcapWriter<W> {
         Ok(())
     }
 
-    /// Write a MessageIndex record.
+    /// Write a `MessageIndex` record.
     ///
-    /// MessageIndex format:
+    /// `MessageIndex` format:
     /// - opcode: 0x07 (1 byte)
-    /// - record_length: u64
-    /// - channel_id: u16
-    /// - records_length: u32 (byte length of records array)
-    /// - records: [(log_time: u64, offset: u64), ...]
+    /// - `record_length`: u64
+    /// - `channel_id`: u16
+    /// - `records_length`: u32 (byte length of records array)
+    /// - records: [(`log_time`: u64, offset: u64), ...]
     fn write_message_index(
         &mut self,
         channel_id: u16,
@@ -585,7 +581,7 @@ impl<W: Write> ParallelMcapWriter<W> {
         let records_byte_length = entries.len() as u32 * 16;
 
         // Record length = 2 (channel_id) + 4 (records_length) + records_byte_length
-        let record_length: u64 = 2 + 4 + records_byte_length as u64;
+        let record_length: u64 = 2 + 4 + u64::from(records_byte_length);
 
         self.write_u8(OP_MESSAGE_INDEX)?;
         self.write_u64(record_length)?;
@@ -748,18 +744,18 @@ impl<W: Write> ParallelMcapWriter<W> {
 
     /// Write a chunk index record to the summary section.
     ///
-    /// ChunkIndex record format (matching mcap::records::ChunkIndex):
+    /// `ChunkIndex` record format (matching `mcap::records::ChunkIndex)`:
     /// - opcode (u8 = 0x08)
     /// - record length (u64)
-    /// - message_start_time (u64)
-    /// - message_end_time (u64)
-    /// - chunk_start_offset (u64)
-    /// - chunk_length (u64)
-    /// - message_index_offsets (int map: u32 byte length + [u16 + u64]...)
-    /// - message_index_length (u64)
+    /// - `message_start_time` (u64)
+    /// - `message_end_time` (u64)
+    /// - `chunk_start_offset` (u64)
+    /// - `chunk_length` (u64)
+    /// - `message_index_offsets` (int map: u32 byte length + [u16 + u64]...)
+    /// - `message_index_length` (u64)
     /// - compression (string: u32 length + bytes)
-    /// - compressed_size (u64)
-    /// - uncompressed_size (u64)
+    /// - `compressed_size` (u64)
+    /// - `uncompressed_size` (u64)
     fn write_chunk_index(&mut self, chunk_idx: &ChunkIndexRecord) -> Result<()> {
         self.write_u8(OP_CHUNK_INDEX)?;
 
@@ -810,18 +806,18 @@ impl<W: Write> ParallelMcapWriter<W> {
 
     /// Write a statistics record to the summary section.
     ///
-    /// Statistics record format (matching mcap::records::Statistics):
+    /// Statistics record format (matching `mcap::records::Statistics)`:
     /// - opcode (u8 = 0x0B)
     /// - record length (u64)
-    /// - message_count (u64)
-    /// - schema_count (u16)
-    /// - channel_count (u32)
-    /// - attachment_count (u32)
-    /// - metadata_count (u32)
-    /// - chunk_count (u32)
-    /// - message_start_time (u64)
-    /// - message_end_time (u64)
-    /// - channel_message_counts (int map: u32 byte length + [u16 + u64]...)
+    /// - `message_count` (u64)
+    /// - `schema_count` (u16)
+    /// - `channel_count` (u32)
+    /// - `attachment_count` (u32)
+    /// - `metadata_count` (u32)
+    /// - `chunk_count` (u32)
+    /// - `message_start_time` (u64)
+    /// - `message_end_time` (u64)
+    /// - `channel_message_counts` (int map: u32 byte length + [u16 + u64]...)
     fn write_statistics(&mut self) -> Result<()> {
         self.write_u8(OP_STATISTICS)?;
 
@@ -887,45 +883,10 @@ impl<W: Write> ParallelMcapWriter<W> {
         Ok(())
     }
 
-    /// Write summary offset records to the summary section.
-    #[allow(dead_code)]
-    fn write_summary_offsets(&mut self) -> Result<()> {
-        // Group opcodes by section:
-        // - Schemas: OP_SCHEMA (0x03)
-        // - Channels: OP_CHANNEL (0x04)
-        // - Chunk Indexes: OP_CHUNK_INDEX (0x08)
-        // - Statistics: OP_STATISTICS (0x0B)
-
-        // For now, we only have chunk indexes and statistics
-        // Write summary offset for chunk indexes
-        self.write_summary_offset_for(OP_CHUNK_INDEX)?;
-
-        // Write summary offset for statistics
-        self.write_summary_offset_for(OP_STATISTICS)?;
-
-        Ok(())
-    }
-
-    /// Write a summary offset record for a specific opcode group.
-    fn write_summary_offset_for(&mut self, opcode: u8) -> Result<()> {
-        self.write_u8(OP_SUMMARY_OFFSET)?;
-
-        // Group opcode
-        self.write_u8(opcode)?;
-
-        // Group start (offset = 0, we'd need to track this)
-        self.write_u64(0)?;
-
-        // Group length (offset = 0, we'd need to track this)
-        self.write_u64(0)?;
-
-        Ok(())
-    }
-
     /// Finalize the MCAP file with a proper summary section.
     ///
     /// This writes:
-    /// 1. Data end section (OP_DATA_END = 0x0F)
+    /// 1. Data end section (`OP_DATA_END` = 0x0F)
     /// 2. Summary section with chunk indexes and statistics
     /// 3. Footer with summary reference
     /// 4. Magic bytes (8 bytes)
@@ -934,10 +895,10 @@ impl<W: Write> ParallelMcapWriter<W> {
     ///
     /// Footer format:
     /// - opcode (u8 = 0x02)
-    /// - record_length (u64 = 20)
-    /// - summary_start (u64, 0 = no summary)
-    /// - summary_offset_start (u64, 0 = no summary offset section)
-    /// - summary_crc (u32, 0 = no CRC)
+    /// - `record_length` (u64 = 20)
+    /// - `summary_start` (u64, 0 = no summary)
+    /// - `summary_offset_start` (u64, 0 = no summary offset section)
+    /// - `summary_crc` (u32, 0 = no CRC)
     pub fn finish(&mut self) -> Result<u64> {
         // Flush any remaining buffered messages as a final chunk
         self.flush_message_buffer()?;
@@ -1074,11 +1035,11 @@ impl<W: Write> ParallelMcapWriter<W> {
     }
 }
 
-/// Serialize metadata HashMap to MCAP format.
+/// Serialize metadata `HashMap` to MCAP format.
 ///
 /// Format: byte-length prefixed map of string pairs
 /// - u32: total byte length of all entries
-/// - For each entry: u32 key_len + key_bytes + u32 val_len + val_bytes
+/// - For each entry: u32 `key_len` + `key_bytes` + u32 `val_len` + `val_bytes`
 fn serialize_metadata(metadata: &HashMap<String, String>) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
 
@@ -1103,7 +1064,7 @@ fn serialize_metadata(metadata: &HashMap<String, String>) -> Result<Vec<u8>> {
 }
 
 impl FormatWriter for ParallelMcapWriter<BufWriter<File>> {
-    fn path(&self) -> &str {
+    fn path(&self) -> &'static str {
         // We don't store the path in the writer, so return a placeholder
         // In a real implementation, we'd store the path
         "unknown"

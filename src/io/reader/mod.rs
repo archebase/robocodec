@@ -25,6 +25,21 @@
 //! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! # S3 URLs
+//!
+//! For reading from S3-compatible storage:
+//!
+//! ```rust,no_run
+//! use robocodec::io::RoboReader;
+//!
+//! // S3 object
+//! let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
+//!
+//! // S3 with custom endpoint (e.g., MinIO)
+//! let reader = RoboReader::open("s3://my-bucket/file.mcap?endpoint=http://localhost:9000")?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 pub mod config;
 
@@ -33,35 +48,43 @@ pub use config::{ReaderConfig, ReaderConfigBuilder};
 use crate::io::detection::detect_format;
 use crate::io::formats::bag::BagFormat;
 use crate::io::formats::mcap::McapFormat;
-use crate::io::formats::mcap::reader::DecodedMessageWithTimestampStream as McapTimestampedStream;
 use crate::io::formats::rrd::RrdFormat;
 use crate::io::metadata::{ChannelInfo, DecodedMessageResult, FileFormat};
-use crate::io::traits::{FormatReader, ParallelReader};
+use crate::io::traits::{DecodedMessageIterator, FormatReader, ParallelReader};
 use crate::{CodecError, Result};
 
 /// Get or create a shared Tokio runtime for blocking async operations.
 ///
 /// This reuses a single runtime across all S3 operations, avoiding
 /// the overhead of creating a new runtime for each open/write.
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 fn shared_runtime() -> &'static tokio::runtime::Runtime {
     use std::sync::OnceLock;
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RT.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
 }
 
-enum DecodedMessageIterInner<'a> {
-    Mcap(McapTimestampedStream<'a>),
-    Bag(crate::io::formats::bag::BagDecodedMessageWithTimestampStream<'a>),
-    Rrd(crate::io::formats::rrd::DecodedMessageWithTimestampStream<'a>),
-    ParallelRrd(crate::io::formats::rrd::parallel::RrdDecodedMessageWithTimestampStream<'a>),
+/// Helper function to convert a timestamped message and channel into a decoded message result.
+fn to_decoded_message_result(
+    msg: crate::io::metadata::TimestampedDecodedMessage,
+    ch: ChannelInfo,
+) -> DecodedMessageResult {
+    DecodedMessageResult {
+        message: msg.message,
+        channel: ch,
+        log_time: Some(msg.log_time),
+        publish_time: Some(msg.publish_time),
+        sequence: None,
+    }
 }
 
 /// Unified decoded message iterator.
 ///
-/// This iterator works across both MCAP and ROS1 bag formats,
+/// This iterator works across all supported formats (MCAP, ROS1 bag, RRF2),
 /// providing a consistent interface for iterating over decoded messages.
 /// Timestamps are populated when available from the underlying format.
+///
+/// This uses a trait-based approach internally, avoiding fragile downcasting.
 ///
 /// # Example
 ///
@@ -80,106 +103,24 @@ enum DecodedMessageIterInner<'a> {
 /// # }
 /// ```
 pub struct DecodedMessageIter<'a> {
-    inner: DecodedMessageIterInner<'a>,
+    /// The inner boxed iterator over timestamped messages
+    inner: Box<dyn DecodedMessageIterator + Send + Sync + 'a>,
 }
 
-// Import alias for cleaner code
-use DecodedMessageIterInner as Inner;
+impl<'a> DecodedMessageIter<'a> {
+    /// Create a new decoded message iterator from a boxed iterator.
+    fn new(inner: Box<dyn DecodedMessageIterator + Send + Sync + 'a>) -> Self {
+        Self { inner }
+    }
+}
 
-impl<'a> Iterator for DecodedMessageIter<'a> {
+impl Iterator for DecodedMessageIter<'_> {
     type Item = Result<DecodedMessageResult>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match &mut self.inner {
-            Inner::Mcap(stream) => stream.next().map(|result| {
-                result.map(|(msg, ch)| {
-                    let ch_info = ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic.clone(),
-                        message_type: ch.message_type.clone(),
-                        encoding: ch.encoding.clone(),
-                        schema: ch.schema.clone(),
-                        schema_data: ch.schema_data.clone(),
-                        schema_encoding: ch.schema_encoding.clone(),
-                        message_count: ch.message_count,
-                        callerid: ch.callerid.clone(),
-                    };
-                    DecodedMessageResult {
-                        message: msg.message,
-                        channel: ch_info,
-                        log_time: Some(msg.log_time),
-                        publish_time: Some(msg.publish_time),
-                        sequence: None,
-                    }
-                })
-            }),
-            Inner::Bag(stream) => stream.next().map(|result| {
-                result.map(|(msg, ch)| {
-                    let ch_info = ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic.clone(),
-                        message_type: ch.message_type.clone(),
-                        encoding: ch.encoding.clone(),
-                        schema: ch.schema.clone(),
-                        schema_data: ch.schema_data.clone(),
-                        schema_encoding: ch.schema_encoding.clone(),
-                        message_count: ch.message_count,
-                        callerid: ch.callerid.clone(),
-                    };
-                    DecodedMessageResult {
-                        message: msg.message,
-                        channel: ch_info,
-                        log_time: Some(msg.log_time),
-                        publish_time: Some(msg.publish_time),
-                        sequence: None,
-                    }
-                })
-            }),
-            Inner::Rrd(stream) => stream.next().map(|result| {
-                result.map(|(msg, ch)| {
-                    let ch_info = ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic.clone(),
-                        message_type: ch.message_type.clone(),
-                        encoding: ch.encoding.clone(),
-                        schema: ch.schema.clone(),
-                        schema_data: ch.schema_data.clone(),
-                        schema_encoding: ch.schema_encoding.clone(),
-                        message_count: ch.message_count,
-                        callerid: ch.callerid.clone(),
-                    };
-                    DecodedMessageResult {
-                        message: msg.message,
-                        channel: ch_info,
-                        log_time: Some(msg.log_time),
-                        publish_time: Some(msg.publish_time),
-                        sequence: None,
-                    }
-                })
-            }),
-            Inner::ParallelRrd(stream) => stream.next().map(|result| {
-                result.map(|(msg, ch)| {
-                    let ch_info = ChannelInfo {
-                        id: ch.id,
-                        topic: ch.topic.clone(),
-                        message_type: ch.message_type.clone(),
-                        encoding: ch.encoding.clone(),
-                        schema: ch.schema.clone(),
-                        schema_data: ch.schema_data.clone(),
-                        schema_encoding: ch.schema_encoding.clone(),
-                        message_count: ch.message_count,
-                        callerid: ch.callerid.clone(),
-                    };
-                    DecodedMessageResult {
-                        message: msg.message,
-                        channel: ch_info,
-                        log_time: Some(msg.log_time),
-                        publish_time: Some(msg.publish_time),
-                        sequence: None,
-                    }
-                })
-            }),
-        }
+        self.inner
+            .next()
+            .map(|result| result.map(|(msg, ch)| to_decoded_message_result(msg, ch)))
     }
 }
 
@@ -193,13 +134,48 @@ pub struct RoboReader {
 }
 
 impl RoboReader {
+    /// Parse a URL to create an appropriate Transport.
+    ///
+    /// This helper function detects the S3 URL scheme (s3://)
+    /// and creates the corresponding Transport implementation.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(transport))` - Successfully created transport from URL
+    /// - `Ok(None)` - Not a URL (local file path)
+    /// - `Err` - Unsupported URL scheme or parse error
+    #[cfg(feature = "remote")]
+    fn parse_url_to_transport(
+        url: &str,
+    ) -> Result<Option<Box<dyn crate::io::transport::Transport>>> {
+        use crate::io::transport::s3::S3Transport;
+
+        // Check for s3:// scheme
+        if let Ok(location) = crate::io::s3::S3Location::from_s3_url(url) {
+            // Create S3Transport using the shared runtime
+            let rt = shared_runtime();
+            let transport = rt.block_on(async {
+                let client = crate::io::s3::S3Client::default_client().map_err(|e| {
+                    CodecError::encode("S3", format!("Failed to create S3 client: {e}"))
+                })?;
+                S3Transport::new(client, location).await.map_err(|e| {
+                    CodecError::encode("S3", format!("Failed to create S3 transport: {e}"))
+                })
+            })?;
+            return Ok(Some(Box::new(transport)));
+        }
+
+        // Not a URL - treat as local path
+        Ok(None)
+    }
+
     /// Open a file with automatic format detection and default configuration.
     ///
-    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    /// Supports both local file paths and S3 URLs (<s3://bucket/key>).
     ///
     /// # Arguments
     ///
-    /// * `path` - Path to the file to open, or S3 URL (s3://bucket/key)
+    /// * `path` - Path to the file to open, or S3 URL (<s3://bucket/key>)
     ///
     /// # Example
     ///
@@ -219,11 +195,11 @@ impl RoboReader {
 
     /// Open a file with the specified configuration.
     ///
-    /// Supports both local file paths and S3 URLs (s3://bucket/key).
+    /// Supports both local file paths and S3 URLs (<s3://bucket/key>).
     ///
     /// # Arguments
     ///
-    /// * `path` - Path to the file to open, or S3 URL (s3://bucket/key)
+    /// * `path` - Path to the file to open, or S3 URL (<s3://bucket/key>)
     /// * `config` - Reader configuration
     ///
     /// # Example
@@ -237,20 +213,45 @@ impl RoboReader {
     /// )?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn open_with_config(path: &str, config: ReaderConfig) -> Result<Self> {
-        let _ = config; // Config reserved for future use
-
-        // Check if this is an S3 URL
-        #[cfg(feature = "s3")]
+    pub fn open_with_config(path: &str, _config: ReaderConfig) -> Result<Self> {
+        // Try to parse as URL and create appropriate transport
+        #[cfg(feature = "remote")]
         {
-            if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
-                // Use S3Reader for s3:// URLs
-                let rt = shared_runtime();
-                let reader =
-                    rt.block_on(async { crate::io::s3::S3Reader::open(location).await })?;
-                return Ok(Self {
-                    inner: Box::new(reader),
-                });
+            if let Some(transport) = Self::parse_url_to_transport(path)? {
+                // Use transport-based reading
+                // Detect format from path extension
+                let path_obj = std::path::Path::new(path);
+                let format = detect_format(path_obj)?;
+
+                // Only MCAP format supports transport-based reading
+                match format {
+                    FileFormat::Mcap => {
+                        return Ok(Self {
+                            inner: Box::new(
+                                crate::io::formats::mcap::transport_reader::McapTransportReader::open_from_transport(
+                                    transport,
+                                    path.to_string(),
+                                )?,
+                            ),
+                        });
+                    }
+                    FileFormat::Bag => {
+                        return Err(CodecError::unsupported(
+                            "BAG format does not support transport-based reading. Use local file access.",
+                        ));
+                    }
+                    FileFormat::Rrd => {
+                        return Err(CodecError::unsupported(
+                            "RRD format does not support transport-based reading. Use local file access.",
+                        ));
+                    }
+                    FileFormat::Unknown => {
+                        return Err(CodecError::parse(
+                            "RoboReader",
+                            format!("Unknown file format from URL: {path}"),
+                        ));
+                    }
+                }
             }
         }
 
@@ -260,7 +261,7 @@ impl RoboReader {
         if !path_obj.exists() {
             return Err(CodecError::parse(
                 "RoboReader",
-                format!("File not found: {}", path),
+                format!("File not found: {path}"),
             ));
         }
 
@@ -273,7 +274,7 @@ impl RoboReader {
             FileFormat::Unknown => {
                 return Err(CodecError::parse(
                     "RoboReader",
-                    format!("Unknown file format: {}", path),
+                    format!("Unknown file format: {path}"),
                 ));
             }
         };
@@ -310,70 +311,39 @@ impl RoboReader {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Trait-based approach
+    ///
+    /// This method uses the `decoded_with_timestamp_boxed()` trait method
+    /// instead of downcasting, making it more maintainable and allowing
+    /// new formats to be added without modifying this code.
     pub fn decoded(&self) -> Result<DecodedMessageIter<'_>> {
-        use crate::io::formats::bag::ParallelBagReader;
-        use crate::io::formats::mcap::reader::McapReader;
-        use crate::io::formats::rrd::RrdReader;
+        // Use the trait-based approach - this will work for any format
+        // that implements decoded_with_timestamp_boxed()
+        let boxed_iter = self.inner.decoded_with_timestamp_boxed().map_err(|_| {
+            let format_name = match self.inner.format() {
+                crate::io::metadata::FileFormat::Mcap => "MCAP",
+                crate::io::metadata::FileFormat::Bag => "ROS1 Bag",
+                crate::io::metadata::FileFormat::Rrd => "RRD",
+                crate::io::metadata::FileFormat::Unknown => "Unknown",
+            };
+            CodecError::parse(
+                "RoboReader",
+                format!("decoded() not supported for this format (detected: {format_name})"),
+            )
+        })?;
 
-        // Try MCAP first - use timestamped stream to get timestamps
-        if let Some(mcap) = self.inner.as_any().downcast_ref::<McapReader>() {
-            let mcap_iter = mcap.decode_messages_with_timestamp()?;
-            let mcap_stream = mcap_iter.stream()?;
-            return Ok(DecodedMessageIter {
-                inner: Inner::Mcap(mcap_stream),
-            });
-        }
-
-        // Try BAG - use timestamped stream to get timestamps
-        if let Some(bag) = self.inner.as_any().downcast_ref::<ParallelBagReader>() {
-            let bag_iter = bag.decode_messages_with_timestamp()?;
-            let bag_stream = bag_iter.stream()?;
-            return Ok(DecodedMessageIter {
-                inner: Inner::Bag(bag_stream),
-            });
-        }
-
-        // Try RRD - use timestamped stream to get timestamps
-        if let Some(rrd) = self.inner.as_any().downcast_ref::<RrdReader>() {
-            let rrd_iter = rrd.decode_messages_with_timestamp()?;
-            let rrd_stream = rrd_iter.stream()?;
-            return Ok(DecodedMessageIter {
-                inner: Inner::Rrd(rrd_stream),
-            });
-        }
-
-        // Try Parallel RRD - use timestamped stream to get timestamps
-        use crate::io::formats::rrd::parallel::ParallelRrdReader;
-        if let Some(rrd) = self.inner.as_any().downcast_ref::<ParallelRrdReader>() {
-            let rrd_iter = rrd.decode_messages_with_timestamp()?;
-            let rrd_stream = rrd_iter.stream()?;
-            return Ok(DecodedMessageIter {
-                inner: Inner::ParallelRrd(rrd_stream),
-            });
-        }
-
-        // Include format information in error for better debugging
-        let format_name = match self.inner.format() {
-            crate::io::metadata::FileFormat::Mcap => "MCAP",
-            crate::io::metadata::FileFormat::Bag => "ROS1 Bag",
-            crate::io::metadata::FileFormat::Rrd => "RRD",
-            crate::io::metadata::FileFormat::Unknown => "Unknown",
-        };
-        Err(CodecError::parse(
-            "RoboReader",
-            format!(
-                "decoded() not supported for this format (detected: {})",
-                format_name
-            ),
-        ))
+        Ok(DecodedMessageIter::new(boxed_iter))
     }
 
     /// Get the file information as a unified struct.
+    #[must_use]
     pub fn file_info(&self) -> crate::io::metadata::FileInfo {
         self.inner.file_info()
     }
 
     /// Get the detected file format.
+    #[must_use]
     pub fn format(&self) -> FileFormat {
         self.inner.format()
     }
@@ -430,6 +400,52 @@ impl RoboReader {
 }
 
 impl FormatReader for RoboReader {
+    #[cfg(feature = "remote")]
+    fn open_from_transport(
+        transport: Box<dyn crate::io::transport::Transport>,
+        path: String,
+    ) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        // Detect format from path extension
+        let path_obj = std::path::Path::new(&path);
+        let format = detect_format(path_obj)?;
+
+        // Delegate to the appropriate format-specific reader
+        // Note: Most format readers don't support transport-based reading,
+        // so this will only work for transport-compatible readers
+        let inner: Box<dyn FormatReader> = match format {
+            FileFormat::Mcap => {
+                // McapTransportReader supports transport-based reading
+                use crate::io::formats::mcap::transport_reader::McapTransportReader;
+                Box::new(McapTransportReader::open_from_transport(transport, path)?)
+            }
+            FileFormat::Bag => {
+                // BAG readers don't support transport-based reading
+                return Err(CodecError::unsupported(
+                    "BAG format does not support transport-based reading. \
+                     Use local file access or S3Reader for S3 sources.",
+                ));
+            }
+            FileFormat::Rrd => {
+                // RRD readers don't support transport-based reading
+                return Err(CodecError::unsupported(
+                    "RRD format does not support transport-based reading. \
+                     Use local file access.",
+                ));
+            }
+            FileFormat::Unknown => {
+                return Err(CodecError::parse(
+                    "RoboReader",
+                    format!("Unknown file format: {path}"),
+                ));
+            }
+        };
+
+        Ok(Self { inner })
+    }
+
     fn channels(&self) -> &std::collections::HashMap<u16, ChannelInfo> {
         self.inner.channels()
     }
@@ -504,6 +520,17 @@ mod tests {
     }
 
     impl FormatReader for MockReader {
+        #[cfg(feature = "remote")]
+        fn open_from_transport(
+            _transport: Box<dyn crate::io::transport::Transport>,
+            path: String,
+        ) -> Result<Self>
+        where
+            Self: Sized,
+        {
+            Ok(Self::new(&path))
+        }
+
         fn channels(&self) -> &std::collections::HashMap<u16, ChannelInfo> {
             &self.channels
         }
@@ -763,5 +790,91 @@ mod tests {
         };
 
         assert_eq!(reader.format(), FileFormat::Unknown);
+    }
+
+    #[test]
+    #[cfg(feature = "remote")]
+    fn test_parse_url_to_transport_with_s3_url() {
+        // Test valid S3 URL - this will attempt to create an S3Client
+        // In a test environment without credentials, this may fail, but
+        // the URL parsing itself should work
+        let result = RoboReader::parse_url_to_transport("s3://my-bucket/path/to/file.mcap");
+
+        // The result may be Ok or Err depending on whether S3 credentials are available
+        // If it's Ok, we should get Some(transport)
+        // If it's Err, it should be related to S3 client creation, not URL parsing
+        match result {
+            Ok(transport_option) => {
+                // If successful, we should have a transport
+                assert!(
+                    transport_option.is_some(),
+                    "Expected Some(transport) for valid S3 URL"
+                );
+            }
+            Err(e) => {
+                // If error, it should be related to S3 client creation, not URL parsing
+                let err_msg = format!("{}", e);
+                // Error should mention S3, not URL parsing
+                assert!(
+                    err_msg.contains("S3")
+                        || err_msg.contains("client")
+                        || err_msg.contains("transport"),
+                    "Expected S3-related error, got: {}",
+                    err_msg
+                );
+            }
+        }
+
+        // Test S3 URL with endpoint query parameter (localhost is allowed for testing)
+        let result = RoboReader::parse_url_to_transport(
+            "s3://my-bucket/file.mcap?endpoint=http://localhost:9000",
+        );
+        // Same as above - check for reasonable error or success
+        match result {
+            Ok(transport_option) => {
+                assert!(
+                    transport_option.is_some(),
+                    "Expected Some(transport) for S3 URL with endpoint"
+                );
+            }
+            Err(e) => {
+                let err_msg = format!("{}", e);
+                assert!(
+                    err_msg.contains("S3")
+                        || err_msg.contains("client")
+                        || err_msg.contains("transport"),
+                    "Expected S3-related error, got: {}",
+                    err_msg
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "remote")]
+    fn test_parse_url_to_transport_with_local_path_returns_none() {
+        // Test local file path (should return None)
+        let result = RoboReader::parse_url_to_transport("/path/to/file.mcap");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+
+        // Test relative path
+        let result = RoboReader::parse_url_to_transport("file.mcap");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "remote")]
+    fn test_parse_url_to_transport_with_invalid_s3_url() {
+        // Test invalid S3 URL (missing bucket)
+        let result = RoboReader::parse_url_to_transport("s3://");
+        assert!(result.is_ok()); // Invalid S3 URL is treated as local path
+        assert!(result.unwrap().is_none());
+
+        // Test malformed URL
+        let result = RoboReader::parse_url_to_transport("s3:///key");
+        assert!(result.is_ok()); // Invalid S3 URL is treated as local path
+        assert!(result.unwrap().is_none());
     }
 }

@@ -39,14 +39,14 @@ pub use type_rename::{TopicAwareTypeRenameTransform, TypeRenameTransform};
 
 /// Information about a channel in an MCAP file.
 ///
-/// This is a simplified version of ChannelInfo for use in transforms.
+/// This is a simplified version of `ChannelInfo` for use in transforms.
 #[derive(Debug, Clone)]
 pub struct ChannelInfo {
     /// Channel ID
     pub id: u16,
-    /// Topic name (e.g., "/joint_states")
+    /// Topic name (e.g., "/`joint_states`")
     pub topic: String,
-    /// Message type (e.g., "sensor_msgs/msg/JointState")
+    /// Message type (e.g., "`sensor_msgs/msg/JointState`")
     pub message_type: String,
     /// Encoding (e.g., "cdr", "protobuf", "json")
     pub encoding: String,
@@ -74,7 +74,8 @@ pub struct TransformedChannel {
 }
 
 impl ChannelInfo {
-    /// Create a new ChannelInfo.
+    /// Create a new `ChannelInfo`.
+    #[must_use]
     pub fn new(
         id: u16,
         topic: String,
@@ -93,7 +94,8 @@ impl ChannelInfo {
         }
     }
 
-    /// Convert from the unified ChannelInfo.
+    /// Convert from the unified `ChannelInfo`.
+    #[must_use]
     pub fn from_reader_info(info: &crate::io::ChannelInfo) -> Self {
         Self {
             id: info.id,
@@ -226,7 +228,7 @@ pub trait McapTransform: Send + Sync + 'static {
 
     /// Transform a message type name and optionally its schema text.
     ///
-    /// Returns a tuple of (new_type_name, new_schema_text).
+    /// Returns a tuple of (`new_type_name`, `new_schema_text`).
     /// The schema text is `Some(rewritten)` if modified, `Some(original)` if unchanged,
     /// or `None` if there was no schema.
     fn transform_type(
@@ -238,6 +240,13 @@ pub trait McapTransform: Send + Sync + 'static {
     /// Validate that the transformation won't cause collisions or other issues.
     ///
     /// This is called before the rewrite begins to fail fast on invalid configurations.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TransformError` if:
+    /// - The transformation would cause topic or type name collisions
+    /// - The transformation references non-existent channels
+    /// - The transformation configuration is invalid
     fn validate(&self, channels: &[ChannelInfo]) -> std::result::Result<(), TransformError>;
 
     /// Check if this transform modifies topics.
@@ -279,7 +288,7 @@ pub struct TransformBuilder {
     type_mappings: HashMap<String, String>,
     /// Wildcard type mappings: (pattern, target) where pattern is like "foo/*"
     type_wildcards: Vec<(String, String)>,
-    /// Topic-specific type mappings: (topic, source_type) -> target_type
+    /// Topic-specific type mappings: (topic, `source_type`) -> `target_type`
     topic_type_mappings: HashMap<(String, String), String>,
 }
 
@@ -291,6 +300,17 @@ impl Default for TransformBuilder {
 
 impl TransformBuilder {
     /// Create a new builder with no mappings.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() {
+    /// use robocodec::transform::TransformBuilder;
+    ///
+    /// let builder = TransformBuilder::new();
+    /// # }
+    /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             topic_mappings: HashMap::new(),
@@ -302,6 +322,18 @@ impl TransformBuilder {
     }
 
     /// Add a topic rename mapping.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() {
+    /// use robocodec::transform::TransformBuilder;
+    ///
+    /// let pipeline = TransformBuilder::new()
+    ///     .with_topic_rename("/old_topic", "/new_topic")
+    ///     .build();
+    /// # }
+    /// ```
     pub fn with_topic_rename(mut self, from: impl Into<String>, to: impl Into<String>) -> Self {
         self.topic_mappings.insert(from.into(), to.into());
         self
@@ -326,6 +358,18 @@ impl TransformBuilder {
     }
 
     /// Add a type rename mapping.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() {
+    /// use robocodec::transform::TransformBuilder;
+    ///
+    /// let pipeline = TransformBuilder::new()
+    ///     .with_type_rename("old/OldType", "new/NewType")
+    ///     .build();
+    /// # }
+    /// ```
     pub fn with_type_rename(mut self, from: impl Into<String>, to: impl Into<String>) -> Self {
         self.type_mappings.insert(from.into(), to.into());
         self
@@ -385,7 +429,21 @@ impl TransformBuilder {
         self
     }
 
-    /// Build a MultiTransform from this builder.
+    /// Build a `MultiTransform` from this builder.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() {
+    /// use robocodec::transform::TransformBuilder;
+    ///
+    /// let pipeline = TransformBuilder::new()
+    ///     .with_topic_rename("/a", "/b")
+    ///     .with_type_rename("old/A", "new/B")
+    ///     .build();
+    /// # }
+    /// ```
+    #[must_use]
     pub fn build(self) -> MultiTransform {
         let mut pipeline = MultiTransform::new();
 
@@ -395,7 +453,7 @@ impl TransformBuilder {
                 TopicRenameTransform::with_wildcards(self.topic_mappings, self.topic_wildcards)
                     .map_err(|e| TransformError::InvalidRule {
                         rule: "topic wildcard pattern".to_string(),
-                        reason: format!("Failed to compile regex: {}", e),
+                        reason: format!("Failed to compile regex: {e}"),
                     })
                     .expect("Invalid topic wildcard pattern in TransformBuilder"),
             ));

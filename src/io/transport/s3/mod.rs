@@ -5,7 +5,9 @@
 //! S3 transport implementation.
 //!
 //! This module provides S3-specific transport functionality using the AWS S3 protocol.
-//! It supports S3-compatible services like AWS S3, MinIO, Cloudflare R2, etc.
+//! It supports S3-compatible services like AWS S3, `MinIO`, Cloudflare R2, etc.
+
+mod transport;
 
 // Re-export from the s3 module (public API)
 pub use crate::io::s3::{
@@ -16,8 +18,11 @@ pub use crate::io::s3::{
 // Signer functions (re-exported from s3/)
 pub use crate::io::s3::{should_sign, sign_request};
 
-// Streaming parser trait (re-exported from s3/)
-pub use crate::io::s3::{AsStreamingParser, StreamingParser};
+// Streaming parser trait (re-exported from unified streaming module)
+pub use crate::io::streaming::StreamingParser;
+
+// Re-export the S3 transport
+pub use transport::S3Transport;
 
 #[cfg(test)]
 mod tests {

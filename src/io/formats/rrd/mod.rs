@@ -58,6 +58,7 @@ pub mod parallel;
 pub mod reader;
 
 /// Streaming parser (transport-agnostic).
+#[cfg(feature = "remote")]
 pub mod stream;
 
 /// Writer implementation.
@@ -67,6 +68,7 @@ pub mod writer;
 pub use arrow_msg::{ArrowCompression, ArrowMsg};
 pub use parallel::{MessageIndex, ParallelRrdReader};
 pub use reader::{DecodedMessageWithTimestampStream, RrdFormat, RrdReader};
+#[cfg(feature = "remote")]
 pub use stream::{
     Compression, MessageKind, RRD_STREAM_MAGIC, RrdMessageRecord, RrdStreamHeader,
     StreamingRrdParser,

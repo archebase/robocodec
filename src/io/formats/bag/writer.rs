@@ -5,7 +5,7 @@
 //! ROS1 bag file writer implementation.
 //!
 //! This module provides functionality to write ROS1 bag files.
-//! Based on the rosbag_direct_write C++ implementation.
+//! Based on the `rosbag_direct_write` C++ implementation.
 //!
 //! # ROS1 Bag Format Overview
 //!
@@ -86,7 +86,7 @@ const DEFAULT_CHUNK_THRESHOLD: usize = 768 * 1024;
 ///   pre-serialized message data.
 #[derive(Debug, Clone)]
 pub struct BagMessage {
-    /// Connection ID (must match order of add_connection calls, starting from 0)
+    /// Connection ID (must match order of `add_connection` calls, starting from 0)
     pub conn_id: u16,
     /// Timestamp in nanoseconds since Unix epoch
     pub time_ns: u64,
@@ -95,9 +95,10 @@ pub struct BagMessage {
 }
 
 impl BagMessage {
-    /// Create a new BagMessage from raw data.
+    /// Create a new `BagMessage` from raw data.
     ///
     /// Use this when you have raw message data from another bag file.
+    #[must_use]
     pub fn from_raw(conn_id: u16, time_ns: u64, data: Vec<u8>) -> Self {
         Self {
             conn_id,
@@ -106,7 +107,8 @@ impl BagMessage {
         }
     }
 
-    /// Create a new BagMessage.
+    /// Create a new `BagMessage`.
+    #[must_use]
     pub fn new(conn_id: u16, time_ns: u64, data: Vec<u8>) -> Self {
         Self {
             conn_id,
@@ -160,8 +162,7 @@ struct ChunkInfo {
 pub struct BagWriter {
     /// File writer
     writer: BufWriter<File>,
-    /// File path (kept for potential future use/debugging)
-    #[allow(dead_code)]
+    /// File path (used by `FormatWriter::path()`)
     path: String,
     /// Is the file open
     is_open: bool,
@@ -243,7 +244,7 @@ impl BagWriter {
     ///
     /// * `_channel_id` - Reserved for future use (connections are assigned sequential IDs internally)
     /// * `topic` - Topic name (e.g., "/chatter", "/tf")
-    /// * `message_type` - Message type (e.g., "std_msgs/String", "tf2_msgs/TFMessage")
+    /// * `message_type` - Message type (e.g., "`std_msgs/String`", "`tf2_msgs/TFMessage`")
     /// * `message_definition` - Message definition schema
     pub fn add_connection(
         &mut self,
@@ -255,7 +256,10 @@ impl BagWriter {
         // Check for duplicate topic with empty callerid (idempotent behavior)
         if let Some(&existing_conn_id) = self.topic_connection_ids.get(topic)
             && let Some(existing_conn) = self.connections.get(&existing_conn_id)
-            && existing_conn.callerid.as_ref().is_none_or(|s| s.is_empty())
+            && existing_conn
+                .callerid
+                .as_ref()
+                .is_none_or(std::string::String::is_empty)
         {
             // Same topic with empty callerid already exists - skip duplicate
             return Ok(());
@@ -272,9 +276,9 @@ impl BagWriter {
     ///
     /// * `channel_id` - Reserved for future use (connections are assigned sequential IDs internally)
     /// * `topic` - Topic name (e.g., "/tf", "/scan")
-    /// * `message_type` - Message type (e.g., "tf2_msgs/TFMessage")
+    /// * `message_type` - Message type (e.g., "`tf2_msgs/TFMessage`")
     /// * `message_definition` - Message definition schema
-    /// * `callerid` - The node publishing to this topic (e.g., "/tf_publisher")
+    /// * `callerid` - The node publishing to this topic (e.g., "/`tf_publisher`")
     pub fn add_connection_with_callerid(
         &mut self,
         _channel_id: u16,
@@ -403,11 +407,11 @@ impl BagWriter {
     /// Validate connection ID and return the internal connection ID.
     ///
     /// This performs a simple bounds check assuming connection IDs are assigned
-    /// sequentially starting from 0. The message's conn_id must be less than
+    /// sequentially starting from 0. The message's `conn_id` must be less than
     /// the number of connections added via `add_connection`.
     fn find_connection_for_channel(&self, conn_id: u16) -> Result<u32> {
-        if (conn_id as u32) < self.next_conn_id {
-            Ok(conn_id as u32)
+        if u32::from(conn_id) < self.next_conn_id {
+            Ok(u32::from(conn_id))
         } else {
             Err(CodecError::encode(
                 "BagWriter",
@@ -803,7 +807,7 @@ fn ns_to_time(ns: u64) -> (u32, u32) {
 
 /// Compare two times.
 fn time_less_than(a: (u32, u32), b: (u32, u32)) -> bool {
-    if a.0 != b.0 { a.0 < b.0 } else { a.1 < b.1 }
+    if a.0 == b.0 { a.1 < b.1 } else { a.0 < b.0 }
 }
 
 impl FormatWriter for BagWriter {
@@ -844,7 +848,12 @@ impl FormatWriter for BagWriter {
     fn message_count(&self) -> u64 {
         self.chunk_infos
             .iter()
-            .map(|c| c.connection_counts.values().map(|&v| v as u64).sum::<u64>())
+            .map(|c| {
+                c.connection_counts
+                    .values()
+                    .map(|&v| u64::from(v))
+                    .sum::<u64>()
+            })
             .sum()
     }
 

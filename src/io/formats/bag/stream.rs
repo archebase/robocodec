@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use crate::io::formats::bag::parser::BagConnection;
 use crate::io::metadata::ChannelInfo;
 use crate::io::s3::FatalError;
+use crate::io::streaming::StreamingParser;
 
 /// BAG magic string prefix.
 pub const BAG_MAGIC_PREFIX: &[u8] = b"#ROSBAG V";
@@ -114,10 +115,13 @@ pub struct StreamingBagParser {
     buffer_pos: usize,
     /// Version string parsed from magic
     version: Option<String>,
+    /// Cached channel map (converted from connections)
+    cached_channels: HashMap<u16, ChannelInfo>,
 }
 
 impl StreamingBagParser {
     /// Create a new streaming BAG parser.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             connections: HashMap::new(),
@@ -127,6 +131,7 @@ impl StreamingBagParser {
             message_count: 0,
             buffer_pos: 0,
             version: None,
+            cached_channels: HashMap::new(),
         }
     }
 
@@ -363,8 +368,7 @@ impl StreamingBagParser {
                 _ => {
                     // Unknown op code - this might indicate file corruption or version mismatch
                     return Err(FatalError::io_error(format!(
-                        "Unknown BAG op code: 0x{:02x}",
-                        op
+                        "Unknown BAG op code: 0x{op:02x}"
                     )));
                 }
             }
@@ -421,8 +425,8 @@ impl StreamingBagParser {
             }
             b"time" if value.len() >= 8 => {
                 // ROS time: sec (4 bytes) + nsec (4 bytes)
-                let sec = u32::from_le_bytes([value[0], value[1], value[2], value[3]]) as u64;
-                let nsec = u32::from_le_bytes([value[4], value[5], value[6], value[7]]) as u64;
+                let sec = u64::from(u32::from_le_bytes([value[0], value[1], value[2], value[3]]));
+                let nsec = u64::from(u32::from_le_bytes([value[4], value[5], value[6], value[7]]));
                 fields.time = Some(sec * 1_000_000_000 + nsec);
             }
             b"topic" => {
@@ -465,13 +469,13 @@ impl StreamingBagParser {
                 fields.size = Some(u32::from_le_bytes([value[0], value[1], value[2], value[3]]));
             }
             b"start_time" if value.len() >= 8 => {
-                let sec = u32::from_le_bytes([value[0], value[1], value[2], value[3]]) as u64;
-                let nsec = u32::from_le_bytes([value[4], value[5], value[6], value[7]]) as u64;
+                let sec = u64::from(u32::from_le_bytes([value[0], value[1], value[2], value[3]]));
+                let nsec = u64::from(u32::from_le_bytes([value[4], value[5], value[6], value[7]]));
                 fields.start_time = Some(sec * 1_000_000_000 + nsec);
             }
             b"end_time" if value.len() >= 8 => {
-                let sec = u32::from_le_bytes([value[0], value[1], value[2], value[3]]) as u64;
-                let nsec = u32::from_le_bytes([value[4], value[5], value[6], value[7]]) as u64;
+                let sec = u64::from(u32::from_le_bytes([value[0], value[1], value[2], value[3]]));
+                let nsec = u64::from(u32::from_le_bytes([value[4], value[5], value[6], value[7]]));
                 fields.end_time = Some(sec * 1_000_000_000 + nsec);
             }
             _ => {
@@ -480,7 +484,7 @@ impl StreamingBagParser {
         }
     }
 
-    /// Create a BagConnection from parsed header and data fields.
+    /// Create a `BagConnection` from parsed header and data fields.
     fn connection_from_fields(
         header_fields: &BagRecordFields,
         data_fields: &BagRecordFields,
@@ -495,17 +499,18 @@ impl StreamingBagParser {
         })
     }
 
-    /// Get all discovered connections as ChannelInfo.
+    /// Get all discovered connections as `ChannelInfo`.
     ///
     /// Uses the original BAG connection ID as the channel ID to ensure
     /// messages can be correctly associated with their channels.
+    #[must_use]
     pub fn channels(&self) -> HashMap<u16, ChannelInfo> {
         self.connections
             .iter()
             .filter_map(|(conn_id, conn)| {
                 // Only include conn_ids that fit in u16
                 let channel_id = *conn_id as u16;
-                if *conn_id != channel_id as u32 {
+                if *conn_id != u32::from(channel_id) {
                     tracing::warn!(
                         context = "StreamingBagParser",
                         conn_id,
@@ -534,6 +539,7 @@ impl StreamingBagParser {
     }
 
     /// Get the connection ID to channel ID mapping.
+    #[must_use]
     pub fn conn_id_map(&self) -> HashMap<u32, u16> {
         self.connections
             .iter()
@@ -543,23 +549,85 @@ impl StreamingBagParser {
     }
 
     /// Get the total message count.
+    #[must_use]
     pub fn message_count(&self) -> u64 {
         self.message_count
     }
 
     /// Check if the parser has seen all connections.
+    #[must_use]
     pub fn has_connections(&self) -> bool {
         !self.connections.is_empty()
     }
 
     /// Check if we've seen the magic bytes.
+    #[must_use]
     pub fn is_initialized(&self) -> bool {
         !matches!(self.state, ParserState::NeedMagic)
     }
 
     /// Get the parsed version string.
+    #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.version.as_deref()
+    }
+
+    /// Reset the parser state for a new file.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Rebuild the cached channel map from connections.
+    fn rebuild_channels(&mut self) {
+        self.cached_channels = self.channels();
+    }
+}
+
+// SAFETY: StreamingBagParser is safe to send between threads because:
+// - All fields (HashMap, Vec, enum) are Send
+// - The parser maintains no thread-local state or handles
+unsafe impl Send for StreamingBagParser {}
+
+// SAFETY: StreamingBagParser is safe to share between threads because:
+// - The StreamingParser trait requires methods take &mut self, guaranteeing exclusive access
+// - All fields are either Send + Sync (HashMap, Vec, enum)
+// - No interior mutability or shared state
+unsafe impl Sync for StreamingBagParser {}
+
+impl StreamingParser for StreamingBagParser {
+    type Message = BagMessageRecord;
+
+    fn parse_chunk(&mut self, data: &[u8]) -> Result<Vec<Self::Message>, FatalError> {
+        // Call the inherent parse_chunk method
+        // Use fully qualified syntax to avoid recursion
+        let messages = StreamingBagParser::parse_chunk(self, data)?;
+
+        // Rebuild channels if we discovered new connections
+        if self.has_connections() && self.cached_channels.is_empty() {
+            self.rebuild_channels();
+        }
+
+        Ok(messages)
+    }
+
+    fn channels(&self) -> &HashMap<u16, ChannelInfo> {
+        &self.cached_channels
+    }
+
+    fn message_count(&self) -> u64 {
+        StreamingBagParser::message_count(self)
+    }
+
+    fn has_channels(&self) -> bool {
+        StreamingBagParser::has_connections(self)
+    }
+
+    fn is_initialized(&self) -> bool {
+        StreamingBagParser::is_initialized(self)
+    }
+
+    fn reset(&mut self) {
+        StreamingBagParser::reset(self);
     }
 }
 

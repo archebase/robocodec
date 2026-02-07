@@ -115,6 +115,24 @@ impl TwoPassMcapReader {
             })?
             .len();
 
+        // # Safety
+        //
+        // Memory mapping via `memmap2::Mmap::map` is safe when used correctly:
+        //
+        // 1. **File handle validity**: The file handle passed to `map` must remain valid
+        //    for the lifetime of the mmap. Here, the file is opened immediately before
+        //    mapping and the mmap is stored in the struct, ensuring the file outlives
+        //    the mmap.
+        //
+        // 2. **No concurrent writes**: We only open the file for reading, so there are
+        //    no data races from concurrent modifications.
+        //
+        // 3. **Bounds checking**: The memmap2 library provides safe slice access with
+        //    bounds checking. Any access beyond the file size will panic, not cause
+        //    undefined behavior.
+        //
+        // 4. **Exception safety**: If mmap fails, the error is propagated and the file
+        //    handle is properly cleaned up by Rust's RAII.
         let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
             CodecError::encode("TwoPassMcapReader", format!("Failed to mmap file: {e}"))
         })?;
@@ -348,15 +366,16 @@ impl TwoPassMcapReader {
                     let encoding = String::from_utf8_lossy(&encoding_bytes).to_string();
 
                     // Get schema info if available
-                    let (message_type, schema_encoding, schema_data) = schemas
-                        .get(&schema_id)
-                        .map(|(name, enc, data)| (name.clone(), enc.clone(), data.clone()))
-                        .unwrap_or_else(|| ("unknown".to_string(), encoding.clone(), Vec::new()));
+                    let (message_type, schema_encoding, schema_data) =
+                        schemas.get(&schema_id).map_or_else(
+                            || ("unknown".to_string(), encoding.clone(), Vec::new()),
+                            |(name, enc, data)| (name.clone(), enc.clone(), data.clone()),
+                        );
 
-                    let schema_text = if !schema_data.is_empty() {
-                        Some(String::from_utf8_lossy(&schema_data).to_string())
-                    } else {
+                    let schema_text = if schema_data.is_empty() {
                         None
+                    } else {
+                        Some(String::from_utf8_lossy(&schema_data).to_string())
                     };
 
                     channels.insert(
@@ -547,7 +566,7 @@ impl TwoPassMcapReader {
                 log_time: msg.log_time,
                 publish_time: msg.publish_time,
                 data: msg.data,
-                sequence: Some(msg.sequence as u64),
+                sequence: Some(u64::from(msg.sequence)),
             };
             chunk.add_message(raw_msg);
         }
@@ -563,6 +582,20 @@ impl TwoPassMcapReader {
 }
 
 impl FormatReader for TwoPassMcapReader {
+    #[cfg(feature = "remote")]
+    fn open_from_transport(
+        _transport: Box<dyn crate::io::transport::Transport>,
+        _path: String,
+    ) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        Err(CodecError::unsupported(
+            "TwoPassMcapReader requires local file access for memory mapping. \
+             Use McapTransportReader for transport-based reading.",
+        ))
+    }
+
     fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }
@@ -608,14 +641,11 @@ impl ParallelReader for TwoPassMcapReader {
     ) -> Result<ParallelReaderStats> {
         let num_threads = config.num_threads.unwrap_or_else(|| {
             std::thread::available_parallelism()
-                .map(|n| n.get())
+                .map(std::num::NonZero::get)
                 .unwrap_or(8)
         });
 
-        println!(
-            "Starting two-pass MCAP parallel reader with {} worker threads...",
-            num_threads
-        );
+        println!("Starting two-pass MCAP parallel reader with {num_threads} worker threads...");
         println!("  File: {}", self.path);
         println!("  Chunks to process: {}", self.chunk_indexes.len());
 
@@ -630,7 +660,7 @@ impl ParallelReader for TwoPassMcapReader {
         // Create thread pool for controlled parallelism
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(num_threads)
-            .thread_name(|index| format!("mcap-two-pass-{}", index))
+            .thread_name(|index| format!("mcap-two-pass-{index}"))
             .build()
             .map_err(|e| {
                 CodecError::encode(
@@ -682,8 +712,8 @@ impl ParallelReader for TwoPassMcapReader {
         let duration = total_start.elapsed();
 
         println!("Two-pass MCAP reader complete:");
-        println!("  Chunks processed: {}", chunks_processed);
-        println!("  Messages read: {}", messages_read);
+        println!("  Chunks processed: {chunks_processed}");
+        println!("  Messages read: {messages_read}");
         println!(
             "  Total bytes: {:.2} MB",
             total_bytes as f64 / (1024.0 * 1024.0)

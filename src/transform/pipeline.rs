@@ -61,6 +61,18 @@ impl Default for MultiTransform {
 
 impl MultiTransform {
     /// Create a new empty pipeline.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() {
+    /// use robocodec::transform::MultiTransform;
+    ///
+    /// let pipeline = MultiTransform::new();
+    /// assert!(pipeline.is_empty());
+    /// # }
+    /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             transforms: Vec::new(),
@@ -70,16 +82,53 @@ impl MultiTransform {
     /// Add a transform to the pipeline.
     ///
     /// Transforms are applied in the order they are added.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() {
+    /// use robocodec::transform::{MultiTransform, TopicRenameTransform};
+    ///
+    /// let mut pipeline = MultiTransform::new();
+    /// let mut rename = TopicRenameTransform::new();
+    /// rename.add_mapping("/old", "/new");
+    /// pipeline.add_transform(Box::new(rename));
+    /// # }
+    /// ```
     pub fn add_transform(&mut self, transform: Box<dyn McapTransform>) {
         self.transforms.push(transform);
     }
 
     /// Get the number of transforms in the pipeline.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() {
+    /// use robocodec::transform::MultiTransform;
+    ///
+    /// let pipeline = MultiTransform::new();
+    /// println!("Transforms: {}", pipeline.transform_count());
+    /// # }
+    /// ```
+    #[must_use]
     pub fn transform_count(&self) -> usize {
         self.transforms.len()
     }
 
     /// Check if the pipeline is empty.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # fn main() {
+    /// use robocodec::transform::MultiTransform;
+    ///
+    /// let pipeline = MultiTransform::new();
+    /// assert!(pipeline.is_empty());
+    /// # }
+    /// ```
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.transforms.is_empty()
     }
@@ -87,6 +136,13 @@ impl MultiTransform {
     /// Validate all transforms against the channels.
     ///
     /// This checks for collisions, missing sources, and other validation issues.
+    ///
+    /// # Errors
+    ///
+    /// Returns a `TransformError` if:
+    /// - Transforms would cause topic name collisions
+    /// - Transforms reference non-existent source topics or types
+    /// - Transform configuration is invalid
     pub fn validate(&self, channels: &[ChannelInfo]) -> std::result::Result<(), TransformError> {
         for transform in &self.transforms {
             transform.validate(channels)?;
@@ -97,6 +153,7 @@ impl MultiTransform {
     /// Apply all transforms to a topic name.
     ///
     /// Returns `None` if any transform drops the topic.
+    #[must_use]
     pub fn transform_topic(&self, topic: &str) -> Option<String> {
         let mut current = topic.to_string();
         for transform in &self.transforms {
@@ -107,16 +164,17 @@ impl MultiTransform {
 
     /// Apply all transforms to a type name and schema text.
     ///
-    /// Returns (new_type_name, new_schema_text).
+    /// Returns (`new_type_name`, `new_schema_text`).
     /// The schema text is `Some(rewritten)` if modified, `Some(original)` if unchanged,
     /// or `None` if there was no schema.
+    #[must_use]
     pub fn transform_type(
         &self,
         type_name: &str,
         schema_text: Option<&str>,
     ) -> (String, Option<String>) {
         let mut current_type = type_name.to_string();
-        let mut current_schema = schema_text.map(|s| s.to_string());
+        let mut current_schema = schema_text.map(std::string::ToString::to_string);
 
         for transform in &self.transforms {
             let (new_type, new_schema) =
@@ -133,13 +191,13 @@ impl MultiTransform {
 
     /// Apply all transforms to a type name with topic context.
     ///
-    /// This method enables topic-specific type transformations. If a TopicAwareTypeRenameTransform
+    /// This method enables topic-specific type transformations. If a `TopicAwareTypeRenameTransform`
     /// is present in the pipeline, it will be queried for (topic, type) specific mappings.
     ///
     /// All transforms are applied in sequence, allowing both topic-aware and global
     /// type transformations to work together.
     ///
-    /// Returns (new_type_name, new_schema_text).
+    /// Returns (`new_type_name`, `new_schema_text`).
     ///
     /// # Arguments
     ///
@@ -161,6 +219,7 @@ impl MultiTransform {
     /// assert_eq!(new_type, "nmx.msg.JointStates");
     /// # }
     /// ```
+    #[must_use]
     pub fn transform_type_with_topic(
         &self,
         topic: &str,
@@ -170,7 +229,7 @@ impl MultiTransform {
         use super::TopicAwareTypeRenameTransform;
 
         let mut current_type = type_name.to_string();
-        let mut current_schema = schema_text.map(|s| s.to_string());
+        let mut current_schema = schema_text.map(std::string::ToString::to_string);
 
         for transform in &self.transforms {
             // Try topic-aware transformation first
@@ -204,6 +263,7 @@ impl MultiTransform {
     /// Apply all transforms to a channel, returning the transformed metadata.
     ///
     /// This is the main entry point for transforming channel information.
+    #[must_use]
     pub fn transform_channel(&self, channel: &ChannelInfo) -> TransformedChannel {
         let topic = self.transform_topic(&channel.topic).unwrap_or_default();
         let (message_type, schema) =
@@ -222,6 +282,7 @@ impl MultiTransform {
     /// Build a map from original topic to transformed topic.
     ///
     /// Useful for quick lookups during message processing.
+    #[must_use]
     pub fn build_topic_map(&self, channels: &[ChannelInfo]) -> HashMap<String, String> {
         channels
             .iter()
@@ -233,6 +294,7 @@ impl MultiTransform {
     }
 
     /// Build a map from original type to transformed type.
+    #[must_use]
     pub fn build_type_map(&self, channels: &[ChannelInfo]) -> HashMap<String, String> {
         channels
             .iter()
@@ -244,16 +306,19 @@ impl MultiTransform {
     }
 
     /// Check if any transform in the pipeline modifies topics.
+    #[must_use]
     pub fn modifies_topics(&self) -> bool {
         self.transforms.iter().any(|t| t.modifies_topics())
     }
 
     /// Check if any transform in the pipeline modifies types.
+    #[must_use]
     pub fn modifies_types(&self) -> bool {
         self.transforms.iter().any(|t| t.modifies_types())
     }
 
     /// Check if any transform in the pipeline modifies schemas.
+    #[must_use]
     pub fn modifies_schemas(&self) -> bool {
         self.transforms.iter().any(|t| t.modifies_schemas())
     }
