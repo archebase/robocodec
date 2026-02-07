@@ -210,7 +210,7 @@ impl McapReader {
 impl FormatReader for McapReader {
     fn open_from_transport(
         _transport: Box<dyn crate::io::transport::Transport>,
-        path: String,
+        _path: String,
     ) -> Result<Self>
     where
         Self: Sized,

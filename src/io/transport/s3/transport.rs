@@ -54,15 +54,10 @@ pub struct S3Transport {
     buffer_offset: usize,
     /// Pending fetch future (for poll_read)
     fetch_future: Option<FetchFuture>,
-    /// Pending seek future (for poll_seek)
-    seek_future: Option<SeekFuture>,
 }
 
 /// Future for fetching a range from S3.
 type FetchFuture = futures::future::BoxFuture<'static, Result<Bytes, FatalError>>;
-
-/// Future for seeking (fetching to determine new position).
-type SeekFuture = futures::future::BoxFuture<'static, Result<u64, FatalError>>;
 
 impl S3Transport {
     /// Create a new S3 transport.
@@ -82,7 +77,6 @@ impl S3Transport {
             buffer: Vec::new(),
             buffer_offset: 0,
             fetch_future: None,
-            seek_future: None,
         })
     }
 
@@ -98,7 +92,6 @@ impl S3Transport {
             buffer: Vec::new(),
             buffer_offset: 0,
             fetch_future: None,
-            seek_future: None,
         }
     }
 
@@ -194,7 +187,7 @@ impl Transport for S3Transport {
             }
             Poll::Ready(Err(e)) => {
                 self.fetch_future = None;
-                Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)))
+                Poll::Ready(Err(io::Error::other(e)))
             }
             Poll::Pending => Poll::Pending,
         }

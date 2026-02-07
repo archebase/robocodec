@@ -13,7 +13,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use super::transport::Transport;
+use super::core::Transport;
 
 /// Local file transport implementation.
 ///

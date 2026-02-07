@@ -36,7 +36,7 @@
 /// // Explicit strategy selection
 /// let strategy = HttpUploadStrategy::SinglePut;
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HttpUploadStrategy {
     /// Single PUT request for the entire file.
     ///
@@ -74,6 +74,7 @@ pub enum HttpUploadStrategy {
     /// # Default
     ///
     /// This is the default strategy as it balances efficiency with compatibility.
+    #[default]
     ChunkedPut,
 
     /// Streaming upload using Transfer-Encoding: chunked.
@@ -97,13 +98,6 @@ pub enum HttpUploadStrategy {
     /// - Difficult to resume on failure
     /// - Some intermediaries may buffer entire request
     ChunkedEncoding,
-}
-
-impl Default for HttpUploadStrategy {
-    fn default() -> Self {
-        // Default to ChunkedPut as balance between efficiency and compatibility
-        Self::ChunkedPut
-    }
 }
 
 impl std::fmt::Display for HttpUploadStrategy {

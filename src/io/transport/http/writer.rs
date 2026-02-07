@@ -258,15 +258,14 @@ impl HttpWriter {
             reqwest::Client::builder().redirect(reqwest::redirect::Policy::limited(10));
 
         // Configure bearer token via default headers
-        if let Some(auth) = auth {
-            if let Some(token) = auth.bearer_token() {
-                let mut headers = reqwest::header::HeaderMap::new();
-                if let Ok(value) =
-                    reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
-                {
-                    headers.insert(reqwest::header::AUTHORIZATION, value);
-                    builder = builder.default_headers(headers);
-                }
+        if let Some(auth) = auth
+            && let Some(token) = auth.bearer_token()
+        {
+            let mut headers = reqwest::header::HeaderMap::new();
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
+            {
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+                builder = builder.default_headers(headers);
             }
         }
 
@@ -303,11 +302,10 @@ impl HttpWriter {
         let mut request = self.client.put(&self.url);
 
         // Add basic auth if configured
-        if let Some(auth) = &self.auth {
-            if let (Some(username), Some(password)) = (auth.basic_username(), auth.basic_password())
-            {
-                request = request.basic_auth(username, Some(password));
-            }
+        if let Some(auth) = &self.auth
+            && let (Some(username), Some(password)) = (auth.basic_username(), auth.basic_password())
+        {
+            request = request.basic_auth(username, Some(password));
         }
 
         let response = request.body(data).send().await?;
@@ -330,11 +328,10 @@ impl HttpWriter {
         let mut request = self.client.put(&self.url);
 
         // Add basic auth if configured
-        if let Some(auth) = &self.auth {
-            if let (Some(username), Some(password)) = (auth.basic_username(), auth.basic_password())
-            {
-                request = request.basic_auth(username, Some(password));
-            }
+        if let Some(auth) = &self.auth
+            && let (Some(username), Some(password)) = (auth.basic_username(), auth.basic_password())
+        {
+            request = request.basic_auth(username, Some(password));
         }
 
         // Add Content-Range header
@@ -363,11 +360,10 @@ impl HttpWriter {
         let mut request = self.client.head(&self.url);
 
         // Add basic auth if configured
-        if let Some(auth) = &self.auth {
-            if let (Some(username), Some(password)) = (auth.basic_username(), auth.basic_password())
-            {
-                request = request.basic_auth(username, Some(password));
-            }
+        if let Some(auth) = &self.auth
+            && let (Some(username), Some(password)) = (auth.basic_username(), auth.basic_password())
+        {
+            request = request.basic_auth(username, Some(password));
         }
 
         let response = request.send().await?;
@@ -481,8 +477,8 @@ impl FormatWriter for HttpWriter {
     fn path(&self) -> &str {
         // Extract path from URL
         self.url
-            .split('/')
-            .last()
+            .rsplit('/')
+            .next()
             .filter(|s| !s.is_empty())
             .unwrap_or("output.mcap")
     }

@@ -17,16 +17,16 @@
 //! - **[`memory`]** - In-memory transport implementation for testing
 //! - **[`ByteStream`]** - Legacy sync trait (deprecated)
 
+pub mod core;
 pub mod http;
 pub mod local;
 pub mod memory;
 pub mod s3;
-pub mod transport;
 
 use std::io;
 
 // Re-export core transport types
-pub use transport::{Transport, TransportExt};
+pub use core::{Transport, TransportExt};
 // Re-export transport implementations
 pub use http::HttpTransport;
 pub use memory::MemoryTransport;

@@ -233,16 +233,15 @@ impl HttpTransport {
         let basic_username = auth.as_ref().and_then(|a| a.basic_username.clone());
         let basic_password = auth.as_ref().and_then(|a| a.basic_password.clone());
 
-        if let Some(auth) = auth {
-            if let Some(token) = &auth.bearer_token {
-                // Bearer token via default headers
-                let mut headers = reqwest::header::HeaderMap::new();
-                if let Ok(value) =
-                    reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
-                {
-                    headers.insert(reqwest::header::AUTHORIZATION, value);
-                    builder = builder.default_headers(headers);
-                }
+        if let Some(auth) = auth
+            && let Some(token) = &auth.bearer_token
+        {
+            // Bearer token via default headers
+            let mut headers = reqwest::header::HeaderMap::new();
+            if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
+            {
+                headers.insert(reqwest::header::AUTHORIZATION, value);
+                builder = builder.default_headers(headers);
             }
         }
 
@@ -389,10 +388,10 @@ impl HttpTransport {
             let mut request = client.get(&url);
 
             // Add basic auth if configured
-            if use_basic_auth {
-                if let (Some(username), Some(password)) = (basic_username, basic_password) {
-                    request = request.basic_auth(username, Some(password));
-                }
+            if use_basic_auth
+                && let (Some(username), Some(password)) = (basic_username, basic_password)
+            {
+                request = request.basic_auth(username, Some(password));
             }
 
             // Add Range header for partial content
@@ -467,10 +466,10 @@ impl Transport for HttpTransport {
         }
 
         // Check if we're at EOF (only if we know the length)
-        if let Some(len) = self.len {
-            if self.pos >= len {
-                return Poll::Ready(Ok(0));
-            }
+        if let Some(len) = self.len
+            && self.pos >= len
+        {
+            return Poll::Ready(Ok(0));
         }
 
         // Start or continue a fetch
@@ -506,7 +505,7 @@ impl Transport for HttpTransport {
             }
             Poll::Ready(Err(e)) => {
                 self.fetch_future = None;
-                Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e)))
+                Poll::Ready(Err(io::Error::other(e)))
             }
             Poll::Pending => Poll::Pending,
         }

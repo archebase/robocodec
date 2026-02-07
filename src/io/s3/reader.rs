@@ -852,15 +852,6 @@ impl ParsedMessage {
             ParsedMessage::Rrd(r) => r.data,
         }
     }
-
-    /// Get the log time.
-    fn log_time(&self) -> u64 {
-        match self {
-            ParsedMessage::Mcap(m) => m.log_time,
-            ParsedMessage::Bag(b) => b.log_time,
-            ParsedMessage::Rrd(r) => r.index,
-        }
-    }
 }
 
 impl<'a> S3MessageStream<'a> {
@@ -1214,43 +1205,6 @@ mod tests {
 
         let stream = S3MessageStream::new(&reader);
         assert_eq!(stream.stream_position, 1000);
-    }
-
-    #[test]
-    fn test_parsed_message_log_time() {
-        use crate::io::formats::bag::stream::BagMessageRecord;
-        use crate::io::formats::mcap::s3_adapter::MessageRecord;
-        use crate::io::formats::rrd::stream::{MessageKind, RrdMessageRecord};
-
-        // MCAP message has timestamp
-        let mcap_msg = MessageRecord {
-            channel_id: 1,
-            log_time: 12345,
-            publish_time: 12340,
-            data: vec![1, 2, 3],
-            sequence: 5,
-        };
-        let parsed = ParsedMessage::Mcap(mcap_msg);
-        assert_eq!(parsed.log_time(), 12345);
-
-        // BAG message has timestamp
-        let bag_msg = BagMessageRecord {
-            conn_id: 2,
-            log_time: 67890,
-            data: vec![4, 5, 6],
-        };
-        let parsed = ParsedMessage::Bag(bag_msg);
-        assert_eq!(parsed.log_time(), 67890);
-
-        // RRD message uses index as timestamp (RRF2 format limitation)
-        let rrd_msg = RrdMessageRecord {
-            kind: MessageKind::ArrowMsg,
-            topic: "/entity".to_string(),
-            data: vec![7, 8, 9],
-            index: 42,
-        };
-        let parsed = ParsedMessage::Rrd(rrd_msg);
-        assert_eq!(parsed.log_time(), 42); // Uses index as timestamp
     }
 
     // =========================================================================

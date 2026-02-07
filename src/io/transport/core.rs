@@ -180,7 +180,7 @@ impl<T: Transport + Unpin + ?Sized> std::future::Future for ReadExactFuture<'_, 
             // Advance the buffer slice using get_unchecked_mut to avoid borrow issues
             self.buf = unsafe {
                 let this = self.as_mut().get_unchecked_mut();
-                &mut std::mem::take(&mut (*this).buf)[n..]
+                &mut std::mem::take(&mut this.buf)[n..]
             };
         }
     }
@@ -287,6 +287,13 @@ pub trait Transport: Send + Sync {
     ///
     /// Returns `None` for streams of unknown length (e.g., HTTP chunked encoding).
     fn len(&self) -> Option<u64>;
+
+    /// Check if this transport is empty.
+    ///
+    /// Returns `true` if the length is known and zero, `false` otherwise.
+    fn is_empty(&self) -> bool {
+        self.len() == Some(0)
+    }
 
     /// Check if this transport supports seeking.
     fn is_seekable(&self) -> bool;

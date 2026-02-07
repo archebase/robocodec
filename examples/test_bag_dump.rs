@@ -1,8 +1,42 @@
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
+//! Example of dumping raw messages from a ROS bag file.
+//!
+//! # Usage
+//!
+//! ```bash
+//! cargo run --example test_bag_dump -- path/to/file.bag
+//! ```
+//!
+//! Or via environment variable:
+//!
+//! ```bash
+//! BAG_PATH=path/to/file.bag cargo run --example test_bag_dump
+//! ```
+
 use robocodec::io::formats::bag::BagFormat;
+use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = "/Users/zhexuany/Downloads/leju_bag/Rubbish_sorting_P4-278_20250830101814.bag";
-    let reader = BagFormat::open(path)?;
+    // Get path from command-line argument or environment variable
+    let path = env::args()
+        .nth(1)
+        .or_else(|| env::var("BAG_PATH").ok())
+        .unwrap_or_else(|| {
+            eprintln!("Error: No bag file path provided");
+            eprintln!();
+            eprintln!("Usage:");
+            eprintln!("  cargo run --example test_bag_dump -- <path-to-bag>");
+            eprintln!();
+            eprintln!("Or set BAG_PATH environment variable:");
+            eprintln!("  BAG_PATH=<path-to-bag> cargo run --example test_bag_dump");
+            eprintln!();
+            std::process::exit(1);
+        });
+
+    let reader = BagFormat::open(&path)?;
 
     let mut iter = reader.iter_raw()?;
 

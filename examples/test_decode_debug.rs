@@ -1,10 +1,48 @@
+// SPDX-FileCopyrightText: 2026 ArcheBase
+//
+// SPDX-License-Identifier: MulanPSL-2.0
+
+//! Debug example for decoding ROS bag messages.
+//!
+//! This example demonstrates how to decode messages from a ROS bag file.
+//! It's primarily used for debugging and development purposes.
+//!
+//! # Usage
+//!
+//! ```bash
+//! cargo run --example test_decode_debug -- path/to/file.bag
+//! ```
+//!
+//! Or via environment variable:
+//!
+//! ```bash
+//! BAG_PATH=path/to/file.bag cargo run --example test_decode_debug
+//! ```
+
 use robocodec::encoding::CdrDecoder;
 use robocodec::io::formats::bag::BagFormat;
 use robocodec::schema::parse_schema;
+use std::env;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = "/Users/zhexuany/Downloads/leju_bag/Rubbish_sorting_P4-278_20250830101814.bag";
-    let reader = BagFormat::open(path)?;
+    // Get path from command-line argument or environment variable
+    let path = env::args()
+        .nth(1)
+        .or_else(|| env::var("BAG_PATH").ok())
+        .unwrap_or_else(|| {
+            eprintln!("Error: No bag file path provided");
+            eprintln!();
+            eprintln!("Usage:");
+            eprintln!("  cargo run --example test_decode_debug -- <path-to-bag>");
+            eprintln!();
+            eprintln!("Or set BAG_PATH environment variable:");
+            eprintln!("  BAG_PATH=<path-to-bag> cargo run --example test_decode_debug");
+            eprintln!();
+            std::process::exit(1);
+        });
+
+    println!("Opening bag file: {}", path);
+    let reader = BagFormat::open(&path)?;
 
     let mut iter = reader.iter_raw()?;
 

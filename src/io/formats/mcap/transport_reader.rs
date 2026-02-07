@@ -168,7 +168,7 @@ impl FormatReader for McapTransportReader {
 
         // Create a no-op waker for polling
         let waker = Waker::noop();
-        let mut cx = Context::from_waker(&waker);
+        let mut cx = Context::from_waker(waker);
 
         const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
         let mut buffer = vec![0u8; CHUNK_SIZE];
@@ -182,7 +182,7 @@ impl FormatReader for McapTransportReader {
         // Read and parse the entire file
         loop {
             match pinned_transport.as_mut().poll_read(&mut cx, &mut buffer) {
-                Poll::Ready(Ok(n)) if n == 0 => break,
+                Poll::Ready(Ok(0)) => break,
                 Poll::Ready(Ok(n)) => {
                     total_read += n;
 
