@@ -460,7 +460,7 @@ impl CdrEncoder {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use robocodec::encoding::cdr::encoder::CdrEncoder;
     /// use robocodec::schema::parse_schema;
-    /// use robocodec::DecodedMessage;
+    /// use robocodec::core::DecodedMessage;
     /// use robocodec::encoding::cdr::decoder::CdrDecoder;
     ///
     /// let schema = parse_schema("TestMsg", "int32 value\nfloat64 data")?;

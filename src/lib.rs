@@ -32,7 +32,7 @@
 //!
 //! ```rust,no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use robocodec::RoboReader;
+//! use robocodec::{RoboReader, FormatReader};
 //!
 //! // Format auto-detected from extension
 //! let reader = RoboReader::open("file.mcap")?;
@@ -54,7 +54,7 @@
 //!
 //! ```rust,no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use robocodec::RoboWriter;
+//! use robocodec::{RoboWriter, FormatWriter};
 //!
 //! // Format detected from extension (.mcap, .bag, or .rrd)
 //! let mut writer = RoboWriter::create("output.mcap")?;
@@ -71,7 +71,7 @@
 //!
 //! ```rust,no_run
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
-//! use robocodec::RoboReader;
+//! use robocodec::{RoboReader, FormatReader};
 //!
 //! // Read directly from S3 (requires `remote` feature, enabled by default)
 //! let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
