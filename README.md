@@ -122,6 +122,43 @@ export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
 
 > **Note:** While we use AWS-standard environment variable names for compatibility, robocodec works with any S3-compatible storage service.
 
+### Read from HTTP/HTTPS
+
+Robocodec also supports reading directly from HTTP/HTTPS URLs:
+
+```rust
+use robocodec::RoboReader;
+
+// Format detected from URL path, access via HTTP
+let reader = RoboReader::open("https://example.com/data.mcap")?;
+println!("Found {} channels", reader.channels().len());
+```
+
+> **Note:** HTTP reading supports range requests for efficient access to large files.
+
+```rust
+use robocodec::RoboReader;
+
+// Format and S3 access auto-detected
+let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
+println!("Found {} channels", reader.channels().len());
+```
+
+**S3-compatible services** (AWS S3, Alibaba Cloud OSS, MinIO, etc.) require credentials via environment variables:
+
+```bash
+# AWS S3
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export AWS_REGION="us-east-1"  # optional, defaults to us-east-1
+
+# For Alibaba Cloud OSS, MinIO, or other S3-compatible services
+export AWS_ACCESS_KEY_ID="your-oss-access-key"
+export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
+```
+
+> **Note:** While we use AWS-standard environment variable names for compatibility, robocodec works with any S3-compatible storage service.
+
 ### Write to S3
 
 ```rust

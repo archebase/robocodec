@@ -124,6 +124,43 @@ export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
 
 > **注意：** 虽然我们使用 AWS 标准的环境变量名称以确保兼容性，但 robocodec 可与任何兼容 S3 的存储服务配合使用。
 
+### 从 HTTP/HTTPS 读取
+
+Robocodec 也支持直接从 HTTP/HTTPS URL 读取数据：
+
+```rust
+use robocodec::RoboReader;
+
+// 格式从 URL 路径检测，通过 HTTP 访问
+let reader = RoboReader::open("https://example.com/data.mcap")?;
+println!("找到 {} 个通道", reader.channels().len());
+```
+
+> **注意：** HTTP 读取支持范围请求，可高效访问大文件。
+
+```rust
+use robocodec::RoboReader;
+
+// 格式和 S3 访问自动检测
+let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
+println!("找到 {} 个通道", reader.channels().len());
+```
+
+**兼容 S3 的存储服务**（AWS S3、阿里云 OSS、MinIO 等）需要通过环境变量配置凭证：
+
+```bash
+# AWS S3
+export AWS_ACCESS_KEY_ID="your-access-key"
+export AWS_SECRET_ACCESS_KEY="your-secret-key"
+export AWS_REGION="us-east-1"  # 可选，默认为 us-east-1
+
+# 对于阿里云 OSS、MinIO 或其他兼容 S3 的服务
+export AWS_ACCESS_KEY_ID="your-oss-access-key"
+export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
+```
+
+> **注意：** 虽然我们使用 AWS 标准的环境变量名称以确保兼容性，但 robocodec 可与任何兼容 S3 的存储服务配合使用。
+
 ### 写入到 S3
 
 ```rust
