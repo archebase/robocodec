@@ -4,6 +4,42 @@
 
 //! Reader configuration.
 
+/// HTTP authentication configuration.
+#[derive(Debug, Clone, Default)]
+pub struct HttpAuthConfig {
+    /// Bearer token for OAuth2/JWT authentication.
+    pub bearer_token: Option<String>,
+    /// Basic authentication username.
+    pub basic_username: Option<String>,
+    /// Basic authentication password.
+    pub basic_password: Option<String>,
+}
+
+impl HttpAuthConfig {
+    /// Create a new bearer token authentication config.
+    pub fn bearer(token: impl Into<String>) -> Self {
+        Self {
+            bearer_token: Some(token.into()),
+            basic_username: None,
+            basic_password: None,
+        }
+    }
+
+    /// Create a new basic authentication config.
+    pub fn basic(username: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            bearer_token: None,
+            basic_username: Some(username.into()),
+            basic_password: Some(password.into()),
+        }
+    }
+
+    /// Check if any authentication is configured.
+    pub fn is_configured(&self) -> bool {
+        self.bearer_token.is_some() || self.basic_username.is_some()
+    }
+}
+
 /// Configuration for opening a `RoboReader`.
 ///
 /// This config provides options for controlling reader behavior.
@@ -17,6 +53,8 @@ pub struct ReaderConfig {
     pub chunk_merge_enabled: bool,
     /// Target merged chunk size in bytes (default: 16MB).
     pub chunk_merge_target_size: usize,
+    /// HTTP authentication configuration.
+    pub http_auth: HttpAuthConfig,
 }
 
 impl Default for ReaderConfig {
@@ -26,6 +64,7 @@ impl Default for ReaderConfig {
             num_threads: None,
             chunk_merge_enabled: true,
             chunk_merge_target_size: 16 * 1024 * 1024,
+            http_auth: HttpAuthConfig::default(),
         }
     }
 }
@@ -50,6 +89,40 @@ impl ReaderConfig {
             prefer_parallel: false,
             ..Default::default()
         }
+    }
+
+    /// Set HTTP bearer token authentication.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use robocodec::io::ReaderConfig;
+    ///
+    /// let config = ReaderConfig::default()
+    ///     .with_http_bearer_token("your-token-here");
+    /// ```
+    pub fn with_http_bearer_token(mut self, token: impl Into<String>) -> Self {
+        self.http_auth = HttpAuthConfig::bearer(token);
+        self
+    }
+
+    /// Set HTTP basic authentication.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use robocodec::io::ReaderConfig;
+    ///
+    /// let config = ReaderConfig::default()
+    ///     .with_http_basic_auth("username", "password");
+    /// ```
+    pub fn with_http_basic_auth(
+        mut self,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        self.http_auth = HttpAuthConfig::basic(username, password);
+        self
     }
 }
 
@@ -99,6 +172,22 @@ impl ReaderConfigBuilder {
     /// Set the target merged chunk size in bytes.
     pub fn chunk_merge_target_size(mut self, size: usize) -> Self {
         self.config.chunk_merge_target_size = size;
+        self
+    }
+
+    /// Set HTTP bearer token authentication.
+    pub fn http_bearer_token(mut self, token: impl Into<String>) -> Self {
+        self.config.http_auth = HttpAuthConfig::bearer(token);
+        self
+    }
+
+    /// Set HTTP basic authentication.
+    pub fn http_basic_auth(
+        mut self,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        self.config.http_auth = HttpAuthConfig::basic(username, password);
         self
     }
 

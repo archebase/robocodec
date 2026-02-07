@@ -85,7 +85,7 @@ pub mod io;
 pub use io::RoboReader;
 pub use io::metadata::{ChannelInfo, DecodedMessageResult};
 pub use io::reader::{DecodedMessageIter, ReaderConfig};
-pub use io::writer::{RoboWriter, WriterConfig};
+pub use io::writer::{HttpAuthConfig, RoboWriter, WriterConfig};
 
 // Format traits are available but hidden from documentation
 // Users don't need to import these - methods work directly on RoboReader/RoboWriter

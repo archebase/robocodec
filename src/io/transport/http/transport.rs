@@ -13,6 +13,7 @@
 //! - **HEAD requests**: Uses HEAD to determine content length
 //! - **Buffering**: Buffers data for efficient reading
 //! - **Redirect handling**: Follows HTTP redirects automatically
+//! - **Authentication**: Supports Bearer tokens and Basic auth
 //!
 //! # Example
 //!
@@ -29,6 +30,27 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # Authentication
+//!
+//! For authenticated HTTP endpoints, you can configure authentication:
+//!
+//! ```rust,no_run
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! use robocodec::io::transport::http::HttpTransport;
+//!
+//! // Bearer token (OAuth2/JWT)
+//! let transport = HttpTransport::new("https://example.com/data.mcap")
+//!     .await?
+//!     .with_bearer_token("your-token");
+//!
+//! // Basic authentication
+//! let transport = HttpTransport::new("https://example.com/data.mcap")
+//!     .await?
+//!     .with_basic_auth("username", "password");
+//! # Ok(())
+//! # }
+//! ```
 
 use std::io;
 use std::pin::Pin;
@@ -41,6 +63,52 @@ use crate::io::transport::Transport;
 
 /// Default buffer size for HTTP reads (64KB).
 const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
+
+/// Authentication configuration for HTTP requests.
+#[derive(Debug, Clone, Default)]
+pub struct HttpAuth {
+    /// Bearer token (OAuth2/JWT)
+    bearer_token: Option<String>,
+    /// Basic auth username
+    basic_username: Option<String>,
+    /// Basic auth password
+    basic_password: Option<String>,
+}
+
+impl HttpAuth {
+    /// Create bearer token authentication.
+    pub fn bearer(token: impl Into<String>) -> Self {
+        Self {
+            bearer_token: Some(token.into()),
+            basic_username: None,
+            basic_password: None,
+        }
+    }
+
+    /// Create basic authentication.
+    pub fn basic(username: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            bearer_token: None,
+            basic_username: Some(username.into()),
+            basic_password: Some(password.into()),
+        }
+    }
+
+    /// Get the bearer token if configured.
+    pub fn bearer_token(&self) -> Option<&str> {
+        self.bearer_token.as_deref()
+    }
+
+    /// Get the basic auth username if configured.
+    pub fn basic_username(&self) -> Option<&str> {
+        self.basic_username.as_deref()
+    }
+
+    /// Get the basic auth password if configured.
+    pub fn basic_password(&self) -> Option<&str> {
+        self.basic_password.as_deref()
+    }
+}
 
 /// HTTP transport implementation.
 ///
@@ -57,6 +125,8 @@ pub struct HttpTransport {
     url: String,
     /// HTTP client for making requests
     client: reqwest::Client,
+    /// Authentication configuration
+    auth: Option<HttpAuth>,
     /// Current position in the resource
     pos: u64,
     /// Total resource length (None if unknown)
@@ -69,6 +139,12 @@ pub struct HttpTransport {
     buffer_offset: usize,
     /// Pending fetch future (for poll_read)
     fetch_future: Option<FetchFuture>,
+    /// Whether to use basic auth (stored for per-request configuration)
+    use_basic_auth: bool,
+    /// Basic auth username (if configured)
+    basic_username: Option<String>,
+    /// Basic auth password (if configured)
+    basic_password: Option<String>,
 }
 
 /// Future for fetching a range via HTTP.
@@ -115,24 +191,63 @@ impl HttpTransport {
     /// - The HEAD request fails
     /// - The server returns an error status
     pub async fn new(url: impl AsRef<str>) -> Result<Self, HttpError> {
-        let url = url.as_ref().to_string();
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .build()?;
+        Self::with_auth(url.as_ref(), None).await
+    }
 
-        // First, check if we need to do HEAD request
+    /// Create a new HTTP transport with authentication.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - HTTP/HTTPS URL to access
+    /// * `auth` - Authentication configuration
+    pub async fn with_auth(url: &str, auth: Option<HttpAuth>) -> Result<Self, HttpError> {
+        let url = url.to_string();
+        let (client, use_basic_auth, basic_username, basic_password) = Self::build_client(&auth)?;
         let (len, supports_range) = Self::fetch_metadata(&client, &url).await?;
 
         Ok(Self {
             url,
             client,
+            auth,
             pos: 0,
             len,
             supports_range,
             buffer: Vec::new(),
             buffer_offset: 0,
             fetch_future: None,
+            use_basic_auth,
+            basic_username,
+            basic_password,
         })
+    }
+
+    /// Build a reqwest client with authentication configured.
+    fn build_client(
+        auth: &Option<HttpAuth>,
+    ) -> Result<(reqwest::Client, bool, Option<String>, Option<String>), reqwest::Error> {
+        let mut builder =
+            reqwest::Client::builder().redirect(reqwest::redirect::Policy::limited(10));
+
+        // Configure bearer token via default headers (basic auth is per-request)
+        let use_basic_auth = auth.as_ref().is_some_and(|a| a.basic_username.is_some());
+        let basic_username = auth.as_ref().and_then(|a| a.basic_username.clone());
+        let basic_password = auth.as_ref().and_then(|a| a.basic_password.clone());
+
+        if let Some(auth) = auth {
+            if let Some(token) = &auth.bearer_token {
+                // Bearer token via default headers
+                let mut headers = reqwest::header::HeaderMap::new();
+                if let Ok(value) =
+                    reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token))
+                {
+                    headers.insert(reqwest::header::AUTHORIZATION, value);
+                    builder = builder.default_headers(headers);
+                }
+            }
+        }
+
+        let client = builder.build()?;
+        Ok((client, use_basic_auth, basic_username, basic_password))
     }
 
     /// Create a new HTTP transport with a known size.
@@ -146,21 +261,87 @@ impl HttpTransport {
     /// * `len` - Known content length
     pub fn with_size(url: impl AsRef<str>, len: u64) -> Self {
         let url = url.as_ref().to_string();
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::limited(10))
-            .build()
-            .expect("Failed to create HTTP client");
+        let (client, use_basic_auth, basic_username, basic_password) =
+            Self::build_client(&None).expect("Failed to create HTTP client");
 
         Self {
             url,
             client,
+            auth: None,
             pos: 0,
             len: Some(len),
-            supports_range: true, // Assume supported until proven otherwise
+            supports_range: true,
             buffer: Vec::new(),
             buffer_offset: 0,
             fetch_future: None,
+            use_basic_auth,
+            basic_username,
+            basic_password,
         }
+    }
+
+    /// Set bearer token authentication.
+    ///
+    /// Returns a new transport with bearer token configured.
+    /// This is useful for OAuth2/JWT authentication.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - Bearer token (e.g., JWT)
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use robocodec::io::transport::http::HttpTransport;
+    ///
+    /// let transport = HttpTransport::new("https://example.com/data.mcap")
+    ///     .await?
+    ///     .with_bearer_token("your-token-here");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_bearer_token(mut self, token: &str) -> Self {
+        self.auth = Some(HttpAuth::bearer(token));
+        let (client, use_basic_auth, basic_username, basic_password) =
+            Self::build_client(&self.auth).expect("Failed to create HTTP client with bearer token");
+        self.client = client;
+        self.use_basic_auth = use_basic_auth;
+        self.basic_username = basic_username;
+        self.basic_password = basic_password;
+        self
+    }
+
+    /// Set basic authentication.
+    ///
+    /// Returns a new transport with basic auth configured.
+    ///
+    /// # Arguments
+    ///
+    /// * `username` - HTTP username
+    /// * `password` - HTTP password
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use robocodec::io::transport::http::HttpTransport;
+    ///
+    /// let transport = HttpTransport::new("https://example.com/data.mcap")
+    ///     .await?
+    ///     .with_basic_auth("user", "pass");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_basic_auth(mut self, username: &str, password: &str) -> Self {
+        self.auth = Some(HttpAuth::basic(username, password));
+        let (client, use_basic_auth, basic_username, basic_password) =
+            Self::build_client(&self.auth).expect("Failed to create HTTP client with basic auth");
+        self.client = client;
+        self.use_basic_auth = use_basic_auth;
+        self.basic_username = basic_username;
+        self.basic_password = basic_password;
+        self
     }
 
     /// Fetch metadata via HEAD request.
@@ -196,13 +377,23 @@ impl HttpTransport {
     /// Fill the internal buffer by fetching from HTTP.
     ///
     /// Fetches up to `size` bytes starting at the current position.
-    fn fetch_data(&mut self, size: usize) -> FetchFuture {
+    fn fetch_data(&self, size: usize) -> FetchFuture {
         let client = self.client.clone();
         let url = self.url.clone();
         let offset = self.pos;
+        let use_basic_auth = self.use_basic_auth;
+        let basic_username = self.basic_username.clone();
+        let basic_password = self.basic_password.clone();
 
         async move {
             let mut request = client.get(&url);
+
+            // Add basic auth if configured
+            if use_basic_auth {
+                if let (Some(username), Some(password)) = (basic_username, basic_password) {
+                    request = request.basic_auth(username, Some(password));
+                }
+            }
 
             // Add Range header for partial content
             let end = offset.saturating_add(size as u64).saturating_sub(1);
@@ -375,6 +566,22 @@ impl Transport for HttpTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_http_auth_bearer() {
+        let auth = HttpAuth::bearer("test-token");
+        assert!(auth.bearer_token().is_some());
+        assert!(auth.basic_username().is_none());
+        assert_eq!(auth.bearer_token(), Some("test-token"));
+    }
+
+    #[test]
+    fn test_http_auth_basic() {
+        let auth = HttpAuth::basic("user", "pass");
+        assert!(auth.bearer_token().is_none());
+        assert_eq!(auth.basic_username(), Some("user"));
+        assert_eq!(auth.basic_password(), Some("pass"));
+    }
 
     #[test]
     fn test_http_transport_with_size() {

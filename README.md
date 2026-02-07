@@ -136,28 +136,33 @@ println!("Found {} channels", reader.channels().len());
 
 > **Note:** HTTP reading supports range requests for efficient access to large files.
 
+#### HTTP Authentication
+
+For authenticated HTTP endpoints, robocodec supports Bearer tokens and Basic authentication via `ReaderConfig`:
+
+```rust
+use robocodec::io::{RoboReader, ReaderConfig};
+
+// Bearer token (OAuth2/JWT)
+let config = ReaderConfig::default().with_http_bearer_token("your-token-here");
+let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
+
+// Basic authentication
+let config = ReaderConfig::default().with_http_basic_auth("username", "password");
+let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
+```
+
+Alternatively, you can provide authentication via URL query parameters:
+
 ```rust
 use robocodec::RoboReader;
 
-// Format and S3 access auto-detected
-let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
-println!("Found {} channels", reader.channels().len());
+// Bearer token via URL
+let reader = RoboReader::open("https://example.com/data.mcap?bearer_token=your-token")?;
+
+// Basic auth via URL (user:pass encoded)
+let reader = RoboReader::open("https://example.com/data.mcap?basic_auth=user:pass")?;
 ```
-
-**S3-compatible services** (AWS S3, Alibaba Cloud OSS, MinIO, etc.) require credentials via environment variables:
-
-```bash
-# AWS S3
-export AWS_ACCESS_KEY_ID="your-access-key"
-export AWS_SECRET_ACCESS_KEY="your-secret-key"
-export AWS_REGION="us-east-1"  # optional, defaults to us-east-1
-
-# For Alibaba Cloud OSS, MinIO, or other S3-compatible services
-export AWS_ACCESS_KEY_ID="your-oss-access-key"
-export AWS_SECRET_ACCESS_KEY="your-oss-secret-key"
-```
-
-> **Note:** While we use AWS-standard environment variable names for compatibility, robocodec works with any S3-compatible storage service.
 
 ### Write to S3
 

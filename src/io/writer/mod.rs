@@ -9,7 +9,11 @@
 
 pub mod builder;
 
-pub use builder::{WriteStrategy, WriterBuilder, WriterConfig, WriterConfigBuilder};
+pub use builder::{
+    HttpAuthConfig, WriteStrategy, WriterBuilder, WriterConfig, WriterConfigBuilder,
+};
+
+use crate::io::transport::http::HttpAuth;
 
 use crate::io::detection::detect_format;
 use crate::io::formats::bag::BagFormat;
@@ -82,11 +86,10 @@ impl RoboWriter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn create_with_config(path: &str, config: WriterConfig) -> Result<Self> {
-        let _ = config; // Config reserved for future use
-
-        // Check if this is an S3 URL
+        // Check if this is an HTTP/HTTPS URL (requires s3 feature for tokio/reqwest)
         #[cfg(feature = "s3")]
         {
+            // Check for S3 URLs first
             if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
                 // Use S3Writer for s3:// URLs
                 let rt = shared_runtime();
@@ -107,6 +110,11 @@ impl RoboWriter {
                 return Ok(Self {
                     inner: Box::new(writer),
                 });
+            }
+
+            // Check for HTTP/HTTPS URLs
+            if path.starts_with("http://") || path.starts_with("https://") {
+                return Self::create_http_writer(path, &config);
             }
         }
 
@@ -162,6 +170,64 @@ impl RoboWriter {
         };
 
         Ok(Self { inner })
+    }
+
+    /// Create a writer for HTTP/HTTPS URLs.
+    ///
+    /// This method is called by `create_with_config` when an HTTP/HTTPS URL is detected.
+    /// It handles authentication configuration from the WriterConfig.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - HTTP/HTTPS URL
+    /// * `config` - Writer configuration (may contain HTTP auth settings)
+    #[cfg(feature = "s3")]
+    fn create_http_writer(path: &str, config: &WriterConfig) -> Result<Self> {
+        use crate::io::transport::http::{HttpUploadStrategy, HttpWriter};
+
+        // Resolve auth from config
+        let auth = Self::resolve_http_auth(config);
+
+        let rt = shared_runtime();
+        let writer = rt.block_on(async {
+            HttpWriter::with_config(
+                path,
+                auth,
+                HttpUploadStrategy::default(),
+                config.http_upload_chunk_size,
+                config.http_max_retries,
+            )
+            .await
+        })?;
+
+        Ok(Self {
+            inner: Box::new(writer),
+        })
+    }
+
+    /// Resolve HTTP authentication from WriterConfig.
+    ///
+    /// Returns HttpAuth if any authentication is configured in the WriterConfig.
+    /// This allows authentication to be set via WriterConfig instead of URL parameters.
+    #[cfg(feature = "s3")]
+    fn resolve_http_auth(config: &WriterConfig) -> Option<HttpAuth> {
+        let http_auth = &config.http_auth;
+
+        if http_auth.is_empty() {
+            return None;
+        }
+
+        if let Some(token) = &http_auth.bearer_token {
+            return Some(HttpAuth::bearer(token));
+        }
+
+        if let (Some(username), Some(password)) =
+            (&http_auth.basic_username, &http_auth.basic_password)
+        {
+            return Some(HttpAuth::basic(username, password));
+        }
+
+        None
     }
 
     /// Get the file format being written.
@@ -625,5 +691,99 @@ mod tests {
         let mut mock = MockWriter::new("test.bag");
         let any_mut = mock.as_any_mut();
         assert!(any_mut.is::<MockWriter>());
+    }
+
+    // =========================================================================
+    // HTTP URL Detection Tests
+    // =========================================================================
+
+    #[cfg(feature = "s3")]
+    #[test]
+    fn test_resolve_http_auth_none() {
+        let config = WriterConfig::default();
+        let auth = RoboWriter::resolve_http_auth(&config);
+        assert!(auth.is_none());
+    }
+
+    #[cfg(feature = "s3")]
+    #[test]
+    fn test_resolve_http_auth_bearer() {
+        let config = WriterConfig::builder()
+            .http_bearer_token("test-token")
+            .build();
+
+        let auth = RoboWriter::resolve_http_auth(&config);
+        assert!(auth.is_some());
+        let auth = auth.unwrap();
+        assert_eq!(auth.bearer_token(), Some("test-token"));
+        assert!(auth.basic_username().is_none());
+    }
+
+    #[cfg(feature = "s3")]
+    #[test]
+    fn test_resolve_http_auth_basic() {
+        let config = WriterConfig::builder()
+            .http_basic_auth("user", "pass")
+            .build();
+
+        let auth = RoboWriter::resolve_http_auth(&config);
+        assert!(auth.is_some());
+        let auth = auth.unwrap();
+        assert!(auth.bearer_token().is_none());
+        assert_eq!(auth.basic_username(), Some("user"));
+        assert_eq!(auth.basic_password(), Some("pass"));
+    }
+
+    #[cfg(feature = "s3")]
+    #[test]
+    fn test_resolve_http_auth_prefer_bearer() {
+        // If both bearer and basic are set, bearer takes precedence
+        let mut config = WriterConfig::builder().http_bearer_token("token").build();
+
+        // Manually set basic auth too (builder doesn't allow both)
+        config.http_auth.basic_username = Some("user".to_string());
+        config.http_auth.basic_password = Some("pass".to_string());
+
+        let auth = RoboWriter::resolve_http_auth(&config);
+        assert!(auth.is_some());
+        let auth = auth.unwrap();
+        assert_eq!(auth.bearer_token(), Some("token"));
+    }
+
+    #[cfg(feature = "s3")]
+    #[test]
+    fn test_create_http_writer_valid_url() {
+        // Test that create_http_writer can be called with valid URL
+        let config = WriterConfig::default();
+        let result = RoboWriter::create_http_writer("https://example.com/test.mcap", &config);
+
+        // This should succeed (creates an HttpWriter)
+        assert!(result.is_ok());
+        let writer = result.unwrap();
+        assert_eq!(writer.path(), "test.mcap");
+    }
+
+    #[cfg(feature = "s3")]
+    #[test]
+    fn test_create_http_writer_with_auth() {
+        let config = WriterConfig::builder()
+            .http_bearer_token("test-token")
+            .build();
+
+        let result = RoboWriter::create_http_writer("https://example.com/test.mcap", &config);
+
+        assert!(result.is_ok());
+        let writer = result.unwrap();
+        assert_eq!(writer.path(), "test.mcap");
+    }
+
+    #[cfg(feature = "s3")]
+    #[test]
+    fn test_create_http_writer_invalid_url() {
+        let config = WriterConfig::default();
+        let result = RoboWriter::create_http_writer("ftp://example.com/test.mcap", &config);
+
+        // Should fail because URL is not HTTP/HTTPS
+        assert!(result.is_err());
     }
 }

@@ -8,6 +8,85 @@ use std::path::PathBuf;
 
 use crate::{CodecError, Result};
 
+/// HTTP authentication configuration for writer.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HttpAuthConfig {
+    /// Bearer token (OAuth2/JWT)
+    pub bearer_token: Option<String>,
+    /// Basic auth username
+    pub basic_username: Option<String>,
+    /// Basic auth password
+    pub basic_password: Option<String>,
+}
+
+impl HttpAuthConfig {
+    /// Create bearer token authentication.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - Bearer token (e.g., JWT or OAuth2 access token)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use robocodec::HttpAuthConfig;
+    ///
+    /// let config = HttpAuthConfig::bearer("your-token-here");
+    /// assert!(config.bearer_token().is_some());
+    /// ```
+    pub fn bearer(token: impl Into<String>) -> Self {
+        Self {
+            bearer_token: Some(token.into()),
+            basic_username: None,
+            basic_password: None,
+        }
+    }
+
+    /// Create basic authentication.
+    ///
+    /// # Arguments
+    ///
+    /// * `username` - HTTP username
+    /// * `password` - HTTP password
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use robocodec::HttpAuthConfig;
+    ///
+    /// let config = HttpAuthConfig::basic("user", "pass");
+    /// assert!(config.basic_username().is_some());
+    /// assert_eq!(config.basic_username(), Some("user"));
+    /// ```
+    pub fn basic(username: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            bearer_token: None,
+            basic_username: Some(username.into()),
+            basic_password: Some(password.into()),
+        }
+    }
+
+    /// Check if this configuration has any authentication set.
+    pub fn is_empty(&self) -> bool {
+        self.bearer_token.is_none() && self.basic_username.is_none()
+    }
+
+    /// Get the bearer token if configured.
+    pub fn bearer_token(&self) -> Option<&str> {
+        self.bearer_token.as_deref()
+    }
+
+    /// Get the basic auth username if configured.
+    pub fn basic_username(&self) -> Option<&str> {
+        self.basic_username.as_deref()
+    }
+
+    /// Get the basic auth password if configured.
+    pub fn basic_password(&self) -> Option<&str> {
+        self.basic_password.as_deref()
+    }
+}
+
 /// Writing strategy selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WriteStrategy {
@@ -42,6 +121,12 @@ pub struct WriterConfig {
     pub chunk_size: Option<usize>,
     /// Number of threads for parallel compression
     pub num_threads: Option<usize>,
+    /// HTTP authentication configuration
+    pub http_auth: HttpAuthConfig,
+    /// HTTP upload chunk size in bytes (default: 5MB)
+    pub http_upload_chunk_size: usize,
+    /// HTTP max retries for failed uploads (default: 3)
+    pub http_max_retries: usize,
 }
 
 impl Default for WriterConfig {
@@ -52,6 +137,9 @@ impl Default for WriterConfig {
             compression_level: None,
             chunk_size: None,
             num_threads: None,
+            http_auth: HttpAuthConfig::default(),
+            http_upload_chunk_size: 5 * 1024 * 1024, // 5MB
+            http_max_retries: 3,
         }
     }
 }
@@ -103,6 +191,87 @@ impl WriterConfigBuilder {
     /// Set the number of threads.
     pub fn num_threads(mut self, count: usize) -> Self {
         self.config.num_threads = Some(count);
+        self
+    }
+
+    /// Set HTTP bearer token authentication.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - Bearer token (e.g., JWT or OAuth2 access token)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use robocodec::io::WriterConfig;
+    /// let config = WriterConfig::builder()
+    ///     .http_bearer_token("your-token-here")
+    ///     .build();
+    /// ```
+    pub fn http_bearer_token(mut self, token: impl Into<String>) -> Self {
+        self.config.http_auth = HttpAuthConfig::bearer(token);
+        self
+    }
+
+    /// Set HTTP basic authentication.
+    ///
+    /// # Arguments
+    ///
+    /// * `username` - HTTP username
+    /// * `password` - HTTP password
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use robocodec::io::WriterConfig;
+    /// let config = WriterConfig::builder()
+    ///     .http_basic_auth("user", "pass")
+    ///     .build();
+    /// ```
+    pub fn http_basic_auth(
+        mut self,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        self.config.http_auth = HttpAuthConfig::basic(username, password);
+        self
+    }
+
+    /// Set HTTP upload chunk size in bytes.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - Chunk size for HTTP upload (minimum 1MB for ChunkedPut)
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use robocodec::io::WriterConfig;
+    /// let config = WriterConfig::builder()
+    ///     .http_upload_chunk_size(10 * 1024 * 1024) // 10MB
+    ///     .build();
+    /// ```
+    pub fn http_upload_chunk_size(mut self, size: usize) -> Self {
+        self.config.http_upload_chunk_size = size;
+        self
+    }
+
+    /// Set HTTP max retries for failed uploads.
+    ///
+    /// # Arguments
+    ///
+    /// * `retries` - Maximum number of retry attempts
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use robocodec::io::WriterConfig;
+    /// let config = WriterConfig::builder()
+    ///     .http_max_retries(5)
+    ///     .build();
+    /// ```
+    pub fn http_max_retries(mut self, retries: usize) -> Self {
+        self.config.http_max_retries = retries;
         self
     }
 
@@ -363,5 +532,104 @@ mod tests {
         assert_eq!(auto.resolve(), WriteStrategy::Sequential);
         assert_eq!(sequential.resolve(), WriteStrategy::Sequential);
         assert_eq!(parallel.resolve(), WriteStrategy::Parallel);
+    }
+
+    // =========================================================================
+    // HttpAuthConfig Tests
+    // =========================================================================
+
+    #[test]
+    fn test_http_auth_config_default() {
+        let config = HttpAuthConfig::default();
+        assert!(config.is_empty());
+        assert!(config.bearer_token.is_none());
+        assert!(config.basic_username.is_none());
+        assert!(config.basic_password.is_none());
+    }
+
+    #[test]
+    fn test_http_auth_config_bearer() {
+        let config = HttpAuthConfig::bearer("test-token");
+        assert!(!config.is_empty());
+        assert_eq!(config.bearer_token(), Some("test-token"));
+        assert!(config.basic_username().is_none());
+        assert!(config.basic_password().is_none());
+    }
+
+    #[test]
+    fn test_http_auth_config_basic() {
+        let config = HttpAuthConfig::basic("user", "pass");
+        assert!(!config.is_empty());
+        assert!(config.bearer_token().is_none());
+        assert_eq!(config.basic_username(), Some("user"));
+        assert_eq!(config.basic_password(), Some("pass"));
+    }
+
+    #[test]
+    fn test_http_auth_config_equality() {
+        let config1 = HttpAuthConfig::bearer("token");
+        let config2 = HttpAuthConfig::bearer("token");
+        assert_eq!(config1, config2);
+
+        let config3 = HttpAuthConfig::basic("user", "pass");
+        assert_ne!(config1, config3);
+    }
+
+    #[test]
+    fn test_writer_config_http_defaults() {
+        let config = WriterConfig::default();
+        assert!(config.http_auth.is_empty());
+        assert_eq!(config.http_upload_chunk_size, 5 * 1024 * 1024);
+        assert_eq!(config.http_max_retries, 3);
+    }
+
+    #[test]
+    fn test_writer_config_builder_http_bearer() {
+        let config = WriterConfig::builder()
+            .http_bearer_token("test-token")
+            .build();
+
+        assert_eq!(config.http_auth.bearer_token(), Some("test-token"));
+        assert!(config.http_auth.basic_username().is_none());
+    }
+
+    #[test]
+    fn test_writer_config_builder_http_basic() {
+        let config = WriterConfig::builder()
+            .http_basic_auth("user", "pass")
+            .build();
+
+        assert!(config.http_auth.bearer_token().is_none());
+        assert_eq!(config.http_auth.basic_username(), Some("user"));
+        assert_eq!(config.http_auth.basic_password(), Some("pass"));
+    }
+
+    #[test]
+    fn test_writer_config_builder_http_upload_chunk_size() {
+        let config = WriterConfig::builder()
+            .http_upload_chunk_size(10 * 1024 * 1024)
+            .build();
+
+        assert_eq!(config.http_upload_chunk_size, 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_writer_config_builder_http_max_retries() {
+        let config = WriterConfig::builder().http_max_retries(5).build();
+
+        assert_eq!(config.http_max_retries, 5);
+    }
+
+    #[test]
+    fn test_writer_config_builder_http_all_options() {
+        let config = WriterConfig::builder()
+            .http_bearer_token("token")
+            .http_upload_chunk_size(8 * 1024 * 1024)
+            .http_max_retries(7)
+            .build();
+
+        assert_eq!(config.http_auth.bearer_token(), Some("token"));
+        assert_eq!(config.http_upload_chunk_size, 8 * 1024 * 1024);
+        assert_eq!(config.http_max_retries, 7);
     }
 }

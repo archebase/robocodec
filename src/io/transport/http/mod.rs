@@ -7,7 +7,14 @@
 //! This module provides [`HttpTransport`], which implements the [`Transport`]
 //! trait for HTTP/HTTPS URLs. Supports range requests for seeking and buffers
 //! data for efficient reading.
+//!
+//! It also provides [`HttpWriter`] for writing robotics data files to HTTP/HTTPS
+//! URLs using the [`FormatWriter`](crate::io::traits::FormatWriter) trait.
 
 mod transport;
+mod upload_strategy;
+mod writer;
 
-pub use transport::HttpTransport;
+pub use transport::{HttpAuth, HttpTransport};
+pub use upload_strategy::HttpUploadStrategy;
+pub use writer::{HttpWriteError, HttpWriter};
