@@ -21,7 +21,6 @@ mod client;
 mod config;
 mod error;
 mod location;
-mod parser;
 mod reader;
 mod signer;
 mod writer;
@@ -31,6 +30,7 @@ pub use crate::io::formats::bag::stream::{
     BAG_MAGIC_PREFIX, BagMessageRecord, BagRecord, BagRecordFields, BagRecordHeader,
     StreamingBagParser,
 };
+#[allow(deprecated)]
 pub use crate::io::formats::mcap::stream::{
     ChannelRecordInfo, McapRecord, McapRecordHeader, MessageRecord, SchemaInfo, StreamingMcapParser,
 };
@@ -47,7 +47,8 @@ pub use client::S3Client;
 pub use config::{AwsCredentials, RetryConfig, S3ReaderConfig};
 pub use error::{FatalError, RecoverableError, S3Error};
 pub use location::S3Location;
-pub use parser::{AsStreamingParser, StreamingParser};
+// Re-export StreamingParser from the unified streaming module
+pub use crate::io::streaming::StreamingParser;
 pub use reader::{S3MessageStream, S3Reader, S3ReaderState};
 pub use signer::{should_sign, sign_request};
 pub use writer::S3Writer;

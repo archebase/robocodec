@@ -52,6 +52,14 @@ Robocodec is a **format-centric** robotics data codec library with a layered arc
 │  Format-Specific Layer                      │
 │  - io/formats/mcap/ (MCAP read/write)       │
 │  - io/formats/bag/ (ROS1 bag read/write)    │
+│  - io/formats/rrd/ (RRF2 read/write)        │
+└──────────────────┬──────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────┐
+│  Transport & Streaming Layer (Internal)     │
+│  - io/transport/ (Transport trait)          │
+│  - io/streaming/ (StreamingParser trait)    │
+│  - LocalTransport, S3Transport, HttpTransport│
 └──────────────────┬──────────────────────────┘
                    │
 ┌──────────────────▼──────────────────────────┐
@@ -65,23 +73,29 @@ Robocodec is a **format-centric** robotics data codec library with a layered arc
 
 ### Key Design Principles
 
-1. **Format-Centric**: Each format (MCAP, ROS1 bag) lives in `src/io/formats/{format}/` with its own readers and writers.
+1. **Format-Centric**: Each format (MCAP, ROS1 bag, RRD) lives in `src/io/formats/{format}/` with its own readers and writers.
 
 2. **Unified Public API**: High-level `RoboReader`, `RoboWriter` provide a consistent interface across formats. Downcasting to format-specific types is intentionally **not** part of the public API.
 
-3. **Simplified Iteration**: Single-level iteration via `reader.decoded()` returns `DecodedMessageIter` directly. No need to call `.stream()` separately.
+3. **Transport Abstraction**: Internal `Transport` trait enables reading from any data source (local files, S3, HTTP) with a single API. URL detection (`s3://`, `https://`) is handled automatically.
 
-4. **Unified Result Types**: `DecodedMessageResult` combines message data, channel info, and timestamps in a single type.
+4. **Streaming Parser Pattern**: `StreamingParser` trait provides chunk-based parsing for memory-efficient processing of large files from any transport.
 
-5. **Auto-Detection**: Format is detected from file extension automatically.
+5. **Simplified Iteration**: Single-level iteration via `reader.decoded()` returns `DecodedMessageIter` directly. No need to call `.stream()` separately.
+
+6. **Unified Result Types**: `DecodedMessageResult` combines message data, channel info, and timestamps in a single type.
+
+7. **Auto-Detection**: Format is detected from file extension automatically.
 
 ### Directory Structure
 
 - `src/io/reader/` - Unified reader API (RoboReader, iterators, config)
 - `src/io/writer/` - Unified writer API (RoboWriter, config)
-- `src/io/formats/mcap/` - MCAP format (read/write)
-- `src/io/formats/bag/` - ROS1 bag format (read/write)
-- `src/io/formats/rrd/` - RRF2 format (read/write)
+- `src/io/transport/` - Transport layer (LocalTransport, S3Transport, HttpTransport, MemoryTransport)
+- `src/io/streaming/` - Streaming parser trait and utilities
+- `src/io/formats/mcap/` - MCAP format (read/write, streaming)
+- `src/io/formats/bag/` - ROS1 bag format (read/write, streaming)
+- `src/io/formats/rrd/` - RRF2 format (read/write, streaming)
 - `src/io/metadata.rs` - Unified types (ChannelInfo, RawMessage, DecodedMessageResult)
 - `src/io/traits.rs` - FormatReader, FormatWriter traits
 - `src/encoding/` - Message codecs (CDR, Protobuf, JSON)
@@ -96,11 +110,33 @@ Robocodec is a **format-centric** robotics data codec library with a layered arc
 The library exports these key types at the top level:
 
 - **`RoboReader`** - Unified reader with format auto-detection
-  - `open(path)` - Open file with auto-detection
+  - `open(path)` - Open file with auto-detection (supports local paths, `s3://`, `https://` URLs)
   - `open_with_config(path, config)` - Open with configuration
   - `decoded()` - Iterate over decoded messages with timestamps (returns `DecodedMessageIter`)
   - `supports_parallel()` - Check if parallel reading is available
   - `chunk_count()` - Get number of chunks for progress tracking
+
+- **`RoboWriter`** - Unified writer with format auto-detection
+  - `create(path)` - Create writer based on extension
+  - `create_with_config(path, config)` - Create with configuration
+  - Inherits `FormatWriter` trait methods (add_channel, write, finish)
+
+- **`DecodedMessageIter`** - Iterator yielding `DecodedMessageResult`
+
+- **`DecodedMessageResult`** - Combined message + metadata
+  - `message` - Decoded message fields
+  - `channel` - Channel information
+  - `log_time`, `publish_time` - Timestamps
+  - `sequence` - Sequence number (if available)
+
+### URL Support
+
+`RoboReader::open()` supports URL-based sources:
+- **Local files**: `/path/to/file.mcap` or `./relative/path.mcap`
+- **S3**: `s3://bucket/path/file.mcap` (with optional `?endpoint=` and `?region=` query params)
+- **HTTP/HTTPS**: `https://example.com/file.mcap` (via HttpTransport)
+
+Transport-based reading uses `McapTransportReader` internally for streaming from remote sources.
 
 - **`RoboWriter`** - Unified writer with format auto-detection
   - `create(path)` - Create writer based on extension
@@ -189,3 +225,7 @@ As a staff Rust engineer, always follow these guidelines:
 
 - `python` - PyO3 Python bindings
 - `jemalloc` - Use jemalloc allocator (Linux only)
+- `s3` - S3/HTTPS transport support (default enabled)
+  - Enables `S3Transport` for reading from S3-compatible storage
+  - Enables `HttpTransport` for reading from HTTP/HTTPS URLs
+  - Requires tokio runtime for async operations

@@ -193,6 +193,54 @@ pub struct RoboReader {
 }
 
 impl RoboReader {
+    /// Parse a URL to create an appropriate Transport.
+    ///
+    /// This helper function detects URL schemes (s3://, http://, https://)
+    /// and creates the corresponding Transport implementation.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(transport))` - Successfully created transport from URL
+    /// - `Ok(None)` - Not a URL (local file path)
+    /// - `Err` - Unsupported URL scheme or parse error
+    #[cfg(feature = "s3")]
+    fn parse_url_to_transport(
+        url: &str,
+    ) -> Result<Option<Box<dyn crate::io::transport::Transport>>> {
+        use crate::io::transport::http::HttpTransport;
+        use crate::io::transport::s3::S3Transport;
+
+        // Check for s3:// scheme
+        if let Ok(location) = crate::io::s3::S3Location::from_s3_url(url) {
+            // Create S3Transport using the shared runtime
+            let rt = shared_runtime();
+            let transport = rt.block_on(async {
+                let client = crate::io::s3::S3Client::default_client().map_err(|e| {
+                    CodecError::encode("S3", format!("Failed to create S3 client: {}", e))
+                })?;
+                S3Transport::new(client, location).await.map_err(|e| {
+                    CodecError::encode("S3", format!("Failed to create S3 transport: {}", e))
+                })
+            })?;
+            return Ok(Some(Box::new(transport)));
+        }
+
+        // Check for http:// or https:// schemes
+        if url.starts_with("http://") || url.starts_with("https://") {
+            // Create HttpTransport using the shared runtime
+            let rt = shared_runtime();
+            let transport = rt.block_on(async {
+                HttpTransport::new(url).await.map_err(|e| {
+                    CodecError::encode("HTTP", format!("Failed to create HTTP transport: {}", e))
+                })
+            })?;
+            return Ok(Some(Box::new(transport)));
+        }
+
+        // Not a URL - treat as local path
+        Ok(None)
+    }
+
     /// Open a file with automatic format detection and default configuration.
     ///
     /// Supports both local file paths and S3 URLs (s3://bucket/key).
@@ -240,17 +288,41 @@ impl RoboReader {
     pub fn open_with_config(path: &str, config: ReaderConfig) -> Result<Self> {
         let _ = config; // Config reserved for future use
 
-        // Check if this is an S3 URL
+        // Try to parse as URL and create appropriate transport
         #[cfg(feature = "s3")]
         {
-            if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
-                // Use S3Reader for s3:// URLs
-                let rt = shared_runtime();
-                let reader =
-                    rt.block_on(async { crate::io::s3::S3Reader::open(location).await })?;
-                return Ok(Self {
-                    inner: Box::new(reader),
-                });
+            if let Some(transport) = Self::parse_url_to_transport(path)? {
+                // Use transport-based reading
+                // Detect format from path extension
+                let path_obj = std::path::Path::new(path);
+                let format = detect_format(path_obj)?;
+
+                // Only MCAP format supports transport-based reading
+                match format {
+                    FileFormat::Mcap => {
+                        return Ok(Self {
+                            inner: Box::new(
+                                crate::io::formats::mcap::transport_reader::McapTransportReader::open_from_transport(transport, path.to_string())?
+                            ),
+                        });
+                    }
+                    FileFormat::Bag => {
+                        return Err(CodecError::unsupported(
+                            "BAG format does not support transport-based reading. Use local file access.",
+                        ));
+                    }
+                    FileFormat::Rrd => {
+                        return Err(CodecError::unsupported(
+                            "RRD format does not support transport-based reading. Use local file access.",
+                        ));
+                    }
+                    FileFormat::Unknown => {
+                        return Err(CodecError::parse(
+                            "RoboReader",
+                            format!("Unknown file format from URL: {}", path),
+                        ));
+                    }
+                }
             }
         }
 
@@ -430,6 +502,51 @@ impl RoboReader {
 }
 
 impl FormatReader for RoboReader {
+    fn open_from_transport(
+        transport: Box<dyn crate::io::transport::Transport>,
+        path: String,
+    ) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        // Detect format from path extension
+        let path_obj = std::path::Path::new(&path);
+        let format = detect_format(path_obj)?;
+
+        // Delegate to the appropriate format-specific reader
+        // Note: Most format readers don't support transport-based reading,
+        // so this will only work for transport-compatible readers
+        let inner: Box<dyn FormatReader> = match format {
+            FileFormat::Mcap => {
+                // McapTransportReader supports transport-based reading
+                use crate::io::formats::mcap::transport_reader::McapTransportReader;
+                Box::new(McapTransportReader::open_from_transport(transport, path)?)
+            }
+            FileFormat::Bag => {
+                // BAG readers don't support transport-based reading
+                return Err(CodecError::unsupported(
+                    "BAG format does not support transport-based reading. \
+                     Use local file access or S3Reader for S3 sources.",
+                ));
+            }
+            FileFormat::Rrd => {
+                // RRD readers don't support transport-based reading
+                return Err(CodecError::unsupported(
+                    "RRD format does not support transport-based reading. \
+                     Use local file access.",
+                ));
+            }
+            FileFormat::Unknown => {
+                return Err(CodecError::parse(
+                    "RoboReader",
+                    format!("Unknown file format: {}", path),
+                ));
+            }
+        };
+
+        Ok(Self { inner })
+    }
+
     fn channels(&self) -> &std::collections::HashMap<u16, ChannelInfo> {
         self.inner.channels()
     }
@@ -504,6 +621,16 @@ mod tests {
     }
 
     impl FormatReader for MockReader {
+        fn open_from_transport(
+            _transport: Box<dyn crate::io::transport::Transport>,
+            path: String,
+        ) -> Result<Self>
+        where
+            Self: Sized,
+        {
+            Ok(Self::new(&path))
+        }
+
         fn channels(&self) -> &std::collections::HashMap<u16, ChannelInfo> {
             &self.channels
         }
@@ -763,5 +890,144 @@ mod tests {
         };
 
         assert_eq!(reader.format(), FileFormat::Unknown);
+    }
+
+    #[test]
+    #[cfg(feature = "s3")]
+    fn test_parse_url_to_transport_with_s3_url() {
+        // Test valid S3 URL - this will attempt to create an S3Client
+        // In a test environment without credentials, this may fail, but
+        // the URL parsing itself should work
+        let result = RoboReader::parse_url_to_transport("s3://my-bucket/path/to/file.mcap");
+
+        // The result may be Ok or Err depending on whether S3 credentials are available
+        // If it's Ok, we should get Some(transport)
+        // If it's Err, it should be related to S3 client creation, not URL parsing
+        match result {
+            Ok(transport_option) => {
+                // If successful, we should have a transport
+                assert!(
+                    transport_option.is_some(),
+                    "Expected Some(transport) for valid S3 URL"
+                );
+            }
+            Err(e) => {
+                // If error, it should be related to S3 client creation, not URL parsing
+                let err_msg = format!("{}", e);
+                // Error should mention S3, not URL parsing
+                assert!(
+                    err_msg.contains("S3")
+                        || err_msg.contains("client")
+                        || err_msg.contains("transport"),
+                    "Expected S3-related error, got: {}",
+                    err_msg
+                );
+            }
+        }
+
+        // Test S3 URL with endpoint query parameter (localhost is allowed for testing)
+        let result = RoboReader::parse_url_to_transport(
+            "s3://my-bucket/file.mcap?endpoint=http://localhost:9000",
+        );
+        // Same as above - check for reasonable error or success
+        match result {
+            Ok(transport_option) => {
+                assert!(
+                    transport_option.is_some(),
+                    "Expected Some(transport) for S3 URL with endpoint"
+                );
+            }
+            Err(e) => {
+                let err_msg = format!("{}", e);
+                assert!(
+                    err_msg.contains("S3")
+                        || err_msg.contains("client")
+                        || err_msg.contains("transport"),
+                    "Expected S3-related error, got: {}",
+                    err_msg
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "s3")]
+    fn test_parse_url_to_transport_with_http_url() {
+        // Test HTTP URL (should try to create HttpTransport)
+        let result = RoboReader::parse_url_to_transport("http://example.com/file.mcap");
+
+        // The result may be Ok(Some(transport)) if we can create HttpTransport,
+        // or Err if there's an issue with the URL/HTTP setup
+        // In a test environment without network, we expect either success or a connection error
+        match result {
+            Ok(transport_option) => {
+                // If successful, we should have a transport
+                assert!(
+                    transport_option.is_some(),
+                    "Expected Some(transport) for valid HTTP URL"
+                );
+            }
+            Err(e) => {
+                // If error, it should be related to HTTP connection, not URL parsing
+                let err_msg = format!("{}", e);
+                // Error should mention HTTP or connection, not "not yet supported"
+                assert!(
+                    err_msg.contains("HTTP")
+                        || err_msg.contains("transport")
+                        || err_msg.contains("connection"),
+                    "Expected HTTP-related error, got: {}",
+                    err_msg
+                );
+            }
+        }
+
+        // Test HTTPS URL
+        let result = RoboReader::parse_url_to_transport("https://example.com/file.mcap");
+        match result {
+            Ok(transport_option) => {
+                assert!(
+                    transport_option.is_some(),
+                    "Expected Some(transport) for valid HTTPS URL"
+                );
+            }
+            Err(e) => {
+                let err_msg = format!("{}", e);
+                assert!(
+                    err_msg.contains("HTTP")
+                        || err_msg.contains("transport")
+                        || err_msg.contains("connection"),
+                    "Expected HTTP-related error, got: {}",
+                    err_msg
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "s3")]
+    fn test_parse_url_to_transport_with_local_path_returns_none() {
+        // Test local file path (should return None)
+        let result = RoboReader::parse_url_to_transport("/path/to/file.mcap");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+
+        // Test relative path
+        let result = RoboReader::parse_url_to_transport("file.mcap");
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "s3")]
+    fn test_parse_url_to_transport_with_invalid_s3_url() {
+        // Test invalid S3 URL (missing bucket)
+        let result = RoboReader::parse_url_to_transport("s3://");
+        assert!(result.is_ok()); // Invalid S3 URL is treated as local path
+        assert!(result.unwrap().is_none());
+
+        // Test malformed URL
+        let result = RoboReader::parse_url_to_transport("s3:///key");
+        assert!(result.is_ok()); // Invalid S3 URL is treated as local path
+        assert!(result.unwrap().is_none());
     }
 }

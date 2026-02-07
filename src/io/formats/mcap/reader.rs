@@ -208,6 +208,21 @@ impl McapReader {
 }
 
 impl FormatReader for McapReader {
+    fn open_from_transport(
+        _transport: Box<dyn crate::io::transport::Transport>,
+        path: String,
+    ) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        // Delegate to the inner reader's implementation
+        // Since ParallelMcapReader doesn't support transport, we can't either
+        Err(CodecError::unsupported(
+            "McapReader requires local file access for memory mapping. \
+             Use McapTransportReader for transport-based reading.",
+        ))
+    }
+
     fn channels(&self) -> &HashMap<u16, crate::io::metadata::ChannelInfo> {
         self.inner.channels()
     }

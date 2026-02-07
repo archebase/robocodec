@@ -13,6 +13,7 @@ use std::task::{Context, Poll};
 
 use futures::stream::Stream;
 
+use crate::CodecError;
 use crate::io::formats::mcap::constants::{
     MCAP_MAGIC, OP_ATTACHMENT, OP_ATTACHMENT_INDEX, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX,
     OP_DATA_END, OP_FOOTER, OP_HEADER, OP_MESSAGE, OP_MESSAGE_INDEX, OP_METADATA,
@@ -26,7 +27,7 @@ use crate::io::s3::{
 use crate::io::formats::bag::stream::{BagMessageRecord, StreamingBagParser};
 use crate::io::formats::mcap::s3_adapter::McapS3Adapter;
 use crate::io::formats::rrd::stream::{RrdMessageRecord, StreamingRrdParser};
-use crate::io::s3::StreamingParser;
+use crate::io::streaming::StreamingParser;
 use crate::io::traits::FormatReader;
 
 /// State machine for S3 streaming reader.
@@ -689,6 +690,21 @@ impl S3Reader {
 }
 
 impl FormatReader for S3Reader {
+    fn open_from_transport(
+        _transport: Box<dyn crate::io::transport::Transport>,
+        _path: String,
+    ) -> crate::Result<Self>
+    where
+        Self: Sized,
+    {
+        // S3Reader requires async initialization and S3-specific configuration
+        // It cannot be created from a generic transport
+        // Use S3Reader::open() or S3Reader::open_with_config() instead
+        Err(CodecError::unsupported(
+            "S3Reader requires S3-specific initialization. Use S3Reader::open() or S3Reader::open_with_config() instead.",
+        ))
+    }
+
     fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         match &self.state {
             S3ReaderState::Ready { channels, .. } => channels,

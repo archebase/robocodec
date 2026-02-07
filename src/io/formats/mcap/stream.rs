@@ -18,6 +18,12 @@ use crate::io::metadata::ChannelInfo;
 use crate::io::s3::FatalError;
 
 /// MCAP record header as parsed from the stream.
+///
+/// **DEPRECATED**: This type is part of the old streaming API.
+/// Use [`McapStreamingParser`] instead.
+///
+/// [`McapStreamingParser`]: crate::io::formats::mcap::streaming::McapStreamingParser
+#[deprecated(since = "0.1.0", note = "Use McapStreamingParser instead")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct McapRecordHeader {
     /// Record opcode
@@ -27,9 +33,16 @@ pub struct McapRecordHeader {
 }
 
 /// Parsed MCAP record with header and body.
+///
+/// **DEPRECATED**: This type is part of the old streaming API.
+/// Use [`McapStreamingParser`] instead.
+///
+/// [`McapStreamingParser`]: crate::io::formats::mcap::streaming::McapStreamingParser
+#[deprecated(since = "0.1.0", note = "Use McapStreamingParser instead")]
 #[derive(Debug, Clone)]
 pub struct McapRecord {
     /// Record header
+    #[allow(deprecated)]
     pub header: McapRecordHeader,
     /// Record body data
     pub body: Vec<u8>,
@@ -78,14 +91,18 @@ pub struct MessageRecord {
 
 /// Streaming MCAP parser.
 ///
-/// **DEPRECATED**: Use `McapS3Adapter` instead, which wraps the `mcap` crate's
-/// `LinearReader` for more robust parsing and better compatibility.
+/// **DEPRECATED**: Use [`McapStreamingParser`] or [`McapTransportReader`] instead,
+/// which provide better compatibility with the unified transport layer and
+/// the `mcap` crate's `LinearReader` for more robust parsing.
 ///
 /// This parser maintains state across chunks and can parse MCAP records
 /// incrementally as data arrives from any byte stream.
+///
+/// [`McapStreamingParser`]: crate::io::formats::mcap::streaming::McapStreamingParser
+/// [`McapTransportReader`]: crate::io::formats::mcap::transport_reader::McapTransportReader
 #[deprecated(
     since = "0.1.0",
-    note = "Use McapS3Adapter instead for better compatibility"
+    note = "Use McapStreamingParser or McapTransportReader for better compatibility with the transport layer"
 )]
 pub struct StreamingMcapParser {
     /// Discovered schemas indexed by schema ID
@@ -106,6 +123,7 @@ pub struct StreamingMcapParser {
     buffer_pos: usize,
 }
 
+#[allow(deprecated)]
 impl StreamingMcapParser {
     /// Create a new streaming MCAP parser.
     pub fn new() -> Self {
@@ -516,6 +534,7 @@ impl StreamingMcapParser {
     }
 }
 
+#[allow(deprecated)]
 impl Default for StreamingMcapParser {
     fn default() -> Self {
         Self::new()
@@ -535,6 +554,7 @@ enum ParserState {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

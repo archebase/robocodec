@@ -34,6 +34,33 @@ use super::filter::TopicFilter;
 /// }
 /// ```
 pub trait FormatReader: Send + Sync {
+    /// Open a reader from any transport source.
+    ///
+    /// This method enables format readers to work with any data source
+    /// (local files, S3, HTTP, etc.) through the unified Transport abstraction.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - Boxed transport trait object for reading data
+    /// * `path` - Path or URL string for reporting (used for metadata)
+    ///
+    /// # Returns
+    ///
+    /// A format-specific reader instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The transport cannot be read
+    /// - The data is not a valid file for this format
+    /// - Required metadata cannot be extracted
+    fn open_from_transport(
+        transport: Box<dyn crate::io::transport::Transport>,
+        path: String,
+    ) -> Result<Self>
+    where
+        Self: Sized;
+
     /// Get all channel information.
     ///
     /// Returns a map of channel ID to channel info.
@@ -489,6 +516,18 @@ mod tests {
         }
 
         impl FormatReader for TestReader {
+            fn open_from_transport(
+                _transport: Box<dyn crate::io::transport::Transport>,
+                _path: String,
+            ) -> Result<Self>
+            where
+                Self: Sized,
+            {
+                Ok(Self {
+                    channels: HashMap::new(),
+                })
+            }
+
             fn channels(&self) -> &HashMap<u16, ChannelInfo> {
                 &self.channels
             }
@@ -653,6 +692,18 @@ mod tests {
         }
 
         impl FormatReader for TestReader {
+            fn open_from_transport(
+                _transport: Box<dyn crate::io::transport::Transport>,
+                _path: String,
+            ) -> Result<Self>
+            where
+                Self: Sized,
+            {
+                Ok(Self {
+                    channels: HashMap::new(),
+                })
+            }
+
             fn channels(&self) -> &HashMap<u16, ChannelInfo> {
                 &self.channels
             }
@@ -710,6 +761,18 @@ mod tests {
         }
 
         impl FormatReader for TestReader {
+            fn open_from_transport(
+                _transport: Box<dyn crate::io::transport::Transport>,
+                _path: String,
+            ) -> Result<Self>
+            where
+                Self: Sized,
+            {
+                Ok(Self {
+                    _channels: HashMap::new(),
+                })
+            }
+
             fn channels(&self) -> &HashMap<u16, ChannelInfo> {
                 &self._channels
             }
@@ -762,6 +825,18 @@ mod tests {
         }
 
         impl FormatReader for TestReader {
+            fn open_from_transport(
+                _transport: Box<dyn crate::io::transport::Transport>,
+                _path: String,
+            ) -> Result<Self>
+            where
+                Self: Sized,
+            {
+                Ok(Self {
+                    _channels: HashMap::new(),
+                })
+            }
+
             fn channels(&self) -> &HashMap<u16, ChannelInfo> {
                 &self._channels
             }

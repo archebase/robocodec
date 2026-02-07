@@ -9,14 +9,27 @@
 //!
 //! # Architecture
 //!
-//! - **[`ByteStream`]** - Generic trait for reading byte streams
+//! - **[`Transport`]** - Async trait for unified byte I/O
+//! - **[`TransportExt`]** - Convenience extension trait
 //! - **[`local`]** - Local file transport implementation
 //! - **[`s3`]** - S3 transport implementation
+//! - **[`http`]** - HTTP transport implementation
+//! - **[`memory`]** - In-memory transport implementation for testing
+//! - **[`ByteStream`]** - Legacy sync trait (deprecated)
 
+pub mod http;
 pub mod local;
+pub mod memory;
 pub mod s3;
+pub mod transport;
 
 use std::io;
+
+// Re-export core transport types
+pub use transport::{Transport, TransportExt};
+// Re-export transport implementations
+pub use http::HttpTransport;
+pub use memory::MemoryTransport;
 
 /// Generic byte stream trait for reading data from various transports.
 ///
@@ -25,13 +38,18 @@ use std::io;
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use robocodec::io::transport::{ByteStream, local};
+/// The async `Transport` trait is the primary API:
 ///
-/// // Local file stream
-/// let mut stream = local::FileStream::open("data.mcap")?;
-/// let buffer = stream.read_to_end()?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```rust,no_run
+/// use robocodec::io::transport::{Transport, TransportExt, local::LocalTransport};
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Local file transport
+/// let mut stream = LocalTransport::open("data.mcap")?;
+/// let mut buffer = vec![0u8; 1024];
+/// let n = stream.read(&mut buffer).await?;
+/// # Ok(())
+/// # }
 /// ```
 pub trait ByteStream: Send + Sync {
     /// Read bytes into the given buffer.

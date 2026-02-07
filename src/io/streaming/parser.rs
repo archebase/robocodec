@@ -2,24 +2,54 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Shared streaming parser trait for S3 file format parsing.
+//! Unified streaming parser trait for robotics data formats.
 //!
-//! This module defines a unified interface for streaming parsers that handle
-//! different robotics data formats (MCAP, BAG, RRD) from S3.
+//! This module defines the [`StreamingParser`] trait, which provides
+//! a common interface for streaming parsers of different robotics
+//! data formats (MCAP, ROS1 bag, RRD).
 
 use std::collections::HashMap;
 
 use crate::io::metadata::ChannelInfo;
-use crate::io::s3::error::FatalError;
+use crate::io::s3::FatalError;
 
-/// Shared trait for streaming parsers of robotics data formats.
+/// Unified trait for streaming parsers of robotics data formats.
 ///
 /// This trait abstracts the common functionality needed to parse
 /// different file formats (MCAP, BAG, RRD) from byte chunks
-/// as they arrive from S3.
+/// as they arrive from S3 or other streaming sources.
+///
+/// # Design
+///
+/// The trait is designed for chunk-based processing where:
+/// 1. Data arrives in chunks (not all at once)
+/// 2. Records may span chunk boundaries
+/// 3. Metadata (channels) is discovered during parsing
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use robocodec::io::streaming::StreamingParser;
+/// use robocodec::io::formats::mcap::streaming::McapStreamingParser;
+///
+/// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut parser: McapStreamingParser = McapStreamingParser::new();
+///
+/// // Feed chunks as they arrive from S3
+/// let chunk = b"some MCAP data";
+/// for message in parser.parse_chunk(chunk)? {
+///     // Process message
+///     println!("Message from channel: {}", message.channel_id);
+/// }
+/// # Ok(())
+/// # }
+/// ```
 pub trait StreamingParser: Send + Sync {
     /// Message type yielded by this parser.
-    type Message;
+    ///
+    /// Each format defines its own message type (e.g., `MessageRecord`,
+    /// `BagMessageRecord`, etc.).
+    type Message: Clone + Send;
 
     /// Parse a chunk of data and extract any complete messages.
     ///
@@ -29,16 +59,18 @@ pub trait StreamingParser: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `data` - A chunk of bytes from the S3 file
+    /// * `data` - A chunk of bytes from the data source
     ///
     /// # Returns
     ///
-    /// A vector of complete messages found in this chunk (may be empty)
+    /// A vector of complete messages found in this chunk (may be empty
+    /// if no complete records are in the chunk)
     fn parse_chunk(&mut self, data: &[u8]) -> Result<Vec<Self::Message>, FatalError>;
 
     /// Get the discovered channels from this parser.
     ///
     /// Channels are discovered during initialization or while parsing.
+    /// Returns a map from channel ID to channel information.
     fn channels(&self) -> &HashMap<u16, ChannelInfo>;
 
     /// Get the total number of messages parsed so far.
@@ -47,6 +79,7 @@ pub trait StreamingParser: Send + Sync {
     /// Check if the parser has discovered any channels.
     ///
     /// This is used to determine if metadata initialization is complete.
+    /// Default implementation checks if channels map is non-empty.
     fn has_channels(&self) -> bool {
         !self.channels().is_empty()
     }
@@ -64,6 +97,9 @@ pub trait StreamingParser: Send + Sync {
 }
 
 /// Downcast helper for working with trait objects.
+///
+/// This trait allows concrete parser types to expose themselves as
+/// `StreamingParser` trait objects, enabling dynamic dispatch.
 pub trait AsStreamingParser {
     /// Message type for this parser
     type Message;

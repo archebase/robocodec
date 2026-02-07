@@ -163,6 +163,18 @@ impl SequentialBagReader {
 }
 
 impl FormatReader for SequentialBagReader {
+    fn open_from_transport(
+        _transport: Box<dyn crate::io::transport::Transport>,
+        _path: String,
+    ) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        Err(CodecError::unsupported(
+            "SequentialBagReader requires local file access. Use a streaming reader for transport-based reading.",
+        ))
+    }
+
     fn channels(&self) -> &HashMap<u16, ChannelInfo> {
         &self.channels
     }

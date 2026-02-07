@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use crate::io::formats::bag::parser::BagConnection;
 use crate::io::metadata::ChannelInfo;
 use crate::io::s3::FatalError;
+use crate::io::streaming::StreamingParser;
 
 /// BAG magic string prefix.
 pub const BAG_MAGIC_PREFIX: &[u8] = b"#ROSBAG V";
@@ -114,6 +115,8 @@ pub struct StreamingBagParser {
     buffer_pos: usize,
     /// Version string parsed from magic
     version: Option<String>,
+    /// Cached channel map (converted from connections)
+    cached_channels: HashMap<u16, ChannelInfo>,
 }
 
 impl StreamingBagParser {
@@ -127,6 +130,7 @@ impl StreamingBagParser {
             message_count: 0,
             buffer_pos: 0,
             version: None,
+            cached_channels: HashMap::new(),
         }
     }
 
@@ -560,6 +564,64 @@ impl StreamingBagParser {
     /// Get the parsed version string.
     pub fn version(&self) -> Option<&str> {
         self.version.as_deref()
+    }
+
+    /// Reset the parser state for a new file.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Rebuild the cached channel map from connections.
+    fn rebuild_channels(&mut self) {
+        self.cached_channels = self.channels();
+    }
+}
+
+// SAFETY: StreamingBagParser is safe to send between threads because:
+// - All fields (HashMap, Vec, enum) are Send
+// - The parser maintains no thread-local state or handles
+unsafe impl Send for StreamingBagParser {}
+
+// SAFETY: StreamingBagParser is safe to share between threads because:
+// - The StreamingParser trait requires methods take &mut self, guaranteeing exclusive access
+// - All fields are either Send + Sync (HashMap, Vec, enum)
+// - No interior mutability or shared state
+unsafe impl Sync for StreamingBagParser {}
+
+impl StreamingParser for StreamingBagParser {
+    type Message = BagMessageRecord;
+
+    fn parse_chunk(&mut self, data: &[u8]) -> Result<Vec<Self::Message>, FatalError> {
+        // Call the inherent parse_chunk method
+        // Use fully qualified syntax to avoid recursion
+        let messages = StreamingBagParser::parse_chunk(self, data)?;
+
+        // Rebuild channels if we discovered new connections
+        if self.has_connections() && self.cached_channels.is_empty() {
+            self.rebuild_channels();
+        }
+
+        Ok(messages)
+    }
+
+    fn channels(&self) -> &HashMap<u16, ChannelInfo> {
+        &self.cached_channels
+    }
+
+    fn message_count(&self) -> u64 {
+        StreamingBagParser::message_count(self)
+    }
+
+    fn has_channels(&self) -> bool {
+        StreamingBagParser::has_connections(self)
+    }
+
+    fn is_initialized(&self) -> bool {
+        StreamingBagParser::is_initialized(self)
+    }
+
+    fn reset(&mut self) {
+        StreamingBagParser::reset(self)
     }
 }
 

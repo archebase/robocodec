@@ -13,6 +13,10 @@ pub(crate) mod detection;
 pub mod formats;
 pub mod metadata;
 
+// Streaming parser interface (unified across formats)
+#[doc(hidden)]
+pub mod streaming;
+
 // Transport layer for different data sources
 pub mod transport;
 
