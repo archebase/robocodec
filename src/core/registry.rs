@@ -143,40 +143,6 @@ impl<T> Default for TypeRegistry<T> {
     }
 }
 
-/// Encoding format identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Encoding {
-    /// CDR (Common Data Representation) - used by ROS1/ROS2
-    Cdr,
-    /// Protobuf binary format
-    Protobuf,
-    /// JSON text format
-    Json,
-}
-
-impl std::str::FromStr for Encoding {
-    type Err = ();
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "cdr" | "ros1" | "ros2" => Ok(Encoding::Cdr),
-            "protobuf" | "proto" | "pb" => Ok(Encoding::Protobuf),
-            "json" => Ok(Encoding::Json),
-            _ => Err(()),
-        }
-    }
-}
-
-impl std::fmt::Display for Encoding {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Encoding::Cdr => write!(f, "cdr"),
-            Encoding::Protobuf => write!(f, "protobuf"),
-            Encoding::Json => write!(f, "json"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,15 +160,6 @@ mod tests {
         assert!(registry.remove("test").unwrap());
         assert!(!registry.contains("test").unwrap());
         assert!(registry.is_empty().unwrap());
-    }
-
-    #[test]
-    fn test_encoding_from_str() {
-        assert_eq!("cdr".parse::<Encoding>(), Ok(Encoding::Cdr));
-        assert_eq!("CDR".parse::<Encoding>(), Ok(Encoding::Cdr));
-        assert_eq!("protobuf".parse::<Encoding>(), Ok(Encoding::Protobuf));
-        assert_eq!("json".parse::<Encoding>(), Ok(Encoding::Json));
-        assert!("unknown".parse::<Encoding>().is_err());
     }
 }
 
@@ -300,105 +257,4 @@ fn test_type_registry_register_override() {
     registry.register("test", 1).unwrap();
     registry.register("test", 2).unwrap(); // Override
     assert_eq!(registry.get("test").unwrap(), Some(2));
-}
-
-// =========================================================================
-// Encoding enum tests
-// =========================================================================
-
-#[test]
-fn test_encoding_debug() {
-    assert!(format!("{:?}", Encoding::Cdr).contains("Cdr"));
-    assert!(format!("{:?}", Encoding::Protobuf).contains("Protobuf"));
-    assert!(format!("{:?}", Encoding::Json).contains("Json"));
-}
-
-#[test]
-fn test_encoding_clone() {
-    let enc = Encoding::Protobuf;
-    let cloned = enc;
-    assert_eq!(enc, cloned);
-}
-
-#[test]
-fn test_encoding_copy() {
-    let enc = Encoding::Json;
-    let copied = enc;
-    assert_eq!(enc, copied);
-}
-
-#[test]
-fn test_encoding_partial_eq() {
-    assert_eq!(Encoding::Cdr, Encoding::Cdr);
-    assert_ne!(Encoding::Cdr, Encoding::Protobuf);
-    assert_ne!(Encoding::Protobuf, Encoding::Json);
-}
-
-// =========================================================================
-// Encoding::FromStr extended tests
-// =========================================================================
-
-#[test]
-fn test_encoding_from_str_ros1() {
-    assert_eq!("ros1".parse::<Encoding>(), Ok(Encoding::Cdr));
-    assert_eq!("ROS1".parse::<Encoding>(), Ok(Encoding::Cdr));
-}
-
-#[test]
-fn test_encoding_from_str_ros2() {
-    assert_eq!("ros2".parse::<Encoding>(), Ok(Encoding::Cdr));
-    assert_eq!("ROS2".parse::<Encoding>(), Ok(Encoding::Cdr));
-}
-
-#[test]
-fn test_encoding_from_str_proto() {
-    assert_eq!("proto".parse::<Encoding>(), Ok(Encoding::Protobuf));
-    assert_eq!("PROTO".parse::<Encoding>(), Ok(Encoding::Protobuf));
-}
-
-#[test]
-fn test_encoding_from_str_pb() {
-    assert_eq!("pb".parse::<Encoding>(), Ok(Encoding::Protobuf));
-    assert_eq!("PB".parse::<Encoding>(), Ok(Encoding::Protobuf));
-}
-
-#[test]
-fn test_encoding_from_str_various_invalid() {
-    assert!("".parse::<Encoding>().is_err());
-    assert!("xml".parse::<Encoding>().is_err());
-    assert!("yaml".parse::<Encoding>().is_err());
-    assert!("cbor".parse::<Encoding>().is_err());
-}
-
-// =========================================================================
-// Encoding::Display tests
-// =========================================================================
-
-#[test]
-fn test_encoding_display_cdr() {
-    assert_eq!(format!("{}", Encoding::Cdr), "cdr");
-}
-
-#[test]
-fn test_encoding_display_protobuf() {
-    assert_eq!(format!("{}", Encoding::Protobuf), "protobuf");
-}
-
-#[test]
-fn test_encoding_display_json() {
-    assert_eq!(format!("{}", Encoding::Json), "json");
-}
-
-// =========================================================================
-// Encoding::Hash tests
-// =========================================================================
-
-#[test]
-fn test_encoding_hash() {
-    use std::collections::HashSet;
-    let mut set = HashSet::new();
-    set.insert(Encoding::Cdr);
-    set.insert(Encoding::Protobuf);
-    set.insert(Encoding::Json);
-    assert_eq!(set.len(), 3);
 }

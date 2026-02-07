@@ -300,32 +300,6 @@ impl ProtobufCodec {
         }
     }
 
-    /// Get a message descriptor by type name, checking all cached pools.
-    #[allow(dead_code)]
-    fn get_descriptor_by_name(&self, type_name: &str) -> Option<MessageDescriptor> {
-        // First check the direct descriptor cache
-        {
-            let descriptors = self.descriptors.read().ok()?;
-            if let Some(desc) = descriptors.get(type_name) {
-                return Some(desc.clone());
-            }
-        }
-
-        // Then search through all cached pools
-        let pools = self.pools.read().ok()?;
-        for pool in pools.values() {
-            if let Some(desc) = pool.get_message_by_name(type_name) {
-                // Cache it for future use
-                drop(pools);
-                let mut descriptors = self.descriptors.write().ok()?;
-                descriptors.insert(type_name.to_string(), desc.clone());
-                return Some(desc);
-            }
-        }
-
-        None
-    }
-
     /// Convert a prost-reflect Value to CodecValue.
     fn reflect_value_to_codec(&self, value: &prost_reflect::Value) -> Option<CodecValue> {
         match value {

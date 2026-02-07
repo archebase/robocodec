@@ -30,18 +30,14 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use crate::core::{CodecError, Result};
 use crate::io::formats::mcap::constants::{
     MCAP_MAGIC, OP_CHANNEL, OP_CHUNK, OP_CHUNK_INDEX, OP_DATA_END, OP_FOOTER, OP_HEADER,
-    OP_MESSAGE, OP_SCHEMA, OP_STATISTICS, OP_SUMMARY_OFFSET,
+    OP_MESSAGE, OP_SCHEMA, OP_STATISTICS,
 };
 use crate::io::formats::mcap::internal::CompressedChunk;
 use crate::io::metadata::RawMessage;
 use crate::io::traits::FormatWriter;
 
 /// MCAP compression identifiers.
-#[allow(dead_code)]
-const COMPRESSION_NONE: &str = "";
 const COMPRESSION_ZSTD: &str = "zstd";
-#[allow(dead_code)]
-const COMPRESSION_LZ4: &str = "lz4";
 
 /// Chunk index record for summary section.
 ///
@@ -883,41 +879,6 @@ impl<W: Write> ParallelMcapWriter<W> {
             self.write_u16(channel_id)?;
             self.write_u64(count)?;
         }
-
-        Ok(())
-    }
-
-    /// Write summary offset records to the summary section.
-    #[allow(dead_code)]
-    fn write_summary_offsets(&mut self) -> Result<()> {
-        // Group opcodes by section:
-        // - Schemas: OP_SCHEMA (0x03)
-        // - Channels: OP_CHANNEL (0x04)
-        // - Chunk Indexes: OP_CHUNK_INDEX (0x08)
-        // - Statistics: OP_STATISTICS (0x0B)
-
-        // For now, we only have chunk indexes and statistics
-        // Write summary offset for chunk indexes
-        self.write_summary_offset_for(OP_CHUNK_INDEX)?;
-
-        // Write summary offset for statistics
-        self.write_summary_offset_for(OP_STATISTICS)?;
-
-        Ok(())
-    }
-
-    /// Write a summary offset record for a specific opcode group.
-    fn write_summary_offset_for(&mut self, opcode: u8) -> Result<()> {
-        self.write_u8(OP_SUMMARY_OFFSET)?;
-
-        // Group opcode
-        self.write_u8(opcode)?;
-
-        // Group start (offset = 0, we'd need to track this)
-        self.write_u64(0)?;
-
-        // Group length (offset = 0, we'd need to track this)
-        self.write_u64(0)?;
 
         Ok(())
     }

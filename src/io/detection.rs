@@ -160,51 +160,6 @@ fn detect_from_extension(path: &Path) -> FileFormat {
         .unwrap_or(FileFormat::Unknown)
 }
 
-/// Format detector with caching capabilities.
-///
-/// This trait can be implemented for custom format detection logic.
-#[allow(dead_code)]
-pub trait FormatDetector: Send + Sync {
-    /// Detect the format of a file.
-    fn detect(&self, path: &Path) -> Result<FileFormat, CodecError>;
-}
-
-/// Default format detector implementation.
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
-pub struct DefaultFormatDetector;
-
-#[allow(dead_code)]
-impl FormatDetector for DefaultFormatDetector {
-    fn detect(&self, path: &Path) -> Result<FileFormat, CodecError> {
-        detect_format(path)
-    }
-}
-
-/// Check if a file is likely an MCAP file.
-///
-/// This is a convenience function that only checks for MCAP format.
-#[allow(dead_code)]
-pub fn is_mcap_file<P: AsRef<Path>>(path: P) -> bool {
-    matches!(detect_format(path), Ok(FileFormat::Mcap))
-}
-
-/// Check if a file is likely a ROS1 bag file.
-///
-/// This is a convenience function that only checks for bag format.
-#[allow(dead_code)]
-pub fn is_bag_file<P: AsRef<Path>>(path: P) -> bool {
-    matches!(detect_format(path), Ok(FileFormat::Bag))
-}
-
-/// Check if a file is likely an RRD file.
-///
-/// This is a convenience function that only checks for RRD format.
-#[allow(dead_code)]
-pub fn is_rrd_file<P: AsRef<Path>>(path: P) -> bool {
-    matches!(detect_format(path), Ok(FileFormat::Rrd))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,26 +203,6 @@ mod tests {
     }
 
     #[test]
-    fn test_is_mcap_file() {
-        let path = create_temp_file("is_mcap", "mcap", b"dummy content");
-
-        assert!(is_mcap_file(&path));
-        assert!(!is_bag_file(&path));
-
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn test_is_bag_file() {
-        let path = create_temp_file("is_bag", "bag", b"#ROSBAG");
-
-        assert!(is_bag_file(&path));
-        assert!(!is_mcap_file(&path));
-
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
     fn test_detect_from_magic_mcap() {
         let path = create_temp_file("magic_mcap", "bin", b"\x1C\xC1\x41\x50MCAP");
 
@@ -293,17 +228,6 @@ mod tests {
 
         let format = detect_format(&path).unwrap();
         assert_eq!(format, FileFormat::Unknown);
-
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[test]
-    fn test_format_detector_trait() {
-        let detector = DefaultFormatDetector;
-        let path = create_temp_file("detector", "mcap", b"dummy");
-
-        let format = detector.detect(std::path::Path::new(&path)).unwrap();
-        assert_eq!(format, FileFormat::Mcap);
 
         let _ = std::fs::remove_file(&path);
     }

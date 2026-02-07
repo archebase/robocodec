@@ -4,8 +4,6 @@
 
 //! Output formatting utilities for CLI.
 
-use std::io::IsTerminal as _;
-
 use crate::cli::CliResult;
 
 use serde::Serialize;
@@ -28,18 +26,6 @@ where
         human_fn()?;
     }
     Ok(())
-}
-
-/// Check if stdout is a terminal (for deciding default output format).
-#[allow(dead_code)]
-pub fn is_stdout_terminal() -> bool {
-    std::io::stdout().is_terminal()
-}
-
-/// Check if stderr is a terminal (for deciding progress display).
-#[allow(dead_code)]
-pub fn is_stderr_terminal() -> bool {
-    std::io::stderr().is_terminal()
 }
 
 #[cfg(test)]
@@ -77,18 +63,6 @@ mod tests {
         });
         assert!(result.is_ok());
         assert!(called.load(std::sync::atomic::Ordering::SeqCst));
-    }
-
-    #[test]
-    fn test_is_stdout_terminal() {
-        // Just verify the function runs without panicking
-        let _ = is_stdout_terminal();
-    }
-
-    #[test]
-    fn test_is_stderr_terminal() {
-        // Just verify the function runs without panicking
-        let _ = is_stderr_terminal();
     }
 
     #[test]

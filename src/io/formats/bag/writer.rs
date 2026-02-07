@@ -160,8 +160,7 @@ struct ChunkInfo {
 pub struct BagWriter {
     /// File writer
     writer: BufWriter<File>,
-    /// File path (kept for potential future use/debugging)
-    #[allow(dead_code)]
+    /// File path (used by FormatWriter::path())
     path: String,
     /// Is the file open
     is_open: bool,

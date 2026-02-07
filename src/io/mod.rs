@@ -32,7 +32,6 @@ pub use metadata::{
 };
 
 // Channel iterator (tightly coupled with pipeline - keep in roboflow)
-// pub mod channel_iterator;
 
 // Traits for format readers and writers
 // Hidden from docs but accessible for advanced use
