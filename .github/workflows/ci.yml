@@ -60,7 +60,7 @@ jobs:
       # PyO3's extension-module feature prevents linking in standalone test binaries.
       # Python bindings would be tested separately via maturin if needed.
       - name: Build CLI binary (for CLI tests)
-        run: cargo build --bin robocodec --features cli
+        run: cargo build --bin robocodec --package robocodec-cli
 
       - name: Run tests
         run: cargo test
@@ -91,7 +91,7 @@ jobs:
       # Note: Do NOT use --all-features or --features python here.
       # PyO3's extension-module feature prevents linking in standalone test binaries.
       - name: Run tests with coverage
-        run: cargo llvm-cov --workspace --features "cli,s3" --lcov --output-path lcov-rust.info
+        run: cargo llvm-cov --workspace --features remote --lcov --output-path lcov-rust.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -113,7 +113,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build CLI binary (for CLI tests)
-        run: cargo build --bin robocodec --features cli
+        run: cargo build --bin robocodec --package robocodec-cli
 
       - name: Run tests
         run: cargo test
@@ -243,4 +243,4 @@ jobs:
           MINIO_ENDPOINT: http://127.0.0.1:9000
           MINIO_BUCKET: test-bucket
           MINIO_REGION: us-east-1
-        run: cargo test --features s3 -- minio_tests
+        run: cargo test --features remote -- minio_tests
