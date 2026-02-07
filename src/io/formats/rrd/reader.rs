@@ -333,6 +333,7 @@ impl RrdReader {
 }
 
 impl FormatReader for RrdReader {
+    #[cfg(feature = "remote")]
     fn open_from_transport(
         _transport: Box<dyn crate::io::transport::Transport>,
         _path: String,

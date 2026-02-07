@@ -12,20 +12,29 @@
 //! - **[`Transport`]** - Async trait for unified byte I/O
 //! - **[`TransportExt`]** - Convenience extension trait
 //! - **[`local`]** - Local file transport implementation
-//! - **[`s3`]** - S3 transport implementation
-//! - **[`http`]** - HTTP transport implementation
+//! - **[`s3`]** - S3 transport implementation (requires `remote` feature)
+//! - **[`http`]** - HTTP transport implementation (requires `remote` feature)
 //! - **[`memory`]** - In-memory transport implementation for testing
 
 pub mod core;
-pub mod http;
 pub mod local;
-pub mod memory;
+
+// Remote transport modules (require remote feature)
+#[cfg(feature = "remote")]
+pub mod http;
+#[cfg(feature = "remote")]
 pub mod s3;
+
+// Memory transport for testing (requires remote feature for bytes dependency)
+#[cfg(feature = "remote")]
+pub mod memory;
 
 // Re-export core transport types
 pub use core::{Transport, TransportExt};
 // Re-export transport implementations
+#[cfg(feature = "remote")]
 pub use http::HttpTransport;
+#[cfg(feature = "remote")]
 pub use memory::MemoryTransport;
 
 /// Generic byte stream trait for reading data from various transports.

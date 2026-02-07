@@ -63,7 +63,7 @@ use crate::{CodecError, Result};
 ///
 /// This reuses a single runtime across all S3 operations, avoiding
 /// the overhead of creating a new runtime for each open/write.
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 fn shared_runtime() -> &'static tokio::runtime::Runtime {
     use std::sync::OnceLock;
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -223,7 +223,7 @@ impl RoboReader {
     /// - `Ok(Some(transport))` - Successfully created transport from URL
     /// - `Ok(None)` - Not a URL (local file path)
     /// - `Err` - Unsupported URL scheme or parse error
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     fn parse_url_to_transport(
         url: &str,
         http_auth: Option<&HttpAuthConfig>,
@@ -286,7 +286,7 @@ impl RoboReader {
     ///
     /// Supports `?bearer_token=xxx` or `?basic_auth=user:pass`.
     /// Returns (base_url, auth_from_query).
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     fn parse_http_auth_from_url(
         url: &str,
     ) -> Result<(&str, Option<crate::io::transport::http::HttpAuth>)> {
@@ -336,7 +336,7 @@ impl RoboReader {
     /// Resolve HTTP authentication from config and URL query parameters.
     ///
     /// Config takes precedence over URL query parameters.
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     fn resolve_http_auth(
         config_auth: Option<&HttpAuthConfig>,
         query_auth: &Option<crate::io::transport::http::HttpAuth>,
@@ -417,7 +417,7 @@ impl RoboReader {
     /// ```
     pub fn open_with_config(path: &str, config: ReaderConfig) -> Result<Self> {
         // Try to parse as URL and create appropriate transport
-        #[cfg(feature = "s3")]
+        #[cfg(feature = "remote")]
         {
             let http_auth = if config.http_auth.is_configured() {
                 Some(&config.http_auth)
@@ -636,6 +636,7 @@ impl RoboReader {
 }
 
 impl FormatReader for RoboReader {
+    #[cfg(feature = "remote")]
     fn open_from_transport(
         transport: Box<dyn crate::io::transport::Transport>,
         path: String,
@@ -1027,7 +1028,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     fn test_parse_url_to_transport_with_s3_url() {
         // Test valid S3 URL - this will attempt to create an S3Client
         // In a test environment without credentials, this may fail, but
@@ -1086,7 +1087,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     fn test_parse_url_to_transport_with_http_url() {
         // Test HTTP URL (should try to create HttpTransport)
         let result = RoboReader::parse_url_to_transport("http://example.com/file.mcap", None);
@@ -1139,7 +1140,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     fn test_parse_url_to_transport_with_local_path_returns_none() {
         // Test local file path (should return None)
         let result = RoboReader::parse_url_to_transport("/path/to/file.mcap", None);
@@ -1153,7 +1154,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     fn test_parse_url_to_transport_with_invalid_s3_url() {
         // Test invalid S3 URL (missing bucket)
         let result = RoboReader::parse_url_to_transport("s3://", None);

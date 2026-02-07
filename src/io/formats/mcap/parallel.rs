@@ -687,6 +687,7 @@ impl ParallelMcapReader {
 }
 
 impl FormatReader for ParallelMcapReader {
+    #[cfg(feature = "remote")]
     fn open_from_transport(
         _transport: Box<dyn crate::io::transport::Transport>,
         _path: String,

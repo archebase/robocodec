@@ -151,6 +151,7 @@ impl McapTransportReader {
 }
 
 impl FormatReader for McapTransportReader {
+    #[cfg(feature = "remote")]
     fn open_from_transport(
         mut transport: Box<dyn crate::io::transport::Transport>,
         path: String,

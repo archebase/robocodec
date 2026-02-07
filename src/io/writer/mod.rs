@@ -13,6 +13,7 @@ pub use builder::{
     HttpAuthConfig, WriteStrategy, WriterBuilder, WriterConfig, WriterConfigBuilder,
 };
 
+#[cfg(feature = "remote")]
 use crate::io::transport::http::HttpAuth;
 
 use crate::io::detection::detect_format;
@@ -27,7 +28,7 @@ use crate::{CodecError, Result};
 ///
 /// This reuses a single runtime across all S3 operations, avoiding
 /// the overhead of creating a new runtime for each open/write.
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 fn shared_runtime() -> &'static tokio::runtime::Runtime {
     use std::sync::OnceLock;
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -86,8 +87,8 @@ impl RoboWriter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn create_with_config(path: &str, config: WriterConfig) -> Result<Self> {
-        // Check if this is an HTTP/HTTPS URL (requires s3 feature for tokio/reqwest)
-        #[cfg(feature = "s3")]
+        // Check if this is an HTTP/HTTPS URL (requires remote feature for tokio/reqwest)
+        #[cfg(feature = "remote")]
         {
             // Check for S3 URLs first
             if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
@@ -181,7 +182,7 @@ impl RoboWriter {
     ///
     /// * `path` - HTTP/HTTPS URL
     /// * `config` - Writer configuration (may contain HTTP auth settings)
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     fn create_http_writer(path: &str, config: &WriterConfig) -> Result<Self> {
         use crate::io::transport::http::{HttpUploadStrategy, HttpWriter};
 
@@ -209,7 +210,7 @@ impl RoboWriter {
     ///
     /// Returns HttpAuth if any authentication is configured in the WriterConfig.
     /// This allows authentication to be set via WriterConfig instead of URL parameters.
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     fn resolve_http_auth(config: &WriterConfig) -> Option<HttpAuth> {
         let http_auth = &config.http_auth;
 
@@ -697,7 +698,7 @@ mod tests {
     // HTTP URL Detection Tests
     // =========================================================================
 
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     #[test]
     fn test_resolve_http_auth_none() {
         let config = WriterConfig::default();
@@ -705,7 +706,7 @@ mod tests {
         assert!(auth.is_none());
     }
 
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     #[test]
     fn test_resolve_http_auth_bearer() {
         let config = WriterConfig::builder()
@@ -719,7 +720,7 @@ mod tests {
         assert!(auth.basic_username().is_none());
     }
 
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     #[test]
     fn test_resolve_http_auth_basic() {
         let config = WriterConfig::builder()
@@ -734,7 +735,7 @@ mod tests {
         assert_eq!(auth.basic_password(), Some("pass"));
     }
 
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     #[test]
     fn test_resolve_http_auth_prefer_bearer() {
         // If both bearer and basic are set, bearer takes precedence
@@ -750,7 +751,7 @@ mod tests {
         assert_eq!(auth.bearer_token(), Some("token"));
     }
 
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     #[test]
     fn test_create_http_writer_valid_url() {
         // Test that create_http_writer can be called with valid URL
@@ -763,7 +764,7 @@ mod tests {
         assert_eq!(writer.path(), "test.mcap");
     }
 
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     #[test]
     fn test_create_http_writer_with_auth() {
         let config = WriterConfig::builder()
@@ -777,7 +778,7 @@ mod tests {
         assert_eq!(writer.path(), "test.mcap");
     }
 
-    #[cfg(feature = "s3")]
+    #[cfg(feature = "remote")]
     #[test]
     fn test_create_http_writer_invalid_url() {
         let config = WriterConfig::default();

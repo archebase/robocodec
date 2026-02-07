@@ -56,7 +56,7 @@ pyo3 = { version = "0.25", features = ["abi3-py311", "extension-module"], option
 clap = { version = "4.5", features = ["derive"], optional = true }
 indicatif = { version = "0.17", optional = true }
 human-size = { version = "0.4", optional = true }
-# S3 streaming support (gated behind s3 feature)
+# Remote storage support (gated behind remote feature)
 reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false, optional = true }
 bytes = { version = "1.6", optional = true }
 tokio = { version = "1.40", features = ["rt-multi-thread", "time"], default-features = false, optional = true }
@@ -73,11 +73,11 @@ aws-credential-types = { version = "1.2", default-features = false, optional = t
 percent-encoding = { version = "2.3.2", optional = true }
 
 [features]
-default = ["s3"]
+default = ["remote"]
 python = ["pyo3"]
 jemalloc = ["dep:tikv-jemallocator"]
 cli = ["clap", "indicatif", "human-size", "anyhow"]
-s3 = [
+remote = [
     "aws-config",
     "aws-credential-types",
     "reqwest",

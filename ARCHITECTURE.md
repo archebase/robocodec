@@ -26,6 +26,7 @@ let rewriter = RoboRewriter::open("input.mcap")?;
 ```rust
 use robocodec::io::formats::mcap::reader::McapReader;
 use robocodec::io::formats::bag::reader::ParallelBagReader;
+use robocodec::io::formats::rrd::reader::RrdReader;
 ```
 
 ### 2. Layered Architecture
@@ -45,6 +46,8 @@ use robocodec::io::formats::bag::reader::ParallelBagReader;
 │  - io/traits.rs (FormatReader, FormatWriter)           │
 │  - io/metadata.rs (FileFormat, ChannelInfo, etc.)      │
 │  - io/detection.rs (format detection from extension)   │
+│  - io/streaming/ (streaming parser interface)          │
+│  - io/filter.rs (message filtering)                     │
 └────────────────────┬────────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────────┐
@@ -56,27 +59,96 @@ use robocodec::io::formats::bag::reader::ParallelBagReader;
 │  │   - parallel.rs (low-level parallel reader)     │   │
 │  │   - sequential.rs (low-level sequential reader) │   │
 │  │   - two_pass.rs (two-pass reader strategy)      │   │
+│  │   - streaming.rs (streaming MCAP parser)        │   │
+│  │   - transport_reader.rs (transport-based)       │   │
+│  │   - s3_adapter.rs (S3 streaming adapter)        │   │
+│  │   - constants.rs (MCAP format constants)         │   │
 │  └─────────────────────────────────────────────────┘   │
 │  ┌─────────────────────────────────────────────────┐   │
-│  │ io/formats/bag/                                 │   │
+│  │ io/formats/bag/ (ROS1 bag)                      │   │
 │  │   - reader.rs (ParallelBagReader)               │   │
 │  │   - writer.rs (BagWriter)                       │   │
 │  │   - parallel.rs (low-level parallel reader)     │   │
 │  │   - sequential.rs (low-level sequential reader) │   │
+│  │   - stream.rs (streaming BAG parser)            │   │
+│  │   - parser.rs (Bag format parsing)              │   │
+│  └─────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │ io/formats/rrd/ (Rerun RRD)                     │   │
+│  │   - reader.rs (RrdReader)                       │   │
+│  │   - writer.rs (RrdWriter)                       │   │
+│  │   - parallel.rs (parallel reader)                │   │
+│  │   - stream.rs (streaming RRD parser)             │   │
+│  │   - arrow_msg.rs (Arrow protobuf encoding)       │   │
+│  │   - constants.rs (RRD format constants)          │   │
 │  └─────────────────────────────────────────────────┘   │
 └────────────────────┬────────────────────────────────────┘
                      │
 ┌────────────────────▼────────────────────────────────────┐
-│  Foundation Layer                                       │
-│  - core/ (CodecError, Result, types)                   │
-│  - encoding/ (CDR, Protobuf, JSON codecs)              │
-│  - schema/ (msg, ROS2 IDL, OMG IDL parsers)           │
-│  - transform/ (topic/type renaming with wildcards)     │
-│  - types/ (arena allocation, chunk management)         │
+│  Transport Layer (requires `remote` feature)            │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │ io/transport/core.rs (Transport trait)          │   │
+│  │ io/transport/local.rs (local file transport)     │   │
+│  │ io/transport/http/ (HTTP/HTTPS transport)         │   │
+│  │ io/transport/s3/ (S3 transport)                  │   │
+│  │ io/transport/memory/ (in-memory for testing)     │   │
+│  └─────────────────────────────────────────────────┘   │
+└────────────────────┬────────────────────────────────────┘
+                     │
+┌────────────────────▼────────────────────────────────────┐
+│  Remote Storage Layer (requires `remote` feature)       │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │ io/s3/ (S3 client and streaming)                  │   │
+│  │   - client.rs (AWS S3 HTTP client with SigV4)    │   │
+│  │   - reader.rs (S3Reader for streaming)           │   │
+│  │   - writer.rs (S3Writer with multipart upload)    │   │
+│  │   - location.rs (S3 URL parsing)                 │   │
+│  │   - config.rs (S3 configuration)                  │   │
+│  │   - signer.rs (AWS request signing)               │   │
+│  └─────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 3. Rewriter Architecture
+### 3. Remote Storage Architecture
+
+The `remote` feature (previously named `s3`) provides support for reading and writing robotics data files from remote storage sources:
+
+**Supported Protocols**:
+- `s3://` - AWS S3 and S3-compatible services (MinIO, R2, etc.)
+- `http://` and `https://` - Generic HTTP/HTTPS with authentication
+
+**Transport Abstraction**:
+```rust
+// Unified transport trait works with any data source
+use robocodec::io::transport::{Transport, TransportExt};
+
+// Local file (always available)
+let transport = LocalTransport::open("data.mcap")?;
+
+// HTTP/HTTPS (requires `remote` feature)
+let transport = HttpTransport::new("https://example.com/data.mcap").await?;
+
+// S3 (requires `remote` feature)
+let transport = S3Transport::new(client, location).await?;
+```
+
+**Reader Usage**:
+```rust
+// Auto-detects URL scheme and creates appropriate transport
+let reader = RoboReader::open("s3://my-bucket/data.mcap")?;
+let reader = RoboReader::open("https://example.com/data.bag")?;
+```
+
+**Writer Usage**:
+```rust
+// S3 multipart upload
+let writer = RoboWriter::create("s3://my-bucket/output.mcap")?;
+
+// HTTP PUT upload
+let writer = RoboWriter::create("https://example.com/output.bag")?;
+```
+
+### 4. Rewriter Architecture
 
 The rewriter module provides a unified facade that:
 
@@ -107,7 +179,7 @@ User code
 - `mcap/` - MCAP-specific rewriter implementation
 - `bag/` - ROS1 bag-specific rewriter implementation
 
-### 4. Auto-Strategy Selection
+### 5. Auto-Strategy Selection
 
 Readers and writers automatically choose the optimal strategy:
 
@@ -127,7 +199,7 @@ Readers and writers automatically choose the optimal strategy:
 - Provide consistent interface across formats
 
 ```rust
-// Works for both MCAP and ROS1 bag
+// Works for MCAP, ROS1 bag, and RRD
 let reader = RoboReader::open(path)?;
 let channels = reader.channels();
 ```
@@ -140,6 +212,8 @@ let channels = reader.channels();
 ```rust
 // Clear: Everything MCAP-related is in one place
 use robocodec::io::formats::mcap::{reader::McapReader, writer::ParallelMcapWriter};
+use robocodec::io::formats::bag::{reader::ParallelBagReader, writer::BagWriter};
+use robocodec::io::formats::rrd::{reader::RrdReader, writer::RrdWriter};
 
 // For most users, just use the unified API
 use robocodec::{RoboReader, RoboWriter};
@@ -150,6 +224,21 @@ use robocodec::{RoboReader, RoboWriter};
 - Simple to add new formats (create a new directory)
 - Clear ownership boundaries
 - Format-specific optimizations isolated
+
+### Why Transport Abstraction?
+
+**Problem**: Need to support multiple data sources (local files, S3, HTTP) without duplicating parser logic.
+
+**Solution**: Introduce `Transport` trait that abstracts byte I/O:
+- `LocalTransport` - Memory-mapped files (always available)
+- `HttpTransport` - HTTP/HTTPS with range requests (`remote` feature)
+- `S3Transport` - S3 protocol with SigV4 signing (`remote` feature)
+- `MemoryTransport` - In-memory for testing (`remote` feature)
+
+**Benefits**:
+- Format parsers work with any data source
+- No code duplication between local and remote reading
+- Easy to add new transports (GCS, Azure Blob, etc.)
 
 ### Transformation Architecture
 
@@ -162,6 +251,16 @@ The `transform` module provides flexible data transformation:
 
 Transformations are applied during rewriting via the `McapTransform` trait.
 
+## Feature Flags
+
+| Feature | Description | Dependencies |
+|---------|-------------|--------------|
+| `default` | Enables remote storage support | All remote dependencies |
+| `remote` | S3 and HTTP/HTTPS support | `reqwest`, `tokio`, `http`, `aws-config`, etc. |
+| `python` | Python bindings via PyO3 | `pyo3` |
+| `jemalloc` | Use jemalloc allocator (Linux) | `tikv-jemallocator` |
+| `cli` | CLI tool support | `clap`, `indicatif`, `human-size` |
+
 ## Usage Examples
 
 ### Reading with Auto-Detection
@@ -169,9 +268,43 @@ Transformations are applied during rewriting via the `McapTransform` trait.
 ```rust
 use robocodec::{FormatReader, RoboReader};
 
+// Local file
 let reader = RoboReader::open("file.mcap")?;
 println!("Channels: {}", reader.channels().len());
 println!("Messages: {}", reader.message_count());
+
+// S3 file (requires --features remote)
+let reader = RoboReader::open("s3://bucket/file.mcap")?;
+
+// HTTP file (requires --features remote)
+let reader = RoboReader::open("https://example.com/file.bag")?;
+```
+
+### Reading with HTTP Authentication
+
+```rust
+use robocodec::{RoboReader, ReaderConfig};
+
+// Bearer token authentication
+let config = ReaderConfig::default()
+    .with_http_bearer_token("your-token");
+let reader = RoboReader::open_with_config(
+    "https://example.com/data.mcap",
+    config
+)?;
+
+// Basic authentication
+let config = ReaderConfig::default()
+    .with_http_basic_auth("user", "pass");
+let reader = RoboReader::open_with_config(
+    "https://example.com/data.mcap",
+    config
+)?;
+
+// URL query parameters
+let reader = RoboReader::open(
+    "https://example.com/data.mcap?bearer_token=your-token"
+)?;
 ```
 
 ### Format-Specific Reading (when needed)
@@ -203,6 +336,18 @@ let rewriter = RoboRewriter::with_options(
 rewriter.rewrite("output.mcap")?;
 ```
 
+### Writing to Remote Storage
+
+```rust
+use robocodec::RoboWriter;
+
+// S3 with multipart upload
+let writer = RoboWriter::create("s3://my-bucket/output.mcap")?;
+
+// HTTP with PUT
+let writer = RoboWriter::create("https://example.com/output.bag")?;
+```
+
 ## Module Organization
 
 ### User-Facing Modules (lib.rs)
@@ -214,54 +359,77 @@ rewriter.rewrite("output.mcap")?;
 | `encoding` | Message codecs (CDR, Protobuf, JSON) |
 | `schema` | Schema parsers (ROS .msg, ROS2 IDL, OMG IDL) |
 | `transform` | Topic/type transformation support |
-| `types` | Arena allocation and chunk management |
 | `rewriter` | Unified rewriter with format auto-detection |
-| `python` | Python bindings (optional feature) |
+| `python` | Python bindings (optional `python` feature) |
+| `cli` | CLI tool (optional `cli` feature) |
 
 ### Internal I/O Structure
 
 ```
 io/
-├── mod.rs              # Module exports
-├── reader/             # Unified reader with strategy selection
-├── writer/             # Unified writer with strategy selection
-├── traits.rs           # FormatReader, FormatWriter traits
-├── metadata.rs         # FileFormat, ChannelInfo, FileInfo
-├── detection.rs        # Format detection from file path
-├── arena.rs            # Memory-mapped arena allocation
-├── filter.rs           # Message filtering utilities
+├── mod.rs                   # Module exports, feature gates
+├── reader/                  # Unified reader with strategy selection
+│   ├── config.rs           # ReaderConfig, HttpAuthConfig
+│   └── mod.rs              # RoboReader, URL parsing
+├── writer/                  # Unified writer with strategy selection
+│   ├── builder.rs          # WriterConfig builder
+│   └── mod.rs              # RoboWriter, URL handling
+├── traits.rs                # FormatReader, FormatWriter traits
+├── metadata.rs              # FileFormat, ChannelInfo, FileInfo
+├── detection.rs             # Format detection from file path
+├── filter.rs                # Message filtering utilities
+├── streaming/               # Streaming parser interface (remote feature)
+│   ├── mod.rs              # Module exports
+│   └── parser.rs           # StreamingParser trait
+├── s3/                      # S3 client and streaming (remote feature)
+│   ├── client.rs           # AWS S3 HTTP client with SigV4
+│   ├── reader.rs           # S3Reader for streaming S3 data
+│   ├── writer.rs           # S3Writer with multipart upload
+│   ├── location.rs         # S3 URL parsing (s3://...)
+│   ├── config.rs           # S3 configuration
+│   ├── signer.rs           # AWS request signing
+│   └── error.rs            # S3-specific errors
+├── transport/               # Transport layer
+│   ├── core.rs             # Transport trait definition
+│   ├── local.rs            # Local file transport (mmap)
+│   ├── http/               # HTTP/HTTPS transport (remote feature)
+│   │   ├── transport.rs    # HttpTransport implementation
+│   │   ├── writer.rs       # HttpWriter for PUT uploads
+│   │   └── upload_strategy.rs
+│   ├── s3/                 # S3 transport (remote feature)
+│   │   ├── transport.rs    # S3Transport implementation
+│   │   └── mod.rs          # Re-exports from io/s3
+│   └── memory/             # In-memory transport for testing (remote)
 └── formats/
-    ├── mod.rs
-    ├── mcap/
-    │   ├── reader.rs   # McapReader with auto-decoding
-    │   ├── writer.rs   # ParallelMcapWriter
-    │   ├── parallel.rs # Low-level parallel reader
-    │   ├── sequential.rs # Low-level sequential reader
-    │   ├── two_pass.rs # Two-pass reader strategy
-    │   └── constants.rs # MCAP format constants
-    └── bag/
-        ├── reader.rs   # ParallelBagReader
-        ├── writer.rs   # BagWriter
-        ├── parallel.rs # Low-level parallel reader
-        ├── sequential.rs # Low-level sequential reader
-        └── parser.rs   # Bag format parsing
+    ├── mod.rs              # Format module exports
+    ├── mcap/               # MCAP format implementation
+    │   ├── reader.rs       # McapReader with auto-decoding
+    │   ├── writer.rs       # ParallelMcapWriter
+    │   ├── parallel.rs     # Low-level parallel reader
+    │   ├── sequential.rs   # Low-level sequential reader
+    │   ├── two_pass.rs     # Two-pass reader strategy
+    │   ├── streaming.rs    # Streaming MCAP parser
+    │   ├── transport_reader.rs  # Transport-based reader
+    │   ├── s3_adapter.rs   # S3 streaming adapter
+    │   └── constants.rs    # MCAP format constants
+    ├── bag/                # ROS1 bag format implementation
+    │   ├── reader.rs       # ParallelBagReader
+    │   ├── writer.rs       # BagWriter
+    │   ├── parallel.rs     # Low-level parallel reader
+    │   ├── sequential.rs   # Low-level sequential reader
+    │   ├── stream.rs       # Streaming BAG parser
+    │   └── parser.rs       # Bag format parsing
+    └── rrd/                # Rerun RRD format implementation
+        ├── reader.rs       # RrdReader
+        ├── writer.rs       # RrdWriter
+        ├── parallel.rs     # Parallel reader
+        ├── stream.rs       # Streaming RRD parser
+        ├── arrow_msg.rs    # Arrow protobuf encoding
+        └── constants.rs    # RRD format constants
 ```
-
-## Adding a New Format
-
-To add a new format (e.g., ROS2 bag):
-
-1. **Create format module**: `src/io/formats/ros2bag/`
-2. **Implement traits**:
-   - `FormatReader` trait for reading
-   - `FormatWriter` trait for writing
-   - `FormatRewriter` trait for rewriting (in `rewriter/ros2bag.rs`)
-3. **Add low-level I/O**: `reader.rs`, `writer.rs` with parallel/sequential strategies
-4. **Update format detection**: Add extension to `io/detection.rs`
-5. **Update rewriter facade**: Add format handling to `rewriter/facade.rs`
-6. **Export module**: Add to `io/formats/mod.rs` and `lib.rs`
 
 ## Related Documentation
 
 - [CLAUDE.md](CLAUDE.md) - Project overview and build commands
 - [README.md](README.md) - User-facing documentation and examples
+- [Cargo.toml](Cargo.toml) - Feature flags and dependencies

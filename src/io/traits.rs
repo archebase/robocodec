@@ -39,6 +39,8 @@ pub trait FormatReader: Send + Sync {
     /// This method enables format readers to work with any data source
     /// (local files, S3, HTTP, etc.) through the unified Transport abstraction.
     ///
+    /// Only available when the `remote` feature is enabled.
+    ///
     /// # Arguments
     ///
     /// * `transport` - Boxed transport trait object for reading data
@@ -54,6 +56,7 @@ pub trait FormatReader: Send + Sync {
     /// - The transport cannot be read
     /// - The data is not a valid file for this format
     /// - Required metadata cannot be extracted
+    #[cfg(feature = "remote")]
     fn open_from_transport(
         transport: Box<dyn crate::io::transport::Transport>,
         path: String,

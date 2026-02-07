@@ -1528,7 +1528,7 @@ mod s3_integration_tests {
         println!("  ./scripts/upload-fixtures-to-minio.sh");
         println!();
         println!("Run tests:");
-        println!("  cargo test --features s3 s3_integration_tests");
+        println!("  cargo test --features remote s3_integration_tests");
         println!();
         println!("Web console: http://localhost:9001 (minioadmin/minioadmin)");
         println!("=========================================\n");

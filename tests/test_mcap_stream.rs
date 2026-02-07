@@ -4,12 +4,12 @@
 
 //! Integration tests for MCAP streaming parser.
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 use robocodec::io::s3::{FatalError, MCAP_MAGIC, StreamingMcapParser};
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 use robocodec::io::streaming::StreamingParser;
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_mcap_stream_parser_new() {
     let parser = StreamingMcapParser::new();
@@ -18,14 +18,14 @@ fn test_mcap_stream_parser_new() {
     assert_eq!(parser.message_count(), 0);
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_mcap_stream_parser_default() {
     let parser = StreamingMcapParser::default();
     assert_eq!(parser.message_count(), 0);
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_mcap_stream_parse_magic() {
     let mut parser = StreamingMcapParser::new();
@@ -41,7 +41,7 @@ fn test_mcap_stream_parse_magic() {
     assert!(parser.is_initialized());
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_mcap_stream_parse_invalid_magic() {
     let mut parser = StreamingMcapParser::new();
@@ -62,7 +62,7 @@ fn test_mcap_stream_parse_invalid_magic() {
     }
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_mcap_stream_constants() {
     assert_eq!(MCAP_MAGIC.len(), 8);
@@ -76,14 +76,14 @@ fn test_mcap_stream_constants() {
     assert_eq!(MCAP_MAGIC[7], 0x0A);
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_mcap_stream_channels_empty() {
     let parser = StreamingMcapParser::new();
     assert!(parser.channels().is_empty());
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_mcap_stream_parse_chunk_incomplete() {
     let mut parser = StreamingMcapParser::new();
@@ -101,7 +101,7 @@ fn test_mcap_stream_parse_chunk_incomplete() {
 
 /// Test that MCAP files can be read using the public API (RoboReader).
 /// This ensures the public API provides equivalent functionality to internal streaming parsers.
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_public_api_robo_reader_mcap() {
     use robocodec::{FormatReader, RoboReader};

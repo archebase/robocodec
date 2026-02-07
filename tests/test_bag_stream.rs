@@ -4,13 +4,13 @@
 
 //! Integration tests for BAG streaming parser.
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 use robocodec::io::s3::{
     BAG_MAGIC_PREFIX, BagMessageRecord, BagRecordFields, BagRecordHeader, FatalError,
     StreamingBagParser,
 };
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_parser_new() {
     let parser = StreamingBagParser::new();
@@ -20,14 +20,14 @@ fn test_bag_stream_parser_new() {
     assert!(parser.version().is_none());
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_parser_default() {
     let parser = StreamingBagParser::default();
     assert_eq!(parser.message_count(), 0);
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_parse_magic() {
     let mut parser = StreamingBagParser::new();
@@ -44,7 +44,7 @@ fn test_bag_stream_parse_magic() {
     assert_eq!(parser.version(), Some("2.0"));
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_parse_invalid_magic() {
     let mut parser = StreamingBagParser::new();
@@ -62,14 +62,14 @@ fn test_bag_stream_parse_invalid_magic() {
     }
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_constants() {
     assert_eq!(BAG_MAGIC_PREFIX.len(), 9);
     assert_eq!(BAG_MAGIC_PREFIX, b"#ROSBAG V");
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_channels_empty() {
     let parser = StreamingBagParser::new();
@@ -77,7 +77,7 @@ fn test_bag_stream_channels_empty() {
     assert!(parser.conn_id_map().is_empty());
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_parse_chunk_incomplete() {
     let mut parser = StreamingBagParser::new();
@@ -89,7 +89,7 @@ fn test_bag_stream_parse_chunk_incomplete() {
     assert!(!parser.is_initialized());
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_parse_record_header() {
     // Build a simple header with op=0x02 (MSG_DATA)
@@ -104,7 +104,7 @@ fn test_bag_stream_parse_record_header() {
     assert_eq!(fields.op, Some(0x02));
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_parse_field_conn() {
     let mut fields = BagRecordFields::default();
@@ -113,7 +113,7 @@ fn test_bag_stream_parse_field_conn() {
     assert_eq!(fields.conn, Some(1));
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_parse_field_time() {
     let mut fields = BagRecordFields::default();
@@ -127,7 +127,7 @@ fn test_bag_stream_parse_field_time() {
     assert_eq!(fields.time, Some(expected_time));
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_message_record() {
     let msg = BagMessageRecord {
@@ -140,7 +140,7 @@ fn test_bag_stream_message_record() {
     assert_eq!(msg.data, vec![1, 2, 3]);
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_record_header() {
     let header = BagRecordHeader {
@@ -153,7 +153,7 @@ fn test_bag_stream_record_header() {
     assert_eq!(header.data_len, 100);
 }
 
-#[cfg(feature = "s3")]
+#[cfg(feature = "remote")]
 #[test]
 fn test_bag_stream_record_fields_default() {
     let fields = BagRecordFields::default();

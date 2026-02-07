@@ -19,6 +19,7 @@ pub mod parser;
 pub mod sequential;
 
 // Streaming parser (transport-agnostic)
+#[cfg(feature = "remote")]
 pub mod stream;
 
 // Writer implementation
@@ -30,6 +31,7 @@ pub use parallel::{
     BagDecodedMessageWithTimestampStream, BagFormat, BagRawIter, ParallelBagReader,
 };
 pub use sequential::{BagSequentialFormat, SequentialBagRawIter, SequentialBagReader};
+#[cfg(feature = "remote")]
 pub use stream::{
     BAG_MAGIC_PREFIX, BagMessageRecord, BagRecord, BagRecordFields, BagRecordHeader,
     StreamingBagParser,
