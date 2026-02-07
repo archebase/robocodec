@@ -80,6 +80,7 @@ impl CodecValue {
     // ========================================================================
 
     /// Check if this value is a numeric type (integers or floats).
+    #[must_use]
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
@@ -97,6 +98,7 @@ impl CodecValue {
     }
 
     /// Check if this value is an integer type (signed or unsigned).
+    #[must_use]
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
@@ -112,6 +114,7 @@ impl CodecValue {
     }
 
     /// Check if this value is a signed integer.
+    #[must_use]
     pub fn is_signed_integer(&self) -> bool {
         matches!(
             self,
@@ -123,6 +126,7 @@ impl CodecValue {
     }
 
     /// Check if this value is an unsigned integer.
+    #[must_use]
     pub fn is_unsigned_integer(&self) -> bool {
         matches!(
             self,
@@ -134,21 +138,25 @@ impl CodecValue {
     }
 
     /// Check if this value is a floating-point type.
+    #[must_use]
     pub fn is_float(&self) -> bool {
         matches!(self, CodecValue::Float32(_) | CodecValue::Float64(_))
     }
 
     /// Check if this value is a temporal type (timestamp or duration).
+    #[must_use]
     pub fn is_temporal(&self) -> bool {
         matches!(self, CodecValue::Timestamp(_) | CodecValue::Duration(_))
     }
 
     /// Check if this value is a container type (array or struct).
+    #[must_use]
     pub fn is_container(&self) -> bool {
         matches!(self, CodecValue::Array(_) | CodecValue::Struct(_))
     }
 
     /// Check if this value is null.
+    #[must_use]
     pub fn is_null(&self) -> bool {
         matches!(self, CodecValue::Null)
     }
@@ -158,6 +166,7 @@ impl CodecValue {
     // ========================================================================
 
     /// Try to convert this value to f64 (for numeric values only).
+    #[must_use]
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             CodecValue::Int8(v) => Some(*v as f64),
@@ -175,6 +184,7 @@ impl CodecValue {
     }
 
     /// Try to convert this value to i64 (for integer types only).
+    #[must_use]
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             CodecValue::Int8(v) => Some(*v as i64),
@@ -196,6 +206,7 @@ impl CodecValue {
     }
 
     /// Try to convert this value to u64 (for unsigned integer types only).
+    #[must_use]
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             CodecValue::UInt8(v) => Some(*v as u64),
@@ -235,6 +246,7 @@ impl CodecValue {
     }
 
     /// Try to get the inner string value.
+    #[must_use]
     pub fn as_str(&self) -> Option<&str> {
         match self {
             CodecValue::String(s) => Some(s),
@@ -243,6 +255,7 @@ impl CodecValue {
     }
 
     /// Try to get the inner bytes.
+    #[must_use]
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
             CodecValue::Bytes(b) => Some(b),
@@ -251,6 +264,7 @@ impl CodecValue {
     }
 
     /// Try to get the inner struct.
+    #[must_use]
     pub fn as_struct(&self) -> Option<&DecodedMessage> {
         match self {
             CodecValue::Struct(s) => Some(s),
@@ -267,6 +281,7 @@ impl CodecValue {
     }
 
     /// Try to get the inner array.
+    #[must_use]
     pub fn as_array(&self) -> Option<&[CodecValue]> {
         match self {
             CodecValue::Array(arr) => Some(arr),
@@ -283,6 +298,7 @@ impl CodecValue {
     }
 
     /// Get the timestamp value as nanoseconds.
+    #[must_use]
     pub fn as_timestamp_nanos(&self) -> Option<i64> {
         match self {
             CodecValue::Timestamp(nanos) => Some(*nanos),
@@ -291,6 +307,7 @@ impl CodecValue {
     }
 
     /// Get the duration value as nanoseconds.
+    #[must_use]
     pub fn as_duration_nanos(&self) -> Option<i64> {
         match self {
             CodecValue::Duration(nanos) => Some(*nanos),
@@ -303,6 +320,7 @@ impl CodecValue {
     // ========================================================================
 
     /// Get the type name of this value as a string.
+    #[must_use]
     pub fn type_name(&self) -> &'static str {
         match self {
             CodecValue::Bool(_) => "bool",
@@ -330,6 +348,7 @@ impl CodecValue {
     ///
     /// This is an approximation for memory usage tracking.
     /// Does not include HashMap overhead for structs.
+    #[must_use]
     pub fn size_hint(&self) -> usize {
         match self {
             CodecValue::Bool(_) | CodecValue::Int8(_) | CodecValue::UInt8(_) => 1,
@@ -354,6 +373,7 @@ impl CodecValue {
     /// Create a timestamp from seconds and nanoseconds (unsigned).
     ///
     /// Common in ROS1 time representation.
+    #[must_use]
     pub fn timestamp_from_secs_nanos(secs: u32, nanos: u32) -> Self {
         let total_nanos = (secs as i64) * 1_000_000_000 + (nanos as i64);
         CodecValue::Timestamp(total_nanos)
@@ -362,6 +382,7 @@ impl CodecValue {
     /// Create a timestamp from signed seconds and unsigned nanoseconds.
     ///
     /// Common in ROS2 time representation (builtin_interfaces/Time).
+    #[must_use]
     pub fn timestamp_from_signed_secs_nanos(secs: i32, nanos: u32) -> Self {
         let total_nanos = (secs as i64) * 1_000_000_000 + (nanos as i64);
         CodecValue::Timestamp(total_nanos)
@@ -370,6 +391,7 @@ impl CodecValue {
     /// Create a duration from signed seconds and nanoseconds.
     ///
     /// Supports negative durations.
+    #[must_use]
     pub fn duration_from_secs_nanos(secs: i32, nanos: i32) -> Self {
         let total_nanos = (secs as i64) * 1_000_000_000 + (nanos as i64);
         CodecValue::Duration(total_nanos)
@@ -382,6 +404,7 @@ impl CodecValue {
     /// Create a Timestamp from ROS1 time (secs: u32, nsecs: u32).
     ///
     /// ROS1 time uses unsigned 32-bit seconds and nanoseconds.
+    #[must_use]
     pub fn from_ros1_time(secs: u32, nsecs: u32) -> Self {
         Self::timestamp_from_secs_nanos(secs, nsecs)
     }
@@ -390,6 +413,7 @@ impl CodecValue {
     ///
     /// ROS2 builtin_interfaces/Time uses signed 32-bit seconds
     /// and unsigned 32-bit nanoseconds.
+    #[must_use]
     pub fn from_ros2_time(sec: i32, nanosec: u32) -> Self {
         Self::timestamp_from_signed_secs_nanos(sec, nanosec)
     }
@@ -397,6 +421,7 @@ impl CodecValue {
     /// Create a Duration from ROS1 duration (secs: i32, nsecs: i32).
     ///
     /// ROS1 duration uses signed 32-bit seconds and nanoseconds.
+    #[must_use]
     pub fn from_ros1_duration(secs: i32, nsecs: i32) -> Self {
         Self::duration_from_secs_nanos(secs, nsecs)
     }
@@ -405,6 +430,7 @@ impl CodecValue {
     ///
     /// ROS2 builtin_interfaces/Duration uses signed 32-bit seconds
     /// and unsigned 32-bit nanoseconds.
+    #[must_use]
     pub fn from_ros2_duration(sec: i32, nanosec: u32) -> Self {
         let total_nanos = (sec as i64) * 1_000_000_000 + (nanosec as i64);
         CodecValue::Duration(total_nanos)
@@ -476,6 +502,7 @@ pub enum PrimitiveType {
 
 impl PrimitiveType {
     /// Get the alignment requirement for this primitive type in bytes.
+    #[must_use]
     pub const fn alignment(self) -> u64 {
         match self {
             PrimitiveType::Bool
@@ -490,6 +517,7 @@ impl PrimitiveType {
     }
 
     /// Get the size in bytes for this primitive type, if fixed.
+    #[must_use]
     pub const fn size(self) -> Option<usize> {
         match self {
             PrimitiveType::Bool => Some(1),
@@ -502,6 +530,7 @@ impl PrimitiveType {
     }
 
     /// Parse a primitive type from a string.
+    #[must_use]
     pub fn try_from_str(s: &str) -> Option<Self> {
         match s {
             "bool" => Some(PrimitiveType::Bool),

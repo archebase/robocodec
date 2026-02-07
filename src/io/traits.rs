@@ -100,6 +100,7 @@ pub trait FormatReader: Send + Sync {
     fn path(&self) -> &str;
 
     /// Get file information metadata.
+    #[must_use]
     fn file_info(&self) -> FileInfo {
         FileInfo {
             path: self.path().to_string(),
@@ -120,6 +121,7 @@ pub trait FormatReader: Send + Sync {
     fn file_size(&self) -> u64;
 
     /// Get the duration in nanoseconds.
+    #[must_use]
     fn duration(&self) -> u64 {
         match (self.start_time(), self.end_time()) {
             (Some(s), Some(e)) if e > s => e - s,
@@ -239,24 +241,28 @@ impl Default for ParallelReaderConfig {
 
 impl ParallelReaderConfig {
     /// Set the number of worker threads.
+    #[must_use]
     pub fn with_threads(mut self, num_threads: usize) -> Self {
         self.num_threads = Some(num_threads);
         self
     }
 
     /// Set the topic filter.
+    #[must_use]
     pub fn with_topic_filter(mut self, filter: TopicFilter) -> Self {
         self.topic_filter = Some(filter);
         self
     }
 
     /// Set the channel capacity for backpressure.
+    #[must_use]
     pub fn with_channel_capacity(mut self, capacity: usize) -> Self {
         self.channel_capacity = Some(capacity);
         self
     }
 
     /// Set the progress reporting interval.
+    #[must_use]
     pub fn with_progress_interval(mut self, interval: usize) -> Self {
         self.progress_interval = interval;
         self
@@ -266,6 +272,7 @@ impl ParallelReaderConfig {
     ///
     /// When enabled, small chunks are merged into larger chunks to reduce
     /// compression overhead and improve throughput.
+    #[must_use]
     pub fn with_merge_enabled(mut self, enabled: bool) -> Self {
         self.merge_enabled = enabled;
         self
@@ -275,6 +282,7 @@ impl ParallelReaderConfig {
     ///
     /// Only used when merge_enabled is true. Chunks will be merged
     /// until they reach approximately this size.
+    #[must_use]
     pub fn with_merge_target_size(mut self, size: usize) -> Self {
         self.merge_target_size = size;
         self
@@ -332,6 +340,7 @@ pub struct MessageChunkData {
 
 impl MessageChunkData {
     /// Create a new empty message chunk.
+    #[must_use]
     pub fn new(sequence: u64) -> Self {
         Self {
             sequence,
@@ -349,16 +358,19 @@ impl MessageChunkData {
     }
 
     /// Get the number of messages in this chunk.
+    #[must_use]
     pub fn message_count(&self) -> usize {
         self.messages.len()
     }
 
     /// Check if this chunk is empty.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
 
     /// Get the total size of all message data in this chunk.
+    #[must_use]
     pub fn total_data_size(&self) -> usize {
         self.messages.iter().map(|m| m.data.len()).sum()
     }

@@ -34,6 +34,7 @@ impl HttpAuthConfig {
     /// let config = HttpAuthConfig::bearer("your-token-here");
     /// assert!(config.bearer_token().is_some());
     /// ```
+    #[must_use]
     pub fn bearer(token: impl Into<String>) -> Self {
         Self {
             bearer_token: Some(token.into()),
@@ -58,6 +59,7 @@ impl HttpAuthConfig {
     /// assert!(config.basic_username().is_some());
     /// assert_eq!(config.basic_username(), Some("user"));
     /// ```
+    #[must_use]
     pub fn basic(username: impl Into<String>, password: impl Into<String>) -> Self {
         Self {
             bearer_token: None,
@@ -67,21 +69,25 @@ impl HttpAuthConfig {
     }
 
     /// Check if this configuration has any authentication set.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bearer_token.is_none() && self.basic_username.is_none()
     }
 
     /// Get the bearer token if configured.
+    #[must_use]
     pub fn bearer_token(&self) -> Option<&str> {
         self.bearer_token.as_deref()
     }
 
     /// Get the basic auth username if configured.
+    #[must_use]
     pub fn basic_username(&self) -> Option<&str> {
         self.basic_username.as_deref()
     }
 
     /// Get the basic auth password if configured.
+    #[must_use]
     pub fn basic_password(&self) -> Option<&str> {
         self.basic_password.as_deref()
     }
@@ -146,6 +152,7 @@ impl Default for WriterConfig {
 
 impl WriterConfig {
     /// Create a new builder for WriterConfig.
+    #[must_use]
     pub fn builder() -> WriterConfigBuilder {
         WriterConfigBuilder::new()
     }
@@ -172,23 +179,27 @@ pub struct WriterConfigBuilder {
 
 impl WriterConfigBuilder {
     /// Create a new builder with default configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the compression level.
+    #[must_use]
     pub fn compression_level(mut self, level: i32) -> Self {
         self.config.compression_level = Some(level);
         self
     }
 
     /// Set the chunk size in bytes.
+    #[must_use]
     pub fn chunk_size(mut self, size: usize) -> Self {
         self.config.chunk_size = Some(size);
         self
     }
 
     /// Set the number of threads.
+    #[must_use]
     pub fn num_threads(mut self, count: usize) -> Self {
         self.config.num_threads = Some(count);
         self
@@ -208,6 +219,7 @@ impl WriterConfigBuilder {
     ///     .http_bearer_token("your-token-here")
     ///     .build();
     /// ```
+    #[must_use]
     pub fn http_bearer_token(mut self, token: impl Into<String>) -> Self {
         self.config.http_auth = HttpAuthConfig::bearer(token);
         self
@@ -228,6 +240,7 @@ impl WriterConfigBuilder {
     ///     .http_basic_auth("user", "pass")
     ///     .build();
     /// ```
+    #[must_use]
     pub fn http_basic_auth(
         mut self,
         username: impl Into<String>,
@@ -251,6 +264,7 @@ impl WriterConfigBuilder {
     ///     .http_upload_chunk_size(10 * 1024 * 1024) // 10MB
     ///     .build();
     /// ```
+    #[must_use]
     pub fn http_upload_chunk_size(mut self, size: usize) -> Self {
         self.config.http_upload_chunk_size = size;
         self
@@ -270,12 +284,14 @@ impl WriterConfigBuilder {
     ///     .http_max_retries(5)
     ///     .build();
     /// ```
+    #[must_use]
     pub fn http_max_retries(mut self, retries: usize) -> Self {
         self.config.http_max_retries = retries;
         self
     }
 
     /// Build the configuration.
+    #[must_use]
     pub fn build(self) -> WriterConfig {
         self.config
     }
@@ -289,29 +305,34 @@ pub struct WriterBuilder {
 
 impl WriterBuilder {
     /// Create a new builder with default configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the path to the output file.
+    #[must_use]
     pub fn path<P: AsRef<std::path::Path>>(mut self, path: P) -> Self {
         self.config.path = path.as_ref().to_path_buf();
         self
     }
 
     /// Set the writing strategy.
+    #[must_use]
     pub fn strategy(mut self, strategy: WriteStrategy) -> Self {
         self.config.strategy = strategy;
         self
     }
 
     /// Set the compression level (1-22 for ZSTD).
+    #[must_use]
     pub fn compression_level(mut self, level: i32) -> Self {
         self.config.compression_level = Some(level);
         self
     }
 
     /// Set the chunk size in bytes.
+    #[must_use]
     pub fn chunk_size(mut self, size: usize) -> Self {
         self.config.chunk_size = Some(size);
         self

@@ -134,6 +134,7 @@ impl CodecError {
     }
 
     /// Create a buffer too short error.
+    #[must_use]
     pub fn buffer_too_short(requested: usize, available: usize, cursor_pos: u64) -> Self {
         CodecError::BufferTooShort {
             requested,
@@ -143,11 +144,13 @@ impl CodecError {
     }
 
     /// Create an alignment error.
+    #[must_use]
     pub fn alignment_error(expected: u64, actual: u64) -> Self {
         CodecError::AlignmentError { expected, actual }
     }
 
     /// Create a length exceeded error.
+    #[must_use]
     pub fn length_exceeded(length: usize, position: usize, buffer_len: usize) -> Self {
         CodecError::LengthExceeded {
             length,
@@ -178,6 +181,7 @@ impl CodecError {
     }
 
     /// Get structured fields for logging.
+    #[must_use]
     pub fn log_fields(&self) -> Vec<(&'static str, String)> {
         match self {
             CodecError::ParseError { context, message } => {

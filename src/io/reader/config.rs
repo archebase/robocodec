@@ -17,6 +17,7 @@ pub struct HttpAuthConfig {
 
 impl HttpAuthConfig {
     /// Create a new bearer token authentication config.
+    #[must_use]
     pub fn bearer(token: impl Into<String>) -> Self {
         Self {
             bearer_token: Some(token.into()),
@@ -26,6 +27,7 @@ impl HttpAuthConfig {
     }
 
     /// Create a new basic authentication config.
+    #[must_use]
     pub fn basic(username: impl Into<String>, password: impl Into<String>) -> Self {
         Self {
             bearer_token: None,
@@ -35,6 +37,7 @@ impl HttpAuthConfig {
     }
 
     /// Check if any authentication is configured.
+    #[must_use]
     pub fn is_configured(&self) -> bool {
         self.bearer_token.is_some() || self.basic_username.is_some()
     }
@@ -71,11 +74,13 @@ impl Default for ReaderConfig {
 
 impl ReaderConfig {
     /// Create a new builder for ReaderConfig.
+    #[must_use]
     pub fn builder() -> ReaderConfigBuilder {
         ReaderConfigBuilder::new()
     }
 
     /// Create a config that prefers parallel reading.
+    #[must_use]
     pub fn parallel() -> Self {
         Self {
             prefer_parallel: true,
@@ -84,6 +89,7 @@ impl ReaderConfig {
     }
 
     /// Create a config that prefers sequential reading.
+    #[must_use]
     pub fn sequential() -> Self {
         Self {
             prefer_parallel: false,
@@ -101,6 +107,7 @@ impl ReaderConfig {
     /// let config = ReaderConfig::default()
     ///     .with_http_bearer_token("your-token-here");
     /// ```
+    #[must_use]
     pub fn with_http_bearer_token(mut self, token: impl Into<String>) -> Self {
         self.http_auth = HttpAuthConfig::bearer(token);
         self
@@ -116,6 +123,7 @@ impl ReaderConfig {
     /// let config = ReaderConfig::default()
     ///     .with_http_basic_auth("username", "password");
     /// ```
+    #[must_use]
     pub fn with_http_basic_auth(
         mut self,
         username: impl Into<String>,
@@ -147,41 +155,48 @@ pub struct ReaderConfigBuilder {
 
 impl ReaderConfigBuilder {
     /// Create a new builder with default configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set whether to prefer parallel reading.
+    #[must_use]
     pub fn prefer_parallel(mut self, value: bool) -> Self {
         self.config.prefer_parallel = value;
         self
     }
 
     /// Set the number of threads for parallel reading.
+    #[must_use]
     pub fn num_threads(mut self, count: usize) -> Self {
         self.config.num_threads = Some(count);
         self
     }
 
     /// Set whether chunk merging is enabled.
+    #[must_use]
     pub fn chunk_merge_enabled(mut self, enabled: bool) -> Self {
         self.config.chunk_merge_enabled = enabled;
         self
     }
 
     /// Set the target merged chunk size in bytes.
+    #[must_use]
     pub fn chunk_merge_target_size(mut self, size: usize) -> Self {
         self.config.chunk_merge_target_size = size;
         self
     }
 
     /// Set HTTP bearer token authentication.
+    #[must_use]
     pub fn http_bearer_token(mut self, token: impl Into<String>) -> Self {
         self.config.http_auth = HttpAuthConfig::bearer(token);
         self
     }
 
     /// Set HTTP basic authentication.
+    #[must_use]
     pub fn http_basic_auth(
         mut self,
         username: impl Into<String>,
@@ -192,6 +207,7 @@ impl ReaderConfigBuilder {
     }
 
     /// Build the configuration.
+    #[must_use]
     pub fn build(self) -> ReaderConfig {
         self.config
     }
