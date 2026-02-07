@@ -11,11 +11,9 @@
 
 pub mod ast;
 pub mod builtin_types;
-pub mod descriptor;
 pub mod parser;
 
 pub use ast::{Field, FieldType, MessageSchema, MessageType, PrimitiveType};
-pub use descriptor::{FieldInfo, SchemaDescriptor};
 pub use parser::{parse_schema, parse_schema_with_encoding};
 
 // Re-export parser-specific types

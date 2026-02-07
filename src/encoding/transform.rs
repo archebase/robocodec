@@ -167,50 +167,6 @@ pub trait SchemaTransformer: Send + Sync {
 }
 
 // =============================================================================
-// Transform Result
-// =============================================================================
-
-/// Result of a schema transformation operation.
-#[derive(Debug, Clone)]
-pub struct TransformResult {
-    /// Transformed schema metadata
-    pub schema: SchemaMetadata,
-    /// Whether the schema was modified
-    pub modified: bool,
-    /// Types that were renamed
-    pub renamed_types: Vec<(String, String)>,
-}
-
-impl TransformResult {
-    /// Create a new transform result.
-    pub fn new(schema: SchemaMetadata) -> Self {
-        Self {
-            schema,
-            modified: false,
-            renamed_types: Vec::new(),
-        }
-    }
-
-    /// Create a modified transform result.
-    pub fn modified(schema: SchemaMetadata, renamed_types: Vec<(String, String)>) -> Self {
-        Self {
-            schema,
-            modified: true,
-            renamed_types,
-        }
-    }
-
-    /// Create an unmodified transform result.
-    pub fn unmodified(schema: SchemaMetadata) -> Self {
-        Self {
-            schema,
-            modified: false,
-            renamed_types: Vec::new(),
-        }
-    }
-}
-
-// =============================================================================
 // CDR Schema Transformer
 // =============================================================================
 
@@ -864,35 +820,6 @@ mod tests {
             }
             _ => panic!("Expected Json variant"),
         }
-    }
-
-    // ========================================================================
-    // TransformResult Tests
-    // ========================================================================
-
-    #[test]
-    fn test_transform_result_new() {
-        let schema = SchemaMetadata::cdr("test/Msg".to_string(), "int32 value".to_string());
-        let result = TransformResult::new(schema.clone());
-        assert!(!result.modified);
-        assert!(result.renamed_types.is_empty());
-    }
-
-    #[test]
-    fn test_transform_result_modified() {
-        let schema = SchemaMetadata::cdr("new/Msg".to_string(), "int32 value".to_string());
-        let renamed = vec![("old/Msg".to_string(), "new/Msg".to_string())];
-        let result = TransformResult::modified(schema.clone(), renamed.clone());
-        assert!(result.modified);
-        assert_eq!(result.renamed_types, renamed);
-    }
-
-    #[test]
-    fn test_transform_result_unmodified() {
-        let schema = SchemaMetadata::cdr("test/Msg".to_string(), "int32 value".to_string());
-        let result = TransformResult::unmodified(schema.clone());
-        assert!(!result.modified);
-        assert!(result.renamed_types.is_empty());
     }
 
     // ========================================================================

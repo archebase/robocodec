@@ -11,7 +11,7 @@
 //!
 //! The codec system is organized into layers:
 //!
-//! - **Core traits** ([`MessageCodec`], [`DynCodec`]) - Define the interface
+//! - **Core trait** ([`DynCodec`]) - Define the interface
 //! - **Encoding-specific implementations** (cdr, protobuf) - Provide codec behavior
 //! - **Factory** ([`CodecFactory`]) - Creates appropriate codec for each encoding
 //!
@@ -35,58 +35,10 @@ use crate::core::{CodecError, DecodedMessage, Encoding, Result};
 
 pub use super::transform::{
     CdrSchemaTransformer, ProtobufSchemaTransformer, SchemaMetadata, SchemaTransformer,
-    TransformResult,
 };
 
 pub use super::cdr::CdrCodec;
 pub use super::protobuf::ProtobufCodec;
-
-// =============================================================================
-// Message Codec Trait
-// =============================================================================
-
-/// Unified codec interface for decoding and encoding messages.
-///
-/// This trait abstracts over different encoding formats (CDR, Protobuf, JSON)
-/// to allow the rewriter to handle all formats through a single interface.
-///
-/// # Type Parameters
-///
-/// * `S` - Schema type (e.g., `MessageSchema` for CDR, `SchemaMetadata` for protobuf)
-pub trait MessageCodec<S>: Send + Sync {
-    /// Decode raw message data into a `DecodedMessage`.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - Raw message bytes
-    /// * `schema` - Schema metadata for decoding
-    ///
-    /// # Returns
-    ///
-    /// A `DecodedMessage` containing decoded field-value pairs
-    fn decode(&self, data: &[u8], schema: &S) -> Result<DecodedMessage>;
-
-    /// Encode a `DecodedMessage` back to raw bytes.
-    ///
-    /// # Arguments
-    ///
-    /// * `message` - Decoded message to encode
-    /// * `schema` - Schema metadata for encoding
-    ///
-    /// # Returns
-    ///
-    /// Encoded message bytes
-    fn encode(&mut self, message: &DecodedMessage, schema: &S) -> Result<Vec<u8>>;
-
-    /// Get the encoding type this codec handles.
-    fn encoding_type(&self) -> Encoding;
-
-    /// Reset encoder state for reuse.
-    ///
-    /// Some encoders maintain internal state (e.g., buffers). This method
-    /// allows reusing the same encoder instance for multiple messages.
-    fn reset(&mut self);
-}
 
 // =============================================================================
 // Codec Factory
@@ -196,7 +148,7 @@ impl Default for CodecFactory {
 // Dynamic Codec Trait
 // =============================================================================
 
-/// Dynamic version of [`MessageCodec`] for use in trait objects.
+/// Dynamic codec trait for use in trait objects.
 ///
 /// This trait allows storing different codec implementations in a collection
 /// and routing to the appropriate codec at runtime.

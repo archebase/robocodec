@@ -11,7 +11,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 
-use crate::{DecodedMessage, Result};
+use crate::Result;
 
 use super::metadata::{ChannelInfo, FileInfo, RawMessage};
 
@@ -131,32 +131,6 @@ pub trait FormatReader: Send + Sync {
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-/// Streaming iterator over raw messages.
-///
-/// This trait provides an iterator interface for reading raw messages
-/// from a file. The iterator owns its data and is `Send`, allowing it
-/// to be moved across threads.
-pub trait RawMessageStream: Iterator<Item = Result<RawMessage>> + Send {}
-
-// Blanket implementation for any matching type
-impl<T> RawMessageStream for T where T: Iterator<Item = Result<RawMessage>> + Send {}
-
-/// Streaming iterator over decoded messages.
-///
-/// This trait provides an iterator interface for reading decoded messages
-/// from a file. Messages are decoded using the appropriate decoder for
-/// their encoding type (CDR, Protobuf, JSON, etc.).
-pub trait DecodedMessageStream:
-    Iterator<Item = Result<(DecodedMessage, ChannelInfo)>> + Send
-{
-}
-
-// Blanket implementation for any matching type
-impl<T> DecodedMessageStream for T where
-    T: Iterator<Item = Result<(DecodedMessage, ChannelInfo)>> + Send
-{
-}
-
 /// Trait for writing robotics data to different file formats.
 ///
 /// This trait abstracts over format-specific writers to provide a unified API.
@@ -223,47 +197,6 @@ pub trait FormatWriter: Send {
 
     /// Downcast mutably to `Any` for accessing format-specific functionality.
     fn as_any_mut(&mut self) -> &mut dyn Any;
-}
-
-/// Builder for creating format-specific readers.
-///
-/// This trait allows format-specific readers to expose a builder pattern
-/// for configuration.
-pub trait FormatReaderBuilder: Default {
-    type Reader: FormatReader;
-
-    /// Create a new builder with default settings.
-    fn new() -> Self {
-        Self::default()
-    }
-
-    /// Build the reader from the given path.
-    fn build<P: AsRef<std::path::Path>>(self, path: P) -> Result<Self::Reader>;
-}
-
-/// Builder for creating format-specific writers.
-///
-/// This trait allows format-specific writers to expose a builder pattern
-/// for configuration.
-pub trait FormatWriterBuilder: Default {
-    type Writer: FormatWriter;
-
-    /// Create a new builder with default settings.
-    fn new() -> Self {
-        Self::default()
-    }
-
-    /// Set the output path.
-    fn with_path<P: AsRef<std::path::Path>>(self, path: P) -> Self;
-
-    /// Set the compression level (if supported).
-    fn with_compression(self, level: i32) -> Self;
-
-    /// Set the chunk size (if supported).
-    fn with_chunk_size(self, size: usize) -> Self;
-
-    /// Build the writer.
-    fn build(self) -> Result<Self::Writer>;
 }
 
 /// Configuration for parallel reading.
