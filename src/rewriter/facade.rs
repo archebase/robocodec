@@ -52,12 +52,14 @@ impl Default for RewriteOptions {
 
 impl RewriteOptions {
     /// Add a transform pipeline to the rewrite options.
+    #[must_use]
     pub fn with_transforms(mut self, pipeline: MultiTransform) -> Self {
         self.transforms = Some(pipeline);
         self
     }
 
     /// Check if transformations are configured.
+    #[must_use]
     pub fn has_transforms(&self) -> bool {
         self.transforms.as_ref().is_some_and(|p| !p.is_empty())
     }
@@ -95,6 +97,7 @@ pub struct RewriteStats {
 
 impl RewriteStats {
     /// Create a new empty statistics struct.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
