@@ -24,13 +24,35 @@ pub(crate) fn robocodec_bin() -> PathBuf {
 }
 
 /// Get the path to a test fixture file
+///
+/// Fixtures are stored at workspace root in `tests/fixtures/`.
+/// When running from workspace, CARGO_MANIFEST_DIR is the workspace root.
+/// When running from CLI crate, we need to go up one level.
 #[allow(dead_code)]
 pub(crate) fn fixture_path(name: &str) -> PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(manifest_dir)
+    let manifest_path = PathBuf::from(&manifest_dir);
+
+    // Try workspace root fixtures first (when run from workspace)
+    let workspace_fixtures = manifest_path.join("tests").join("fixtures").join(name);
+    if workspace_fixtures.exists() {
+        return workspace_fixtures;
+    }
+
+    // When running from CLI crate directory, go up to workspace root
+    let parent_fixtures = manifest_path
+        .parent()
+        .unwrap_or(&manifest_path)
         .join("tests")
         .join("fixtures")
-        .join(name)
+        .join(name);
+
+    if parent_fixtures.exists() {
+        return parent_fixtures;
+    }
+
+    // Fallback to original behavior (may not exist, but that's handled by caller)
+    manifest_path.join("tests").join("fixtures").join(name)
 }
 
 /// Run robocodec with arguments
