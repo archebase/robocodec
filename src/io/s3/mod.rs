@@ -25,14 +25,14 @@ mod reader;
 mod signer;
 mod writer;
 
-// Re-export streaming parsers from format modules for backward compatibility
+// Re-export streaming parsers from format modules
 pub use crate::io::formats::bag::stream::{
     BAG_MAGIC_PREFIX, BagMessageRecord, BagRecord, BagRecordFields, BagRecordHeader,
     StreamingBagParser,
 };
-#[allow(deprecated)]
-pub use crate::io::formats::mcap::stream::{
-    ChannelRecordInfo, McapRecord, McapRecordHeader, MessageRecord, SchemaInfo, StreamingMcapParser,
+// Re-export MCAP streaming types from the new streaming module
+pub use crate::io::formats::mcap::streaming::{
+    ChannelRecordInfo, McapStreamingParser as StreamingMcapParser, MessageRecord, SchemaInfo,
 };
 pub use crate::io::formats::rrd::stream::{
     Compression, MessageKind, RRD_STREAM_MAGIC, RrdMessageRecord, RrdStreamHeader,

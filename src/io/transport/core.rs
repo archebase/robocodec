@@ -105,11 +105,27 @@ impl<T: Transport + Unpin + ?Sized> std::future::Future for ReadFuture<'_, T> {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        // SAFETY:
-        // - We extract raw pointers to both fields before creating any mutable references
-        // - The pointers are to non-overlapping fields within the same struct
-        // - We use as_mut().get_unchecked_mut() to reborrow instead of moving
-        // - The references won't escape this function
+        // # Safety: This unsafe block is necessary to work around Rust's borrow checker
+        // limitations when implementing self-referential futures. The pattern used here is
+        // safe because:
+        //
+        // 1. **Pointer isolation**: We extract raw pointers to both fields (`buf` and `transport`)
+        //    before creating any mutable references. These pointers point to non-overlapping
+        //    fields within the same struct.
+        //
+        // 2. **No aliasing**: We use `as_mut().get_unchecked_mut()` to reborrow the Pin
+        //    rather than moving out of it. This creates a mutable reference that exists only
+        //    within this unsafe block.
+        //
+        // 3. **Lifetime containment**: The mutable references created (`buf` and `transport`)
+        //    do not escape this function. They are only used to call `poll_read` and the
+        //    result is returned directly.
+        //
+        // 4. **No concurrent access**: We never access both fields simultaneously through
+        //    the references - we pass them to `poll_read` which handles the borrowing.
+        //
+        // This pattern is commonly used in async Rust for implementing futures that need
+        // to reborrow self-referential data.
         unsafe {
             let this = self.as_mut().get_unchecked_mut();
             let buf_ptr = this.buf.as_mut_ptr();
@@ -159,6 +175,28 @@ impl<T: Transport + Unpin + ?Sized> std::future::Future for ReadExactFuture<'_, 
                 return std::task::Poll::Ready(Ok(()));
             }
 
+            // # Safety: This unsafe block is necessary to work around Rust's borrow checker
+            // limitations when implementing self-referential futures. The pattern used here is
+            // safe because:
+            //
+            // 1. **Pointer isolation**: We extract raw pointers to both fields before creating
+            //    any mutable references. These pointers point to non-overlapping fields.
+            //
+            // 2. **No aliasing**: We use `as_mut().get_unchecked_mut()` to reborrow the Pin
+            //    rather than moving out of it.
+            //
+            // 3. **Lifetime containment**: The mutable references created (`buf` and `transport`)
+            //    do not escape this unsafe block. They are only used to call `poll_read`.
+            //
+            // 4. **No concurrent access**: The `ready!` macro may return early from this
+            //    function, but in that case the references are no longer used.
+            //
+            // 5. **Reborrowing pattern**: After the inner poll completes, we use a separate
+            //    unsafe block to advance the buffer, which is also safe because we're only
+            //    modifying a single field.
+            //
+            // This pattern is commonly used in async Rust for implementing combinator futures
+            // like `read_exact`.
             let n = unsafe {
                 let this = self.as_mut().get_unchecked_mut();
                 let buf_ptr = this.buf.as_mut_ptr();
@@ -177,7 +215,19 @@ impl<T: Transport + Unpin + ?Sized> std::future::Future for ReadExactFuture<'_, 
                 )));
             }
 
-            // Advance the buffer slice using get_unchecked_mut to avoid borrow issues
+            // Advance the buffer slice using get_unchecked_mut to avoid borrow issues.
+            // # Safety: This unsafe block is safe because:
+            //
+            // 1. **Single field access**: We only access `self.buf`, not `self.transport`.
+            //
+            // 2. **No aliasing**: We use `mem::take` to replace the buffer with an empty one,
+            //    then create a new slice reference that points into the taken buffer.
+            //
+            // 3. **Lifetime containment**: The new slice reference is assigned directly to
+            //    `self.buf` and lives until the next iteration.
+            //
+            // 4. **Bounds safety**: The slice `[n..]` is guaranteed to be within bounds
+            //    because we just verified `n` bytes were successfully read.
             self.buf = unsafe {
                 let this = self.as_mut().get_unchecked_mut();
                 &mut std::mem::take(&mut this.buf)[n..]

@@ -276,8 +276,28 @@ impl SequentialBagRawIter {
                             )
                         })?;
                         if let rosbag::MessageRecord::MessageData(msg) = msg_result {
-                            // SAFETY: We extend the lifetime to 'static for storage.
-                            // This is safe because we own the RosBag which owns the data.
+                            // # Safety
+                            //
+                            // This transmute extends the lifetime from `'_` to `'static`. This is safe because:
+                            //
+                            // 1. **Ownership**: The `RosBag` instance (`self.bag`) owns all the data that
+                            //    `MessageData` references. The bag is stored in this struct and lives for
+                            //    the entire duration of the iterator.
+                            //
+                            // 2. **Lifetime relationship**: The `MessageData<'_>` type has a lifetime
+                            //    tied to the `RosBag` it came from. By storing the bag in the same struct,
+                            //    we guarantee the data outlives the transmuted reference.
+                            //
+                            // 3. **No escape**: The transmuted `MessageData<'static>` is stored in
+                            //    `self.chunk_records` and only accessed through this iterator, which
+                            //    cannot outlive the `RosBag`.
+                            //
+                            // 4. **Memory layout**: `MessageData` is a struct with only references and
+                            //    Copy types. The transmute only changes lifetime parameters, not the
+                            //    actual memory layout.
+                            //
+                            // This pattern is necessary because the rosbag crate returns messages with
+                            // a lifetime tied to the bag, but we need to store them for chunked iteration.
                             let extended = unsafe {
                                 std::mem::transmute::<
                                     rosbag::record_types::MessageData<'_>,

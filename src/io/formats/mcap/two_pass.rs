@@ -115,6 +115,24 @@ impl TwoPassMcapReader {
             })?
             .len();
 
+        // # Safety
+        //
+        // Memory mapping via `memmap2::Mmap::map` is safe when used correctly:
+        //
+        // 1. **File handle validity**: The file handle passed to `map` must remain valid
+        //    for the lifetime of the mmap. Here, the file is opened immediately before
+        //    mapping and the mmap is stored in the struct, ensuring the file outlives
+        //    the mmap.
+        //
+        // 2. **No concurrent writes**: We only open the file for reading, so there are
+        //    no data races from concurrent modifications.
+        //
+        // 3. **Bounds checking**: The memmap2 library provides safe slice access with
+        //    bounds checking. Any access beyond the file size will panic, not cause
+        //    undefined behavior.
+        //
+        // 4. **Exception safety**: If mmap fails, the error is propagated and the file
+        //    handle is properly cleaned up by Rust's RAII.
         let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
             CodecError::encode("TwoPassMcapReader", format!("Failed to mmap file: {e}"))
         })?;

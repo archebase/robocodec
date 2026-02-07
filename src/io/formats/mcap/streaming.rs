@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 
+use crate::io::formats::mcap::MCAP_MAGIC;
 use crate::io::metadata::ChannelInfo;
 use crate::io::s3::FatalError;
 use crate::io::streaming::StreamingParser;
@@ -19,6 +20,9 @@ use crate::io::streaming::StreamingParser;
 pub use crate::io::formats::mcap::s3_adapter::{
     ChannelRecordInfo, McapS3Adapter, MessageRecord, SchemaInfo,
 };
+
+// Type alias for backward compatibility with code using StreamingMcapParser
+pub type StreamingMcapParser = McapStreamingParser;
 
 /// Unified MCAP streaming parser.
 ///
@@ -55,6 +59,10 @@ pub struct McapStreamingParser {
     adapter: McapS3Adapter,
     /// Cached channel map (converted from adapter's internal format)
     cached_channels: HashMap<u16, ChannelInfo>,
+    /// Buffer for tracking magic bytes (for is_initialized compatibility)
+    magic_buffer: Vec<u8>,
+    /// Track whether we've seen the complete magic
+    magic_seen: bool,
 }
 
 impl McapStreamingParser {
@@ -63,6 +71,8 @@ impl McapStreamingParser {
         Self {
             adapter: McapS3Adapter::new(),
             cached_channels: HashMap::new(),
+            magic_buffer: Vec::new(),
+            magic_seen: false,
         }
     }
 
@@ -71,6 +81,8 @@ impl McapStreamingParser {
         Self {
             adapter,
             cached_channels: HashMap::new(),
+            magic_buffer: Vec::new(),
+            magic_seen: false,
         }
     }
 
@@ -107,6 +119,20 @@ impl StreamingParser for McapStreamingParser {
     type Message = MessageRecord;
 
     fn parse_chunk(&mut self, data: &[u8]) -> Result<Vec<Self::Message>, FatalError> {
+        // Track magic bytes for is_initialized compatibility with old API
+        if !self.magic_seen {
+            for &byte in data {
+                self.magic_buffer.push(byte);
+                // Check if we've completed the magic
+                if self.magic_buffer.len() >= MCAP_MAGIC.len() {
+                    if &self.magic_buffer[..MCAP_MAGIC.len()] == MCAP_MAGIC {
+                        self.magic_seen = true;
+                    }
+                    break; // Only check up to magic length
+                }
+            }
+        }
+
         let messages = self.adapter.process_chunk(data)?;
 
         // Rebuild channels if we discovered new ones
@@ -133,7 +159,9 @@ impl StreamingParser for McapStreamingParser {
     }
 
     fn is_initialized(&self) -> bool {
-        self.adapter.has_channels()
+        // For compatibility with the old StreamingMcapParser API:
+        // Return true if we've seen the complete magic bytes
+        self.magic_seen
     }
 
     fn reset(&mut self) {

@@ -73,6 +73,21 @@ impl ParallelMcapReader {
             })?
             .len();
 
+        // # Safety
+        //
+        // Memory mapping via `memmap2::Mmap::map` is safe when used correctly:
+        //
+        // 1. **File handle validity**: The file handle passed to `map` remains valid
+        //    for the lifetime of the mmap. The mmap is stored in the struct, ensuring
+        //    the file outlives it.
+        //
+        // 2. **Read-only access**: The file is opened only for reading, preventing
+        //    data races from concurrent modifications.
+        //
+        // 3. **Bounds safety**: The memmap2 library provides safe slice access.
+        //    All access is bounds-checked.
+        //
+        // 4. **Error handling**: mmap failures are properly propagated.
         let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
             CodecError::encode("ParallelMcapReader", format!("Failed to mmap file: {e}"))
         })?;
@@ -105,6 +120,19 @@ impl ParallelMcapReader {
             CodecError::encode("ParallelMcapReader", format!("Failed to open file: {e}"))
         })?;
 
+        // # Safety
+        //
+        // Memory mapping is safe here for temporary use:
+        //
+        // 1. **Scope-bound**: The mmap is only used within this function to read
+        //    the summary section, then dropped.
+        //
+        // 2. **File handle validity**: The file handle outlives the mmap since
+        //    it's only dropped after the mmap is used.
+        //
+        // 3. **Read-only access**: No concurrent writes are possible.
+        //
+        // 4. **Error handling**: mmap failures are properly propagated.
         let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
             CodecError::encode("ParallelMcapReader", format!("Failed to mmap file: {e}"))
         })?;

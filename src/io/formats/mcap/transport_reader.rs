@@ -174,9 +174,26 @@ impl FormatReader for McapTransportReader {
         let mut buffer = vec![0u8; CHUNK_SIZE];
         let mut total_read = 0;
 
-        // SAFETY: The transport is pinned for the duration of this block.
-        // We don't move it after creating the Pin, and we drop it at the end
-        // of the function when we're done with it.
+        // # Safety
+        //
+        // Using `Pin::new_unchecked` here is safe because:
+        //
+        // 1. **Unpin requirement**: The `Transport` trait requires `Unpin`, which means
+        //    the transport can be safely moved. However, `poll_read` requires a `Pin`,
+        //    so we need to create one.
+        //
+        // 2. **No movement**: The transport is a mutable reference (`transport.as_mut()`)
+        //    that we pin in place. We never move the transport after pinning it.
+        //
+        // 3. **Local scope**: The pinned reference is only used within this function
+        //    and never escapes. It's dropped when the function returns.
+        //
+        // 4. **No interior mutability**: The transport's implementation of `poll_read`
+        //    doesn't rely on interior mutability that would be violated by moving.
+        //
+        // The `new_unchecked` is necessary because we have a mutable reference to
+        //    a trait object that already satisfies `Unpin`, but there's no safe way
+        //    to create a Pin from a mutable reference to a trait object.
         let mut pinned_transport = unsafe { Pin::new_unchecked(transport.as_mut()) };
 
         // Read and parse the entire file

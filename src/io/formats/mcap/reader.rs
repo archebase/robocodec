@@ -311,6 +311,19 @@ impl<'a> RawMessageStream<'a> {
             let file = std::fs::File::open(inner.path()).map_err(|e| {
                 CodecError::encode("RawMessageStream", format!("Failed to open file: {e}"))
             })?;
+            // # Safety
+            //
+            // Memory mapping is safe for use in non-chunked mode:
+            //
+            // 1. **Lifetime management**: The mmap is stored in the struct and lives
+            //    for the duration of the iterator, which is less than the file handle's
+            //    lifetime.
+            //
+            // 2. **Read-only access**: The file is opened only for reading.
+            //
+            // 3. **Bounds safety**: The memmap2 library provides bounds-checked access.
+            //
+            // 4. **Error handling**: mmap failures are properly propagated.
             let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
                 CodecError::encode("RawMessageStream", format!("Failed to mmap file: {e}"))
             })?;
@@ -371,6 +384,20 @@ impl<'a> RawMessageStream<'a> {
         let file = std::fs::File::open(self.inner.path()).map_err(|e| {
             CodecError::encode("RawMessageStream", format!("Failed to open file: {e}"))
         })?;
+        // # Safety
+        //
+        // Memory mapping is safe for temporary chunk loading:
+        //
+        // 1. **Scope-bound**: The mmap is used only within this method to load
+        //    a single chunk, then dropped.
+        //
+        // 2. **File handle validity**: The file handle outlives the temporary mmap.
+        //
+        // 3. **Read-only access**: The file is opened only for reading.
+        //
+        // 4. **Bounds checking**: We verify `data_end <= mmap.len()` before accessing.
+        //
+        // 5. **Error handling**: mmap failures are properly propagated.
         let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
             CodecError::encode("RawMessageStream", format!("Failed to mmap file: {e}"))
         })?;

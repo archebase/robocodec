@@ -35,9 +35,6 @@ pub mod sequential;
 // Two-pass reader for files without summary
 pub mod two_pass;
 
-// Streaming parser (transport-agnostic)
-pub mod stream;
-
 // Unified streaming parser (implements StreamingParser trait)
 pub mod streaming;
 
@@ -56,11 +53,10 @@ pub mod writer;
 pub use parallel::{ChunkIndex, ParallelMcapReader};
 pub use reader::{McapFormat, McapReader, RawMessage};
 pub use sequential::{SequentialMcapReader, SequentialRawIter};
-#[allow(deprecated)]
-pub use stream::{
-    ChannelRecordInfo, McapRecord, McapRecordHeader, MessageRecord, SchemaInfo, StreamingMcapParser,
+pub use streaming::{
+    ChannelRecordInfo, McapS3Adapter, McapStreamingParser, MessageRecord, SchemaInfo,
+    StreamingMcapParser,
 };
-pub use streaming::{McapS3Adapter, McapStreamingParser};
 pub use transport_reader::McapTransportReader;
 pub use two_pass::TwoPassMcapReader;
 pub use writer::ParallelMcapWriter;

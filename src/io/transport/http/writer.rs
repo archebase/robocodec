@@ -426,8 +426,22 @@ impl HttpWriter {
                 HttpUploadStrategy::SinglePut => self.upload_single_put().await,
                 HttpUploadStrategy::ChunkedPut => self.upload_chunked_put().await,
                 HttpUploadStrategy::ChunkedEncoding => {
-                    // For now, ChunkedEncoding falls back to SinglePut
-                    // TODO: Implement true streaming chunked encoding
+                    // ChunkedEncoding falls back to SinglePut for now.
+                    //
+                    // True streaming chunked encoding (Transfer-Encoding: chunked)
+                    // would enable streaming data as it arrives without buffering
+                    // the entire file in memory. However, this requires:
+                    //
+                    // 1. HTTP/1.1 chunked transfer encoding support in reqwest
+                    // 2. A streaming interface that doesn't require knowing
+                    //    the total content size upfront
+                    // 3. The target server to support chunked uploads
+                    //
+                    // Since the FormatWriter trait is synchronous and requires
+                    // finish() to be called, we must buffer anyway. For large
+                    // files, use ChunkedPut with Range requests instead.
+                    //
+                    // See issue #54 for exponential backoff implementation.
                     self.upload_single_put().await
                 }
             };
@@ -450,7 +464,8 @@ impl HttpWriter {
                         error: e.to_string(),
                         retries_left,
                     };
-                    // TODO: Add exponential backoff
+                    // Exponential backoff should be added here.
+                    // See: https://github.com/archebase/robocodec/issues/54
                     continue;
                 }
             }

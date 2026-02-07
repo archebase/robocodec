@@ -55,8 +55,10 @@ impl BagFormat {
         path: P,
         _config: &crate::io::writer::WriterConfig,
     ) -> Result<Box<dyn crate::io::traits::FormatWriter>> {
-        // For now, we create a simple writer
-        // TODO: Use config options for compression, chunk size, etc.
+        // For now, we create a simple writer with default settings.
+        // The WriterConfig options (compression, chunk_size) should be
+        // used to configure the writer behavior.
+        // See: https://github.com/archebase/robocodec/issues/55
         let writer = BagWriter::create(path)?;
         Ok(Box::new(writer))
     }

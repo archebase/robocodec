@@ -6,6 +6,8 @@
 
 #[cfg(feature = "s3")]
 use robocodec::io::s3::{FatalError, MCAP_MAGIC, StreamingMcapParser};
+#[cfg(feature = "s3")]
+use robocodec::io::streaming::StreamingParser;
 
 #[cfg(feature = "s3")]
 #[test]
@@ -47,10 +49,16 @@ fn test_mcap_stream_parse_invalid_magic() {
     let result = parser.parse_chunk(b"INVALID_MAGIC");
     assert!(result.is_err());
 
-    if let Err(FatalError::InvalidFormat { expected, .. }) = result {
-        assert_eq!(expected, "MCAP magic");
+    // The mcap crate returns an IoError for bad magic, not InvalidFormat
+    // We just check that an error is returned
+    if let Err(FatalError::IoError { message }) = result {
+        assert!(
+            message.contains("Bad magic") || message.contains("magic"),
+            "Expected error about bad magic, got: {}",
+            message
+        );
     } else {
-        panic!("Expected InvalidFormat error");
+        panic!("Expected IoError about bad magic, got: {:?}", result);
     }
 }
 

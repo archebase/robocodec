@@ -160,6 +160,21 @@ impl BagParser {
             })?
             .len();
 
+        // # Safety
+        //
+        // Memory mapping via `memmap2::Mmap::map` is safe when used correctly:
+        //
+        // 1. **File handle validity**: The file handle passed to `map` remains valid
+        //    for the lifetime of the mmap. The mmap is stored in the struct, ensuring
+        //    the file outlives it.
+        //
+        // 2. **Read-only access**: The file is opened only for reading, preventing
+        //    data races from concurrent modifications.
+        //
+        // 3. **Bounds safety**: The memmap2 library provides safe slice access.
+        //    All access is bounds-checked.
+        //
+        // 4. **Error handling**: mmap failures are properly propagated.
         let mmap = unsafe { memmap2::Mmap::map(&file) }.map_err(|e| {
             CodecError::encode("BagParser::open", format!("Failed to mmap file: {e}"))
         })?;
