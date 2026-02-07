@@ -26,29 +26,24 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! # HTTP/HTTPS URLs with Authentication
+//! # S3 URLs
 //!
-//! For reading from HTTP/HTTPS URLs with authentication:
+//! For reading from S3-compatible storage:
 //!
 //! ```rust,no_run
-//! use robocodec::io::{RoboReader, ReaderConfig};
+//! use robocodec::io::RoboReader;
 //!
-//! // Using Bearer token
-//! let config = ReaderConfig::default().with_http_bearer_token("your-token");
-//! let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
+//! // S3 object
+//! let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
 //!
-//! // Using basic auth
-//! let config = ReaderConfig::default().with_http_basic_auth("user", "pass");
-//! let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
-//!
-//! // Using URL query parameters
-//! let reader = RoboReader::open("https://example.com/data.mcap?bearer_token=your-token")?;
+//! // S3 with custom endpoint (e.g., MinIO)
+//! let reader = RoboReader::open("s3://my-bucket/file.mcap?endpoint=http://localhost:9000")?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 pub mod config;
 
-pub use config::{HttpAuthConfig, ReaderConfig, ReaderConfigBuilder};
+pub use config::{ReaderConfig, ReaderConfigBuilder};
 
 use crate::io::detection::detect_format;
 use crate::io::formats::bag::BagFormat;
@@ -141,7 +136,7 @@ pub struct RoboReader {
 impl RoboReader {
     /// Parse a URL to create an appropriate Transport.
     ///
-    /// This helper function detects URL schemes (s3://, http://, https://)
+    /// This helper function detects the S3 URL scheme (s3://)
     /// and creates the corresponding Transport implementation.
     ///
     /// # Returns
@@ -152,9 +147,7 @@ impl RoboReader {
     #[cfg(feature = "remote")]
     fn parse_url_to_transport(
         url: &str,
-        http_auth: Option<&HttpAuthConfig>,
     ) -> Result<Option<Box<dyn crate::io::transport::Transport>>> {
-        use crate::io::transport::http::HttpTransport;
         use crate::io::transport::s3::S3Transport;
 
         // Check for s3:// scheme
@@ -172,109 +165,8 @@ impl RoboReader {
             return Ok(Some(Box::new(transport)));
         }
 
-        // Check for http:// or https:// schemes
-        if url.starts_with("http://") || url.starts_with("https://") {
-            // Parse URL to extract base URL and query parameters for auth
-            let (base_url, query_auth) = Self::parse_http_auth_from_url(url)?;
-
-            // Merge auth from config and URL query parameters (config takes precedence)
-            let auth = Self::resolve_http_auth(http_auth, &query_auth);
-
-            // Create HttpTransport using the shared runtime
-            let rt = shared_runtime();
-            let transport = rt.block_on(async {
-                if let Some(auth) = auth {
-                    HttpTransport::with_auth(base_url, Some(auth))
-                        .await
-                        .map_err(|e| {
-                            CodecError::encode(
-                                "HTTP",
-                                format!("Failed to create HTTP transport: {e}"),
-                            )
-                        })
-                } else {
-                    HttpTransport::new(base_url).await.map_err(|e| {
-                        CodecError::encode("HTTP", format!("Failed to create HTTP transport: {e}"))
-                    })
-                }
-            })?;
-            return Ok(Some(Box::new(transport)));
-        }
-
         // Not a URL - treat as local path
         Ok(None)
-    }
-
-    /// Parse HTTP authentication from URL query parameters.
-    ///
-    /// Supports `?bearer_token=xxx` or `?basic_auth=user:pass`.
-    /// Returns (`base_url`, `auth_from_query`).
-    #[cfg(feature = "remote")]
-    fn parse_http_auth_from_url(
-        url: &str,
-    ) -> Result<(&str, Option<crate::io::transport::http::HttpAuth>)> {
-        use crate::io::transport::http::HttpAuth;
-
-        if let Some(query_idx) = url.find('?') {
-            let base_url = &url[..query_idx];
-            let query_str = &url[query_idx + 1..];
-
-            let mut auth = None;
-
-            for pair in query_str.split('&') {
-                let Some(eq_idx) = pair.find('=') else {
-                    continue;
-                };
-
-                let key = &pair[..eq_idx];
-                let value = &pair[eq_idx + 1..];
-
-                match key {
-                    "bearer_token" => {
-                        auth = Some(HttpAuth::bearer(
-                            percent_encoding::percent_decode_str(value)
-                                .decode_utf8()
-                                .unwrap_or_default()
-                                .to_string(),
-                        ));
-                    }
-                    "basic_auth" => {
-                        let decoded = percent_encoding::percent_decode_str(value)
-                            .decode_utf8()
-                            .unwrap_or_default();
-                        if let Some((user, pass)) = decoded.split_once(':') {
-                            auth = Some(HttpAuth::basic(user.to_string(), pass.to_string()));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            Ok((base_url, auth))
-        } else {
-            Ok((url, None))
-        }
-    }
-
-    /// Resolve HTTP authentication from config and URL query parameters.
-    ///
-    /// Config takes precedence over URL query parameters.
-    #[cfg(feature = "remote")]
-    fn resolve_http_auth(
-        config_auth: Option<&HttpAuthConfig>,
-        query_auth: &Option<crate::io::transport::http::HttpAuth>,
-    ) -> Option<crate::io::transport::http::HttpAuth> {
-        use crate::io::transport::http::HttpAuth;
-
-        if let Some(config) = config_auth {
-            if let Some(token) = &config.bearer_token {
-                return Some(HttpAuth::bearer(token.clone()));
-            }
-            if let (Some(user), Some(pass)) = (&config.basic_username, &config.basic_password) {
-                return Some(HttpAuth::basic(user.clone(), pass.clone()));
-            }
-        }
-        query_auth.clone()
     }
 
     /// Open a file with automatic format detection and default configuration.
@@ -321,34 +213,11 @@ impl RoboReader {
     /// )?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    ///
-    /// # HTTP Authentication
-    ///
-    /// For HTTP/HTTPS URLs with authentication:
-    ///
-    /// ```rust,no_run
-    /// use robocodec::io::{RoboReader, ReaderConfig};
-    ///
-    /// // Using config
-    /// let config = ReaderConfig::default()
-    ///     .with_http_bearer_token("your-token");
-    /// let reader = RoboReader::open_with_config("https://example.com/data.mcap", config)?;
-    ///
-    /// // Using URL query parameters (alternative)
-    /// let reader = RoboReader::open("https://example.com/data.mcap?bearer_token=your-token")?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
-    pub fn open_with_config(path: &str, config: ReaderConfig) -> Result<Self> {
+    pub fn open_with_config(path: &str, _config: ReaderConfig) -> Result<Self> {
         // Try to parse as URL and create appropriate transport
         #[cfg(feature = "remote")]
         {
-            let http_auth = if config.http_auth.is_configured() {
-                Some(&config.http_auth)
-            } else {
-                None
-            };
-
-            if let Some(transport) = Self::parse_url_to_transport(path, http_auth)? {
+            if let Some(transport) = Self::parse_url_to_transport(path)? {
                 // Use transport-based reading
                 // Detect format from path extension
                 let path_obj = std::path::Path::new(path);
@@ -359,7 +228,10 @@ impl RoboReader {
                     FileFormat::Mcap => {
                         return Ok(Self {
                             inner: Box::new(
-                                crate::io::formats::mcap::transport_reader::McapTransportReader::open_from_transport(transport, path.to_string())?
+                                crate::io::formats::mcap::transport_reader::McapTransportReader::open_from_transport(
+                                    transport,
+                                    path.to_string(),
+                                )?,
                             ),
                         });
                     }
@@ -926,7 +798,7 @@ mod tests {
         // Test valid S3 URL - this will attempt to create an S3Client
         // In a test environment without credentials, this may fail, but
         // the URL parsing itself should work
-        let result = RoboReader::parse_url_to_transport("s3://my-bucket/path/to/file.mcap", None);
+        let result = RoboReader::parse_url_to_transport("s3://my-bucket/path/to/file.mcap");
 
         // The result may be Ok or Err depending on whether S3 credentials are available
         // If it's Ok, we should get Some(transport)
@@ -956,7 +828,6 @@ mod tests {
         // Test S3 URL with endpoint query parameter (localhost is allowed for testing)
         let result = RoboReader::parse_url_to_transport(
             "s3://my-bucket/file.mcap?endpoint=http://localhost:9000",
-            None,
         );
         // Same as above - check for reasonable error or success
         match result {
@@ -981,67 +852,14 @@ mod tests {
 
     #[test]
     #[cfg(feature = "remote")]
-    fn test_parse_url_to_transport_with_http_url() {
-        // Test HTTP URL (should try to create HttpTransport)
-        let result = RoboReader::parse_url_to_transport("http://example.com/file.mcap", None);
-
-        // The result may be Ok(Some(transport)) if we can create HttpTransport,
-        // or Err if there's an issue with the URL/HTTP setup
-        // In a test environment without network, we expect either success or a connection error
-        match result {
-            Ok(transport_option) => {
-                // If successful, we should have a transport
-                assert!(
-                    transport_option.is_some(),
-                    "Expected Some(transport) for valid HTTP URL"
-                );
-            }
-            Err(e) => {
-                // If error, it should be related to HTTP connection, not URL parsing
-                let err_msg = format!("{}", e);
-                // Error should mention HTTP or connection, not "not yet supported"
-                assert!(
-                    err_msg.contains("HTTP")
-                        || err_msg.contains("transport")
-                        || err_msg.contains("connection"),
-                    "Expected HTTP-related error, got: {}",
-                    err_msg
-                );
-            }
-        }
-
-        // Test HTTPS URL
-        let result = RoboReader::parse_url_to_transport("https://example.com/file.mcap", None);
-        match result {
-            Ok(transport_option) => {
-                assert!(
-                    transport_option.is_some(),
-                    "Expected Some(transport) for valid HTTPS URL"
-                );
-            }
-            Err(e) => {
-                let err_msg = format!("{}", e);
-                assert!(
-                    err_msg.contains("HTTP")
-                        || err_msg.contains("transport")
-                        || err_msg.contains("connection"),
-                    "Expected HTTP-related error, got: {}",
-                    err_msg
-                );
-            }
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "remote")]
     fn test_parse_url_to_transport_with_local_path_returns_none() {
         // Test local file path (should return None)
-        let result = RoboReader::parse_url_to_transport("/path/to/file.mcap", None);
+        let result = RoboReader::parse_url_to_transport("/path/to/file.mcap");
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
 
         // Test relative path
-        let result = RoboReader::parse_url_to_transport("file.mcap", None);
+        let result = RoboReader::parse_url_to_transport("file.mcap");
         assert!(result.is_ok());
         assert!(result.unwrap().is_none());
     }
@@ -1050,12 +868,12 @@ mod tests {
     #[cfg(feature = "remote")]
     fn test_parse_url_to_transport_with_invalid_s3_url() {
         // Test invalid S3 URL (missing bucket)
-        let result = RoboReader::parse_url_to_transport("s3://", None);
+        let result = RoboReader::parse_url_to_transport("s3://");
         assert!(result.is_ok()); // Invalid S3 URL is treated as local path
         assert!(result.unwrap().is_none());
 
         // Test malformed URL
-        let result = RoboReader::parse_url_to_transport("s3:///key", None);
+        let result = RoboReader::parse_url_to_transport("s3:///key");
         assert!(result.is_ok()); // Invalid S3 URL is treated as local path
         assert!(result.unwrap().is_none());
     }

@@ -152,7 +152,7 @@ impl S3Location {
     pub fn new(bucket: impl Into<String>, key: impl Into<String>) -> Self {
         let bucket = bucket.into();
         // Validate bucket name
-        validate_bucket_name(&bucket).unwrap();
+        validate_bucket_name(&bucket).expect("invalid bucket name provided");
         Self {
             bucket,
             key: key.into(),

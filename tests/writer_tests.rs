@@ -331,10 +331,10 @@ fn test_writer_builder_with_path() {
     let (path, _guard) = temp_path("bag");
 
     let builder = WriterBuilder::new();
-    let result = builder.path(&path).build();
+    let result = builder.path(&path).create(path.to_str().unwrap());
     assert!(
         result.is_ok(),
-        "WriterBuilder should build successfully: {:?}",
+        "WriterBuilder should create writer successfully: {:?}",
         result.err()
     );
 }

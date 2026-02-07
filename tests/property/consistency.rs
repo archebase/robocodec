@@ -280,11 +280,9 @@ proptest! {
         // is_integer checks if it's a signed or unsigned integer type
         // as_i64 returns Some only if it fits in i64
         // So for unsigned integers that fit, both should be true
-        if value.is_unsigned_integer() {
-            if let Some(n) = value.as_u64() {
-                let fits = n <= (i64::MAX as u64);
-                prop_assert_eq!(fits, value.as_i64().is_some());
-            }
+        if value.is_unsigned_integer() && let Some(n) = value.as_u64() {
+            let fits = n <= (i64::MAX as u64);
+            prop_assert_eq!(fits, value.as_i64().is_some());
         }
 
         // For signed integers, as_i64 should always return Some
@@ -427,7 +425,7 @@ proptest! {
         )
     ) {
         let keys_from_get: Vec<_> = fields.keys().collect();
-        let keys_from_iter: Vec<_> = fields.iter().map(|(k, _)| k).collect();
+        let keys_from_iter: Vec<_> = fields.keys().collect();
 
         // Same number of keys
         prop_assert_eq!(keys_from_get.len(), keys_from_iter.len());

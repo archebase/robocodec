@@ -121,7 +121,7 @@ pub fn sign_request(
 /// Format timestamp in AMZ date format.
 fn format_amz_date(secs: u64) -> String {
     use chrono::DateTime;
-    let dt = DateTime::from_timestamp(secs as i64, 0).unwrap();
+    let dt = DateTime::from_timestamp(secs as i64, 0).expect("valid timestamp for AWS signature");
     dt.format("%Y%m%dT%H%M%SZ").to_string()
 }
 
@@ -167,25 +167,29 @@ fn derive_signing_key(secret: &str, date: &str, region: &str, service: &str) -> 
     type HmacSha256 = Hmac<Sha256>;
 
     let k_date = {
-        let mut mac = HmacSha256::new_from_slice(format!("AWS4{secret}").as_bytes()).unwrap();
+        let mut mac = HmacSha256::new_from_slice(format!("AWS4{secret}").as_bytes())
+            .expect("AWS4 prefix + secret key should be correct length for HMAC");
         mac.update(date.as_bytes());
         mac.finalize().into_bytes()
     };
 
     let k_region = {
-        let mut mac = HmacSha256::new_from_slice(&k_date).unwrap();
+        let mut mac =
+            HmacSha256::new_from_slice(&k_date).expect("HMAC output is always correct size");
         mac.update(region.as_bytes());
         mac.finalize().into_bytes()
     };
 
     let k_service = {
-        let mut mac = HmacSha256::new_from_slice(&k_region).unwrap();
+        let mut mac =
+            HmacSha256::new_from_slice(&k_region).expect("HMAC output is always correct size");
         mac.update(service.as_bytes());
         mac.finalize().into_bytes()
     };
 
     let k_signing = {
-        let mut mac = HmacSha256::new_from_slice(&k_service).unwrap();
+        let mut mac =
+            HmacSha256::new_from_slice(&k_service).expect("HMAC output is always correct size");
         mac.update(b"aws4_request");
         mac.finalize().into_bytes()
     };
@@ -210,7 +214,8 @@ fn calculate_signature(
 
     let signing_key = derive_signing_key(secret_key, date_stamp, region, service);
 
-    let mut mac = HmacSha256::new_from_slice(&signing_key).unwrap();
+    let mut mac = HmacSha256::new_from_slice(&signing_key)
+        .expect("signing_key from derive_signing_key is always 32 bytes");
     mac.update(string_to_sign.as_bytes());
     let result = mac.finalize();
 

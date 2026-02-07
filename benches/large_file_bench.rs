@@ -223,7 +223,7 @@ fn bench_file_size_scaling(c: &mut Criterion) {
         "tests/fixtures/robocodec_test_16.mcap", // ~3.2MB
     ];
 
-    for (_idx, path) in mcap_files.iter().enumerate() {
+    for path in mcap_files.iter() {
         if Path::new(path).exists() {
             let reader = RoboReader::open(path).unwrap();
             let file_size = reader.file_size();

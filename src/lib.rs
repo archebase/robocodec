@@ -61,65 +61,30 @@
 //! ```
 
 // Core types
-// Allow certain pedantic lints that are unavoidable in robotics code:
-// - Cast precision loss: Converting timestamps between u64/i64/f64 is common
-// - Size truncation: u64 to usize/u32 casts are necessary for indexing and serialization
-// - Function lines: Some functions are complex by nature (e.g., parsers)
-// - HashMap hasher: Using default hasher is appropriate for this use case
-// - Unused self: Some trait methods require self even when not used
-// - Self recursion: Helper functions often use self recursively
-// - Let...else: The suggested pattern is less readable in many cases
-// - Identical match arms: Some arms have identical bodies for different variants
-// - Ref options: Using &Option<T> is intentional for performance in some cases
-// - Items after statements: Test helpers are often defined after use
-// - Unnecessary Result: Some functions return Result for API consistency
-// - Wildcard matches: Some enums only have one variant currently
-// - Unused return: Some functions return values that may be used by callers
-// - Inefficient clone: Performance trade-offs are intentional for clarity
-// - Must use: Public API methods are already documented with #[must_use]
-// - Unused async: Required for trait compatibility
-// - Pass by ref: Small types passed by ref for API consistency
-// - Case-sensitive ext: File extension checks are intentional
-// - String append: format! append is intentional for clarity
-// - Field prefix: Struct fields use consistent prefixes
-// - Argument not consumed: Arguments may be kept for API consistency
-// - Wildcard enum matches: Match arms are complete for current variants
-// - Underscore binding: Intentional use of underscore-prefixed names
-// - Missing panic docs: Panics are rare and documented in code
-// - Missing debug fields: Some Debug impls exclude internal fields
-// - Long literals: Constants with specific values
-// - Redundant continue: Explicit continue improves readability
-#![allow(clippy::cast_precision_loss)]
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_sign_loss)]
-#![allow(clippy::cast_possible_wrap)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::implicit_hasher)]
-#![allow(clippy::unused_self)]
-#![allow(clippy::only_used_in_recursion)]
-#![allow(clippy::manual_let_else)]
-#![allow(clippy::match_same_arms)]
-#![allow(clippy::ref_option)]
-#![allow(clippy::items_after_statements)]
-#![allow(clippy::unnecessary_wraps)]
-#![allow(clippy::must_use_candidate)]
-#![allow(clippy::clone_on_copy)]
-#![allow(clippy::assigning_clones)]
-#![allow(clippy::unused_async)]
-#![allow(clippy::trivially_copy_pass_by_ref)]
-#![allow(clippy::case_sensitive_file_extension_comparisons)]
-#![allow(clippy::format_push_string)]
-#![allow(clippy::struct_field_names)]
-#![allow(clippy::ignored_unit_patterns)]
-#![allow(clippy::used_underscore_binding)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::unreadable_literal)]
-#![allow(clippy::needless_continue)]
-#![allow(clippy::wildcard_imports)]
-#![allow(clippy::single_match)]
-#![allow(clippy::single_match_else)]
-#![allow(clippy::manual_assert)]
+//
+// Clippy lint allowances for robotics data codec library:
+//
+// Performance and API design:
+#![allow(clippy::cast_precision_loss)] // Timestamp conversions u64/i64/f64
+#![allow(clippy::cast_possible_truncation)] // u64 to usize/u32 for indexing
+#![allow(clippy::cast_sign_loss)] // u64/i64 timestamp conversions
+#![allow(clippy::trivially_copy_pass_by_ref)] // Small types, API consistency
+#![allow(clippy::clone_on_copy)] // intentional for API clarity
+#![allow(clippy::assigning_clones)] // intentional for API clarity
+#![allow(clippy::must_use_candidate)] // Public API has #[must_use] docs
+#![allow(clippy::unused_async)] // Trait compatibility
+//
+// Code structure patterns:
+#![allow(clippy::too_many_lines)] // Complex parsers need space
+#![allow(clippy::match_same_arms)] // Identical arms for different variants
+#![allow(clippy::items_after_statements)] // Test helpers defined after use
+#![allow(clippy::ref_option)] // &Option<T> for performance
+#![allow(clippy::struct_field_names)] // Consistent field prefixes
+//
+// Documentation and testing:
+#![allow(clippy::missing_panics_doc)] // Panics rare, documented in code
+#![allow(clippy::missing_errors_doc)] // Errors documented in type
+#![allow(clippy::wildcard_imports)] // Test modules only
 
 pub mod core;
 
@@ -145,7 +110,7 @@ pub mod io;
 pub use io::RoboReader;
 pub use io::metadata::{ChannelInfo, DecodedMessageResult};
 pub use io::reader::{DecodedMessageIter, ReaderConfig};
-pub use io::writer::{HttpAuthConfig, RoboWriter, WriterConfig};
+pub use io::writer::{RoboWriter, WriterConfig};
 
 // Format traits are available but hidden from documentation
 // Users don't need to import these - methods work directly on RoboReader/RoboWriter

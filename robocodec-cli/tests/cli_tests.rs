@@ -5,9 +5,6 @@
 //! CLI integration tests.
 //!
 //! These tests run the actual robocodec binary and verify its behavior.
-//!
-//! Note: These tests are only compiled and run when the `cli` feature is enabled,
-//! as the `robocodec` binary has `required-features = ["cli"]`.
 
 use std::{
     path::PathBuf,
@@ -73,10 +70,10 @@ pub(crate) fn run_err(args: &[&str]) -> String {
 }
 
 // ============================================================================
-// CLI Tests (only compiled when cli feature is enabled)
+// CLI Tests
 // ============================================================================
 
-#[cfg(feature = "cli")]
+#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -341,7 +341,10 @@ impl Iterator for SequentialBagRawIter {
                 }
             }
 
-            let messages = self.current_messages.as_ref().unwrap();
+            let messages = self
+                .current_messages
+                .as_ref()
+                .expect("current_messages set by load_next_chunk() after is_none() check");
             if self.current_index >= messages.len() {
                 self.current_messages = None;
                 continue;

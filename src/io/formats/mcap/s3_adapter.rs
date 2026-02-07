@@ -151,8 +151,16 @@ impl McapS3Adapter {
             ));
         }
 
-        let id = u16::from_le_bytes(body[0..2].try_into().unwrap());
-        let name_len = u16::from_le_bytes(body[2..4].try_into().unwrap()) as usize;
+        let id = u16::from_le_bytes(
+            body[0..2]
+                .try_into()
+                .expect("MIN_SCHEMA_LEN ensures 2 bytes"),
+        );
+        let name_len = u16::from_le_bytes(
+            body[2..4]
+                .try_into()
+                .expect("MIN_SCHEMA_LEN ensures 4 bytes total"),
+        ) as usize;
 
         if body.len() < 4 + name_len {
             return Err(FatalError::invalid_format(
@@ -211,8 +219,16 @@ impl McapS3Adapter {
             ));
         }
 
-        let id = u16::from_le_bytes(body[0..2].try_into().unwrap());
-        let topic_len = u16::from_le_bytes(body[2..4].try_into().unwrap()) as usize;
+        let id = u16::from_le_bytes(
+            body[0..2]
+                .try_into()
+                .expect("MIN_CHANNEL_LEN ensures 2 bytes"),
+        );
+        let topic_len = u16::from_le_bytes(
+            body[2..4]
+                .try_into()
+                .expect("MIN_CHANNEL_LEN ensures 4 bytes total"),
+        ) as usize;
 
         if body.len() < 4 + topic_len {
             return Err(FatalError::invalid_format(
@@ -273,8 +289,17 @@ impl McapS3Adapter {
     }
 
     /// Parse a Message record.
+    ///
+    /// MCAP Message record format:
+    /// - channel_id: u16 (2 bytes)
+    /// - sequence: u64 (8 bytes)
+    /// - log_time: u64 (8 bytes)
+    /// - publish_time: u64 (8 bytes)
+    /// - data: variable
+    ///
+    /// Total header: 26 bytes
     fn parse_message(&self, body: &[u8]) -> Result<MessageRecord, FatalError> {
-        const MESSAGE_HEADER_LEN: usize = 20;
+        const MESSAGE_HEADER_LEN: usize = 26;
 
         if body.len() < MESSAGE_HEADER_LEN {
             return Err(FatalError::invalid_format(
@@ -283,12 +308,28 @@ impl McapS3Adapter {
             ));
         }
 
-        let channel_id = u16::from_le_bytes(body[0..2].try_into().unwrap());
-        let sequence = u64::from_le_bytes(body[2..10].try_into().unwrap());
-        let log_time = u64::from_le_bytes(body[10..18].try_into().unwrap());
-        let publish_time = u64::from_le_bytes(body[18..26].try_into().unwrap());
+        let channel_id = u16::from_le_bytes(
+            body[0..2]
+                .try_into()
+                .expect("MESSAGE_HEADER_LEN ensures 2 bytes"),
+        );
+        let sequence = u64::from_le_bytes(
+            body[2..10]
+                .try_into()
+                .expect("MESSAGE_HEADER_LEN ensures 10 bytes"),
+        );
+        let log_time = u64::from_le_bytes(
+            body[10..18]
+                .try_into()
+                .expect("MESSAGE_HEADER_LEN ensures 18 bytes"),
+        );
+        let publish_time = u64::from_le_bytes(
+            body[18..26]
+                .try_into()
+                .expect("MESSAGE_HEADER_LEN ensures 26 bytes"),
+        );
 
-        let data = body[20..].to_vec();
+        let data = body[MESSAGE_HEADER_LEN..].to_vec();
 
         Ok(MessageRecord {
             channel_id,

@@ -228,14 +228,27 @@ impl S3Reader {
         if footer_start > tail_data.len() {
             // Footer spans beyond our tail fetch, need to fetch more
             // For now, return empty and fall back to scanning
+            tracing::debug!(
+                context = "scan_mcap_for_metadata",
+                location = ?self.location,
+                footer_start,
+                tail_len = tail_data.len(),
+                "Footer spans beyond tail fetch, falling back to scanning"
+            );
             return Ok(HashMap::new());
         }
 
         // Parse footer to extract summary_offset
         let summary_offset = match self.parse_mcap_footer(&tail_data[footer_start..]) {
             Ok(offset) => offset,
-            Err(_) => {
+            Err(e) => {
                 // Footer parsing failed, fall back to scanning
+                tracing::debug!(
+                    context = "scan_mcap_for_metadata",
+                    location = ?self.location,
+                    error = %e,
+                    "Footer parsing failed, falling back to scanning"
+                );
                 return Ok(HashMap::new());
             }
         };
@@ -254,7 +267,11 @@ impl S3Reader {
             return Err(FatalError::invalid_format("MCAP footer", data.to_vec()));
         }
 
-        Ok(u64::from_le_bytes(data[0..8].try_into().unwrap()))
+        Ok(u64::from_le_bytes(
+            data[0..8]
+                .try_into()
+                .expect("FOOTER_MIN_LEN ensures 8 bytes"),
+        ))
     }
 
     /// Parse MCAP summary section to extract schemas and channels.
@@ -289,7 +306,11 @@ impl S3Reader {
 
         while pos + RECORD_HEADER_LEN <= data.len() {
             let opcode = data[pos];
-            let length = u64::from_le_bytes(data[pos + 1..pos + 9].try_into().unwrap()) as usize;
+            let length = u64::from_le_bytes(
+                data[pos + 1..pos + 9]
+                    .try_into()
+                    .expect("RECORD_HEADER_LEN ensures 8 bytes"),
+            ) as usize;
             pos += RECORD_HEADER_LEN;
 
             if pos + length > data.len() {
@@ -303,10 +324,24 @@ impl S3Reader {
                 OP_SCHEMA => {
                     if let Ok(schema) = self.parse_schema_record(body) {
                         schemas.insert(schema.id, schema);
+                    } else {
+                        tracing::warn!(
+                            context = "parse_mcap_summary_data",
+                            location = ?self.location,
+                            opcode = "OP_SCHEMA",
+                            "Failed to parse schema record during summary, skipping"
+                        );
                     }
                 }
                 OP_CHANNEL => {
-                    let _ = self.parse_channel_record(body, &schemas, &mut channels);
+                    if let Err(e) = self.parse_channel_record(body, &schemas, &mut channels) {
+                        tracing::warn!(
+                            context = "parse_mcap_summary_data",
+                            location = ?self.location,
+                            error = %e,
+                            "Failed to parse channel record during summary, skipping"
+                        );
+                    }
                 }
                 OP_MESSAGE_INDEX | OP_CHUNK_INDEX | OP_ATTACHMENT | OP_ATTACHMENT_INDEX
                 | OP_METADATA | OP_METADATA_INDEX | OP_STATISTICS | OP_SUMMARY_OFFSET
@@ -333,8 +368,16 @@ impl S3Reader {
             ));
         }
 
-        let id = u16::from_le_bytes(body[0..2].try_into().unwrap());
-        let name_len = u16::from_le_bytes(body[2..4].try_into().unwrap()) as usize;
+        let id = u16::from_le_bytes(
+            body[0..2]
+                .try_into()
+                .expect("CHANNEL_MIN_LEN ensures 2 bytes for id"),
+        );
+        let name_len = u16::from_le_bytes(
+            body[2..4]
+                .try_into()
+                .expect("CHANNEL_MIN_LEN ensures 2 bytes for name_len"),
+        ) as usize;
 
         if body.len() < 4 + name_len {
             return Err(FatalError::invalid_format(
@@ -355,8 +398,11 @@ impl S3Reader {
             ));
         }
 
-        let encoding_len =
-            u16::from_le_bytes(body[offset..offset + 2].try_into().unwrap()) as usize;
+        let encoding_len = u16::from_le_bytes(
+            body[offset..offset + 2]
+                .try_into()
+                .expect("Length check ensures 2 bytes for encoding_len"),
+        ) as usize;
         if body.len() < offset + 2 + encoding_len {
             return Err(FatalError::invalid_format(
                 "MCAP Schema encoding",
@@ -398,8 +444,16 @@ impl S3Reader {
             ));
         }
 
-        let id = u16::from_le_bytes(body[0..2].try_into().unwrap());
-        let topic_len = u16::from_le_bytes(body[2..4].try_into().unwrap()) as usize;
+        let id = u16::from_le_bytes(
+            body[0..2]
+                .try_into()
+                .expect("CHANNEL_MIN_LEN ensures 2 bytes for id"),
+        );
+        let topic_len = u16::from_le_bytes(
+            body[2..4]
+                .try_into()
+                .expect("CHANNEL_MIN_LEN ensures 2 bytes for topic_len"),
+        ) as usize;
 
         if body.len() < 4 + topic_len {
             return Err(FatalError::invalid_format(
@@ -420,8 +474,11 @@ impl S3Reader {
             ));
         }
 
-        let encoding_len =
-            u16::from_le_bytes(body[offset..offset + 2].try_into().unwrap()) as usize;
+        let encoding_len = u16::from_le_bytes(
+            body[offset..offset + 2]
+                .try_into()
+                .expect("Length check ensures 2 bytes for encoding_len"),
+        ) as usize;
         if body.len() < offset + 2 + encoding_len {
             return Err(FatalError::invalid_format(
                 "MCAP Channel encoding",
@@ -444,8 +501,11 @@ impl S3Reader {
             ));
         }
 
-        let schema_id =
-            u16::from_le_bytes(body[schema_offset..schema_offset + 2].try_into().unwrap());
+        let schema_id = u16::from_le_bytes(
+            body[schema_offset..schema_offset + 2]
+                .try_into()
+                .expect("Length check ensures 2 bytes for schema_id"),
+        );
 
         let schema = schemas.get(&schema_id);
         let schema_text = schema.and_then(|s| String::from_utf8(s.data.clone()).ok());
@@ -487,14 +547,17 @@ impl S3Reader {
             .await?;
 
         let mut adapter = McapS3Adapter::new();
-        if let Err(e) = adapter.process_chunk(&data) {
+        let initial_parse_failed = if let Err(e) = adapter.process_chunk(&data) {
             tracing::warn!(
                 context = "scan_mcap_for_metadata",
                 location = ?self.location,
                 error = %e,
                 "Failed to parse initial MCAP chunk for channel discovery"
             );
-        }
+            true
+        } else {
+            false
+        };
 
         let channels = adapter.channels();
         if !channels.is_empty() {
@@ -514,18 +577,29 @@ impl S3Reader {
                 )
                 .await?;
 
-            if let Err(e) = adapter.process_chunk(&additional_data) {
+            let _additional_parse_failed = if let Err(e) = adapter.process_chunk(&additional_data) {
                 tracing::warn!(
                     context = "scan_mcap_for_metadata",
                     location = ?self.location,
                     error = %e,
                     "Failed to parse additional MCAP chunk for channel discovery"
                 );
-            }
+                true
+            } else {
+                false
+            };
             return Ok((adapter.channels(), 0));
         }
 
-        Ok((channels, 0))
+        // Both initial and additional scans failed to find any channels
+        if initial_parse_failed {
+            return Err(FatalError::invalid_format(
+                "MCAP file - unable to parse any records for channel discovery",
+                data[..data.len().min(100)].to_vec(),
+            ));
+        }
+
+        Ok((HashMap::new(), 0))
     }
 
     /// Initialize BAG reader.
@@ -778,7 +852,7 @@ impl S3ReaderConstructor {
         Self {
             location: S3Location::new("test-bucket", "test.mcap"),
             config: S3ReaderConfig::default(),
-            client: S3Client::default_client().unwrap(),
+            client: S3Client::default_client().expect("failed to create default S3 client"),
         }
     }
 
@@ -1553,7 +1627,7 @@ mod tests {
         let reader = S3Reader {
             location: location.clone(),
             config,
-            client: S3Client::default_client().unwrap(),
+            client: S3Client::default_client().expect("failed to create default S3 client"),
             state: S3ReaderState::Initial,
             format: crate::io::metadata::FileFormat::Rrd,
         };

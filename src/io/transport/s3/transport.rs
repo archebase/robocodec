@@ -170,7 +170,14 @@ impl Transport for S3Transport {
         }
 
         // Poll the fetch future
-        let fetch_result = self.fetch_future.as_mut().as_mut().unwrap().poll_unpin(cx);
+        let fetch_result = self
+            .fetch_future
+            .as_mut()
+            .as_mut()
+            .expect(
+                "fetch_future set to Some() in is_none() check above or from previous iteration",
+            )
+            .poll_unpin(cx);
 
         match fetch_result {
             Poll::Ready(Ok(data)) => {

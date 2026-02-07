@@ -310,7 +310,8 @@ impl StreamingParser for StreamingRrdParser {
                     let magic = &self.buffer[self.buffer_pos..self.buffer_pos + 4];
 
                     // Check for old formats
-                    if OLD_RRD_MAGIC.contains(&magic.try_into().unwrap()) {
+                    if OLD_RRD_MAGIC.contains(&magic.try_into().expect("magic is exactly 4 bytes"))
+                    {
                         return Err(FatalError::ConfigError {
                             message: format!(
                                 "Old RRD version detected: {:?}. Please upgrade the file using rerun tools.",
@@ -364,12 +365,12 @@ impl StreamingParser for StreamingRrdParser {
                     let kind = u64::from_le_bytes(
                         self.buffer[self.buffer_pos..self.buffer_pos + 8]
                             .try_into()
-                            .unwrap(),
+                            .expect("MESSAGE_HEADER_SIZE check ensures 8 bytes available"),
                     );
                     let len = u64::from_le_bytes(
                         self.buffer[self.buffer_pos + 8..self.buffer_pos + 16]
                             .try_into()
-                            .unwrap(),
+                            .expect("MESSAGE_HEADER_SIZE check ensures 16 bytes available"),
                     ) as usize;
 
                     let kind = MessageKind::from_u64(kind).ok_or_else(|| {

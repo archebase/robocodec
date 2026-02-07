@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create rewriter (format auto-detected from input)
     let mut rewriter = RoboRewriter::open(input_path)?;
-    println!("   Input format: {:?}", input_path.split('.').last());
+    println!("   Input format: {:?}", input_path.rsplit('.').next());
     println!("   Input: {}", rewriter.input_path().display());
 
     // Detect output format from extension

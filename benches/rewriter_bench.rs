@@ -119,7 +119,7 @@ fn bench_message_copy(c: &mut Criterion) {
                 group.bench_function("copy_100_messages", |b| {
                     b.iter(|| {
                         // Simulate message copy overhead
-                        let copied: Vec<_> = messages.iter().map(|m| m.clone()).collect();
+                        let copied = messages.to_vec();
                         black_box(copied);
                     })
                 });

@@ -830,7 +830,10 @@ impl TypeRenameTransform {
             return cached.clone();
         }
 
-        let rewriter = self.namespace_rewriter.as_ref().unwrap();
+        let rewriter = self
+            .namespace_rewriter
+            .as_ref()
+            .expect("namespace_rewriter initialized by ensure_rewriter()");
         let rewritten = rewriter.rewrite_schema(schema_text);
         self.schema_cache.insert(cache_key, rewritten.clone());
         rewritten
@@ -904,7 +907,11 @@ impl McapTransform for TypeRenameTransform {
         } else if let Some(target) = self.apply_wildcard_type(type_name) {
             // For wildcard patterns, use the namespace rewriter first
             let rewritten_schema = self.namespace_rewriter.as_ref().and(schema_text).map(|s| {
-                let mut result = self.namespace_rewriter.as_ref().unwrap().rewrite_schema(s);
+                let mut result = self
+                    .namespace_rewriter
+                    .as_ref()
+                    .expect("namespace_rewriter is Some due to and() above")
+                    .rewrite_schema(s);
                 // Also replace the specific type that was matched
                 result = replace_type_reference(&result, type_name, &target);
                 // Handle schema format conversions

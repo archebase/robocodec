@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("💬 Total messages: {}", reader.message_count());
 
     println!("\n─── Channels ───");
-    for (_id, channel) in reader.channels() {
+    for channel in reader.channels().values() {
         println!(
             "  • {} ({}) - {} messages",
             channel.topic, channel.message_type, channel.message_count

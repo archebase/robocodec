@@ -84,7 +84,10 @@ fn validate_protobuf_message_name(message_name: &str, full_type_name: &str) -> R
     }
 
     // Check first character is letter or underscore
-    let first_char = message_name.chars().next().unwrap();
+    let first_char = message_name
+        .chars()
+        .next()
+        .expect("message is non-empty after length check");
     if !first_char.is_alphabetic() && first_char != '_' {
         return Err(crate::core::CodecError::invalid_schema(
             full_type_name,

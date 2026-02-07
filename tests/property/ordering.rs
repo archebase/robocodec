@@ -74,22 +74,25 @@ proptest! {
         prop_assert!(timestamps.len() <= len);
     }
 
-    /// Property: Timestamp range is non-negative
+    /// Property: Timestamp range is non-negative (unsigned arithmetic is always non-negative)
     #[test]
     fn prop_timestamp_range_non_negative(timestamps in timestamp_vector()) {
         if let (Some(min), Some(max)) = (timestamps.iter().min(), timestamps.iter().max()) {
-            let range = *max - *min;
-            prop_assert!(range >= 0, "Timestamp range should be non-negative");
+            let _range = *max - *min;
+            // For u64, subtraction with larger min would wrap, but we use min() <= max()
+            // so range is always non-negative by construction
+            prop_assert!(true);
         }
     }
 
-    /// Property: Duration between timestamps is non-negative
+    /// Property: Duration between timestamps is non-negative (unsigned arithmetic)
     #[test]
     fn prop_timestamp_difference_non_negative(ts1 in 1_000_000_000u64..2_000_000_000u64,
                                                 ts2 in 1_000_000_000u64..2_000_000_000u64) {
         let (earlier, later) = if ts1 <= ts2 { (ts1, ts2) } else { (ts2, ts1) };
-        let duration = later - earlier;
-        prop_assert!(duration >= 0, "Duration should be non-negative");
+        let _duration = later - earlier;
+        // Since earlier <= later by construction, duration is always non-negative
+        prop_assert!(true);
     }
 }
 
@@ -219,7 +222,7 @@ proptest! {
         // Create channel infos with unique IDs using enumerate
         let channel_infos: Vec<_> = (0..count).map(|i| {
             let id = i as u16;
-            ChannelInfo::new(id, &format!("/topic_{}", id), &format!("std_msgs/Type_{}", id))
+            ChannelInfo::new(id, format!("/topic_{}", id), format!("std_msgs/Type_{}", id))
         }).collect();
 
         // Collect unique channel IDs
