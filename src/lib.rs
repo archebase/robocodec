@@ -301,3 +301,9 @@ pub trait Decoder: Send + Sync {
 // Python bindings (optional feature)
 #[cfg(feature = "python")]
 pub mod python;
+
+// Test helpers (only available when testing)
+#[cfg(test)]
+pub mod tests {
+    pub use crate::io::metadata::FileFormat;
+}

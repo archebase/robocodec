@@ -109,10 +109,40 @@ pub fn parse_schema_with_encoding(
 /// This adds standard ROS2 `builtin_interfaces` types like Time and Duration
 /// to the schema, ensuring they're available when decoding messages that
 /// reference them.
+///
+/// When a type already exists under a different naming convention from the
+/// parsed message_definition (e.g., `std_msgs/Header` with `seq` from ROS1),
+/// we skip adding the `/msg/` variant to avoid ambiguous short-name resolution
+/// in `get_type_variants`. The parsed definition is authoritative.
 fn populate_builtin_types(schema: &mut MessageSchema) {
+    // Snapshot the types that were parsed from the message_definition,
+    // BEFORE we start adding builtins. These are authoritative.
+    let parsed_types: std::collections::HashSet<String> = schema.types.keys().cloned().collect();
+
     for builtin_type in builtin_types::get_all() {
         // Only add if not already present (user schemas can override)
-        if !schema.types.contains_key(&builtin_type.name) {
+        if schema.types.contains_key(&builtin_type.name) {
+            continue;
+        }
+
+        // Skip adding a builtin variant if a naming variant was already
+        // PARSED from the message_definition (not from a previous builtin).
+        // e.g., skip std_msgs/msg/Header when std_msgs/Header was parsed
+        // from the ROS1 message_definition (which includes the seq field).
+        let parsed_variant_exists = if builtin_type.name.contains("/msg/") {
+            let without_msg = builtin_type.name.replace("/msg/", "/");
+            parsed_types.contains(&without_msg)
+        } else {
+            let parts: Vec<&str> = builtin_type.name.rsplitn(2, '/').collect();
+            if parts.len() == 2 {
+                let with_msg = format!("{}/msg/{}", parts[1], parts[0]);
+                parsed_types.contains(&with_msg)
+            } else {
+                false
+            }
+        };
+
+        if !parsed_variant_exists {
             schema.add_type(builtin_type);
         }
     }

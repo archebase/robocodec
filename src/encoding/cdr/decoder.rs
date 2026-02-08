@@ -583,6 +583,9 @@ impl CdrDecoder {
     }
 
     /// Read a string value (matches TS `CdrReader.string()`).
+    ///
+    /// CDR/ROS2 strings: length includes null terminator, so we read `len-1` bytes + skip 1.
+    /// ROS1 strings: length is exact byte count (no null terminator), so we read all `len` bytes.
     fn read_string(&self, cursor: &mut CdrCursor) -> CoreResult<CodecValue> {
         // Read length prefix (4 bytes)
         let len = cursor.read_u32()? as usize;
@@ -593,6 +596,19 @@ impl CdrDecoder {
             )));
         }
 
+        if cursor.is_ros1() {
+            // ROS1: length is exact byte count, no null terminator
+            if len == 0 {
+                return Ok(CodecValue::String(String::new()));
+            }
+            let string_bytes = cursor.read_bytes(len)?;
+            let s = std::str::from_utf8(string_bytes)
+                .map_err(|e| CodecError::parse("string utf8", format!("{e}")))?
+                .to_string();
+            return Ok(CodecValue::String(s));
+        }
+
+        // CDR/ROS2: length includes null terminator
         if len <= 1 {
             // Empty string (length 0 or 1 for just null terminator)
             cursor.skip(len)?;

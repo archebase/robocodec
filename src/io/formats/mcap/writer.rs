@@ -1079,15 +1079,32 @@ impl FormatWriter for ParallelMcapWriter<BufWriter<File>> {
     ) -> Result<u16> {
         // Add schema if provided
         let schema_id = if let Some(schema_data) = schema {
-            let schema_name = format!("{message_type}_schema");
-            self.add_schema(&schema_name, encoding, schema_data.as_bytes())?
+            // Use message_type directly as schema name (not message_type_schema)
+            // so the parser can find the correct type definition
+            let schema_name = message_type;
+            // Determine schema encoding based on message type
+            // ROS message types use "ros2msg" schema encoding with CDR message encoding
+            // JSON message types use "jsonschema" schema encoding with JSON message encoding
+            let schema_encoding = if encoding == "cdr"
+                && (message_type.contains('/') || message_type.contains("msg"))
+            {
+                "ros2msg"
+            } else if encoding == "json" {
+                "jsonschema"
+            } else if encoding == "protobuf" {
+                "protobuf"
+            } else {
+                // Default to message encoding for backward compatibility
+                encoding
+            };
+            self.add_schema(&schema_name, schema_encoding, schema_data.as_bytes())?
         } else {
             0
         };
 
         // Use the internal add_channel method with empty metadata
         let empty_metadata = HashMap::new();
-        self.add_channel(schema_id, topic, message_type, &empty_metadata)
+        self.add_channel(schema_id, topic, encoding, &empty_metadata)
     }
 
     fn write(&mut self, message: &RawMessage) -> Result<()> {
