@@ -341,6 +341,10 @@ impl FormatReader for ParallelBagReader {
         Ok(Box::new(stream))
     }
 
+    fn iter_raw_boxed(&self) -> Result<crate::io::traits::RawMessageIter<'_>> {
+        Ok(Box::new(self.iter_raw()?))
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

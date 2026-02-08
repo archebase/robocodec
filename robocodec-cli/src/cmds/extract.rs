@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use clap::Subcommand;
 
 use crate::cli::{Progress, Result, open_reader, parse_time_range};
-use robocodec::{FormatReader, RoboRewriter};
+use robocodec::io::RawMessage;
+use robocodec::{FormatReader, FormatWriter, RoboReader, RoboWriter};
 
 /// Extract subsets of data from files.
 #[derive(Subcommand, Clone, Debug)]
@@ -155,42 +156,59 @@ fn cmd_extract_messages(
 
     let reader = open_reader(&input)?;
     let total = reader.message_count();
-    let channel_count = reader.channels().len() as u64;
 
     let limit = count.unwrap_or(total as usize);
     println!("  Limit: {} messages", limit);
 
-    // Use rewriter for full file copy with limit support
-    // For partial extraction, we need format-specific iteration which is not yet exposed
-    if limit < total as usize {
-        return Err(anyhow::anyhow!(
-            "Partial message extraction (count < total) requires format-specific iteration. \
-             Use the convert command for full file copying."
-        ));
-    }
+    let output_str = output
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in output path"))?;
+    let mut writer = RoboWriter::create(output_str)?;
 
-    // Full file copy using rewriter
+    // Add all channels to writer
+    let channel_map = add_channels_to_writer(&reader, &mut writer)?;
+
     let mut progress = if show_progress {
-        Some(Progress::new(channel_count, "Copying channels"))
+        Some(Progress::new(limit as u64, "Extracting messages"))
     } else {
         None
     };
 
-    let mut rewriter = RoboRewriter::open(&input)?;
+    // Iterate raw messages and write up to limit
+    let raw_iter = reader.iter_raw()?;
+    let mut written = 0u64;
 
-    // Simulate channel progress during rewrite
-    if let Some(ref mut pb) = progress {
-        for i in 0..channel_count {
-            pb.set(i + 1);
+    for result in raw_iter {
+        if written >= limit as u64 {
+            break;
+        }
+
+        let (raw_msg, _channel_info) = result?;
+
+        // Remap channel_id to writer's channel_id
+        if let Some(&new_ch_id) = channel_map.get(&raw_msg.channel_id) {
+            let write_msg = RawMessage {
+                channel_id: new_ch_id,
+                log_time: raw_msg.log_time,
+                publish_time: raw_msg.publish_time,
+                data: raw_msg.data,
+                sequence: raw_msg.sequence,
+            };
+            writer.write(&write_msg)?;
+            written += 1;
+        }
+
+        if let Some(ref mut pb) = progress {
+            pb.set(written);
         }
     }
 
-    let stats = rewriter.rewrite(&output)?;
+    writer.finish()?;
 
     if let Some(pb) = progress {
-        pb.finish(format!("{} messages", stats.message_count));
+        pb.finish(format!("{written} messages"));
     } else {
-        println!("  Written: {} messages", stats.message_count);
+        println!("  Written: {written} messages");
     }
 
     Ok(())
@@ -212,13 +230,13 @@ fn cmd_extract_topics(
 
     let reader = open_reader(&input)?;
 
-    // Find matching channels and count messages
-    let mut matching_channels: Vec<u16> = Vec::new();
+    // Find matching channels
+    let mut matching_channels = std::collections::HashSet::new();
 
     for (ch_id, channel) in reader.channels() {
         for topic in &topics_list {
             if channel.topic == *topic || channel.topic.contains(topic) {
-                matching_channels.push(*ch_id);
+                matching_channels.insert(*ch_id);
                 break;
             }
         }
@@ -231,33 +249,61 @@ fn cmd_extract_topics(
         ));
     }
 
+    println!("  Matched {} channels", matching_channels.len());
+
+    let output_str = output
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in output path"))?;
+    let mut writer = RoboWriter::create(output_str)?;
+
+    // Only add matching channels to writer
+    let channel_map = add_matching_channels_to_writer(&reader, &mut writer, &matching_channels)?;
+
     let mut progress = if show_progress {
-        Some(Progress::new(
-            matching_channels.len() as u64,
-            "Processing channels",
-        ))
+        Some(Progress::new(0, "Extracting topics"))
     } else {
         None
     };
 
-    // Simulate processing each channel
-    for (i, &ch_id) in matching_channels.iter().enumerate() {
-        if let Some(ref mut pb) = progress {
-            pb.set((i + 1) as u64);
+    let raw_iter = reader.iter_raw()?;
+    let mut written = 0u64;
+
+    for result in raw_iter {
+        let (raw_msg, _channel_info) = result?;
+
+        // Only write messages from matching channels
+        if let Some(&new_ch_id) = channel_map.get(&raw_msg.channel_id) {
+            let write_msg = RawMessage {
+                channel_id: new_ch_id,
+                log_time: raw_msg.log_time,
+                publish_time: raw_msg.publish_time,
+                data: raw_msg.data,
+                sequence: raw_msg.sequence,
+            };
+            writer.write(&write_msg)?;
+            written += 1;
         }
-        // In a full implementation, this would iterate through messages
-        let _ = ch_id; // Channel would be processed here
+
+        if let Some(ref mut pb) = progress {
+            pb.set(written);
+        }
     }
+
+    writer.finish()?;
 
     if let Some(pb) = progress {
-        pb.finish(format!("{} channels", matching_channels.len()));
+        pb.finish(format!(
+            "{written} messages from {} topics",
+            matching_channels.len()
+        ));
+    } else {
+        println!(
+            "  Written: {written} messages from {} topics",
+            matching_channels.len()
+        );
     }
 
-    // Topic extraction requires format-specific iteration which is not yet exposed
-    Err(anyhow::anyhow!(
-        "Topic-specific extraction requires format-specific message iteration. \
-         This feature is not yet implemented. Use the convert command for full file copying."
-    ))
+    Ok(())
 }
 
 /// Extract N messages per topic.
@@ -272,39 +318,79 @@ fn cmd_extract_per_topic(
     println!("  Output: {}", output.display());
     println!("  Messages per topic: {}", count);
 
-    if count != 1 {
-        return Err(anyhow::anyhow!(
-            "Per-topic extraction with count > 1 requires format-specific iteration. \
-             This feature is not yet implemented."
-        ));
-    }
-
     let reader = open_reader(&input)?;
-    let channel_count = reader.channels().len() as u64;
+    let channel_count = reader.channels().len();
+
+    let output_str = output
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in output path"))?;
+    let mut writer = RoboWriter::create(output_str)?;
+
+    // Add all channels to writer
+    let channel_map = add_channels_to_writer(&reader, &mut writer)?;
 
     let mut progress = if show_progress {
-        Some(Progress::new(channel_count, "Scanning channels"))
+        Some(Progress::new(
+            (channel_count * count) as u64,
+            "Extracting per topic",
+        ))
     } else {
         None
     };
 
-    // Simulate scanning each channel
-    for (i, channel) in reader.channels().values().enumerate() {
-        if let Some(ref mut pb) = progress {
-            pb.set((i + 1) as u64);
+    // Track how many messages we've written per channel
+    let mut per_channel_count: std::collections::HashMap<u16, usize> =
+        std::collections::HashMap::new();
+
+    let raw_iter = reader.iter_raw()?;
+    let mut written = 0u64;
+    let mut all_done = false;
+
+    for result in raw_iter {
+        if all_done {
+            break;
         }
-        let _ = channel.topic; // Topic would be processed here
+
+        let (raw_msg, _channel_info) = result?;
+
+        let ch_count = per_channel_count.entry(raw_msg.channel_id).or_insert(0);
+
+        if *ch_count < count
+            && let Some(&new_ch_id) = channel_map.get(&raw_msg.channel_id)
+        {
+            let write_msg = RawMessage {
+                channel_id: new_ch_id,
+                log_time: raw_msg.log_time,
+                publish_time: raw_msg.publish_time,
+                data: raw_msg.data,
+                sequence: raw_msg.sequence,
+            };
+            writer.write(&write_msg)?;
+            written += 1;
+            *ch_count += 1;
+        }
+
+        if let Some(ref mut pb) = progress {
+            pb.set(written);
+        }
+
+        // Check if all channels have enough messages
+        if per_channel_count.len() == channel_count
+            && per_channel_count.values().all(|&c| c >= count)
+        {
+            all_done = true;
+        }
     }
+
+    writer.finish()?;
 
     if let Some(pb) = progress {
-        pb.finish(format!("{} channels scanned", channel_count));
+        pb.finish(format!("{written} messages from {channel_count} topics"));
+    } else {
+        println!("  Written: {written} messages from {channel_count} topics");
     }
 
-    // Per-topic extraction requires format-specific iteration
-    Err(anyhow::anyhow!(
-        "Per-topic extraction requires format-specific message iteration. \
-         This feature is not yet implemented. Use the convert command for full file copying."
-    ))
+    Ok(())
 }
 
 /// Extract messages within time range.
@@ -322,42 +408,58 @@ fn cmd_extract_time_range(
     println!("  Start: {}", start_ns);
     println!("  End:   {}", end_ns);
 
-    // Check if the full file is within range (full file copy)
-    if start_ns == 0 && end_ns == u64::MAX {
-        let reader = open_reader(&input)?;
-        let channel_count = reader.channels().len() as u64;
+    let reader = open_reader(&input)?;
 
-        let mut progress = if show_progress {
-            Some(Progress::new(channel_count, "Copying channels"))
-        } else {
-            None
-        };
+    let output_str = output
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in output path"))?;
+    let mut writer = RoboWriter::create(output_str)?;
 
-        let mut rewriter = RoboRewriter::open(&input)?;
+    // Add all channels to writer
+    let channel_map = add_channels_to_writer(&reader, &mut writer)?;
 
-        // Simulate channel progress during rewrite
+    let mut progress = if show_progress {
+        Some(Progress::new(0, "Extracting by time range"))
+    } else {
+        None
+    };
+
+    let raw_iter = reader.iter_raw()?;
+    let mut written = 0u64;
+
+    for result in raw_iter {
+        let (raw_msg, _channel_info) = result?;
+
+        // Filter by time range (use log_time)
+        if raw_msg.log_time >= start_ns
+            && raw_msg.log_time <= end_ns
+            && let Some(&new_ch_id) = channel_map.get(&raw_msg.channel_id)
+        {
+            let write_msg = RawMessage {
+                channel_id: new_ch_id,
+                log_time: raw_msg.log_time,
+                publish_time: raw_msg.publish_time,
+                data: raw_msg.data,
+                sequence: raw_msg.sequence,
+            };
+            writer.write(&write_msg)?;
+            written += 1;
+        }
+
         if let Some(ref mut pb) = progress {
-            for i in 0..channel_count {
-                pb.set(i + 1);
-            }
+            pb.set(written);
         }
-
-        let stats = rewriter.rewrite(&output)?;
-
-        if let Some(pb) = progress {
-            pb.finish(format!("{} messages", stats.message_count));
-        } else {
-            println!("  Written: {} messages", stats.message_count);
-        }
-
-        return Ok(());
     }
 
-    // Time range filtering requires format-specific iteration
-    Err(anyhow::anyhow!(
-        "Time range filtering requires format-specific message iteration. \
-         This feature is not yet implemented. Use the convert command for full file copying."
-    ))
+    writer.finish()?;
+
+    if let Some(pb) = progress {
+        pb.finish(format!("{written} messages"));
+    } else {
+        println!("  Written: {written} messages");
+    }
+
+    Ok(())
 }
 
 /// Create minimal fixture files.
@@ -372,21 +474,113 @@ fn cmd_create_fixture(
     let reader = open_reader(&input)?;
 
     let fixture_dir = output_dir.unwrap_or_else(|| PathBuf::from("tests/fixtures"));
-
     std::fs::create_dir_all(&fixture_dir)?;
 
-    let _fixture_name = name.unwrap_or_else(|| "fixture".to_string());
+    let fixture_name = name.unwrap_or_else(|| "fixture".to_string());
 
+    // Determine output extension from input
+    let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("bag");
+    let output_path = fixture_dir.join(format!("{fixture_name}.{ext}"));
+
+    println!("  Output: {}", output_path.display());
     println!("  Available topics:");
     for channel in reader.channels().values() {
         println!("    - {} ({})", channel.topic, channel.message_type);
     }
 
-    // Fixture creation requires format-specific iteration to extract one message per topic
-    Err(anyhow::anyhow!(
-        "Fixture creation requires format-specific message iteration. \
-         This feature is not yet implemented. Use the convert command for full file copying."
-    ))
+    let output_str = output_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in output path"))?;
+    let mut writer = RoboWriter::create(output_str)?;
+
+    // Add all channels to writer
+    let channel_count = reader.channels().len();
+    let channel_map = add_channels_to_writer(&reader, &mut writer)?;
+
+    // Extract one message per topic (same as per-topic with count=1)
+    let mut per_channel_count: std::collections::HashMap<u16, usize> =
+        std::collections::HashMap::new();
+
+    let raw_iter = reader.iter_raw()?;
+    let mut written = 0u64;
+
+    for result in raw_iter {
+        let (raw_msg, _channel_info) = result?;
+
+        let ch_count = per_channel_count.entry(raw_msg.channel_id).or_insert(0);
+
+        if *ch_count < 1
+            && let Some(&new_ch_id) = channel_map.get(&raw_msg.channel_id)
+        {
+            let write_msg = RawMessage {
+                channel_id: new_ch_id,
+                log_time: raw_msg.log_time,
+                publish_time: raw_msg.publish_time,
+                data: raw_msg.data,
+                sequence: raw_msg.sequence,
+            };
+            writer.write(&write_msg)?;
+            written += 1;
+            *ch_count += 1;
+        }
+
+        // Check if all channels have a message
+        if per_channel_count.len() == channel_count && per_channel_count.values().all(|&c| c >= 1) {
+            break;
+        }
+    }
+
+    writer.finish()?;
+
+    println!(
+        "  Created fixture: {} ({written} messages from {channel_count} topics)",
+        output_path.display()
+    );
+
+    Ok(())
+}
+
+/// Add all channels from reader to writer, returning a map from old channel_id to new channel_id.
+fn add_channels_to_writer(
+    reader: &RoboReader,
+    writer: &mut RoboWriter,
+) -> Result<std::collections::HashMap<u16, u16>> {
+    let mut channel_map = std::collections::HashMap::new();
+
+    for (&old_id, channel) in reader.channels() {
+        let new_id = writer.add_channel(
+            &channel.topic,
+            &channel.message_type,
+            &channel.encoding,
+            channel.schema.as_deref(),
+        )?;
+        channel_map.insert(old_id, new_id);
+    }
+
+    Ok(channel_map)
+}
+
+/// Add only matching channels from reader to writer.
+fn add_matching_channels_to_writer(
+    reader: &RoboReader,
+    writer: &mut RoboWriter,
+    matching_channels: &std::collections::HashSet<u16>,
+) -> Result<std::collections::HashMap<u16, u16>> {
+    let mut channel_map = std::collections::HashMap::new();
+
+    for (&old_id, channel) in reader.channels() {
+        if matching_channels.contains(&old_id) {
+            let new_id = writer.add_channel(
+                &channel.topic,
+                &channel.message_type,
+                &channel.encoding,
+                channel.schema.as_deref(),
+            )?;
+            channel_map.insert(old_id, new_id);
+        }
+    }
+
+    Ok(channel_map)
 }
 
 #[cfg(test)]
@@ -477,32 +671,47 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_cmd_extract_messages_partial_extraction_error() {
+    fn test_cmd_extract_messages_partial() {
         let path = fixture_path("robocodec_test_0.mcap");
         if !path.exists() {
             return; // Skip if fixture not available
         }
 
-        // Partial extraction (count < total) should error
-        let result = cmd_extract_messages(path.clone(), temp_output(), Some(1), false);
-        assert!(result.is_err(), "partial extraction should fail");
+        let output = temp_output();
+        let result = cmd_extract_messages(path, output.clone(), Some(1), false);
+        // Should succeed - partial extraction now works
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Partial message extraction")
+            result.is_ok(),
+            "partial extraction should succeed: {:?}",
+            result.err()
         );
+        let _ = std::fs::remove_file(&output);
     }
 
     #[test]
-    fn test_cmd_extract_messages_invalid_range() {
+    fn test_cmd_extract_messages_all() {
         let path = fixture_path("robocodec_test_0.mcap");
         if !path.exists() {
             return;
         }
 
-        // Can't test full extraction without a valid output
-        // but we can verify the function attempts to open the file
+        let output = temp_output();
+        let result = cmd_extract_messages(path, output.clone(), None, false);
+        assert!(
+            result.is_ok(),
+            "full extraction should succeed: {:?}",
+            result.err()
+        );
+        let _ = std::fs::remove_file(&output);
+    }
+
+    #[test]
+    fn test_cmd_extract_messages_invalid_output() {
+        let path = fixture_path("robocodec_test_0.mcap");
+        if !path.exists() {
+            return;
+        }
+
         let result = cmd_extract_messages(
             path,
             PathBuf::from("/nonexistent/output/dir/file.mcap"),
@@ -540,14 +749,13 @@ mod tests {
     }
 
     #[test]
-    fn test_cmd_extract_topics_not_implemented() {
+    fn test_cmd_extract_topics_matching() {
         let path = fixture_path("robocodec_test_0.mcap");
         if !path.exists() {
             return;
         }
 
-        // Even with matching topics, should return not implemented error
-        // First we need to find a real topic name
+        // Find a real topic name
         let Ok(reader) =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| open_reader(&path)))
         else {
@@ -560,14 +768,14 @@ mod tests {
             return;
         };
 
-        let result = cmd_extract_topics(path, temp_output(), topic, false);
-        assert!(result.is_err(), "topic extraction not yet implemented");
+        let output = temp_output();
+        let result = cmd_extract_topics(path, output.clone(), topic, false);
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("not yet implemented")
+            result.is_ok(),
+            "topic extraction should succeed: {:?}",
+            result.err()
         );
+        let _ = std::fs::remove_file(&output);
     }
 
     #[test]
@@ -604,34 +812,37 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_cmd_extract_per_topic_count_not_one() {
+    fn test_cmd_extract_per_topic_count_one() {
         let path = fixture_path("robocodec_test_0.mcap");
         if !path.exists() {
             return;
         }
 
-        // count != 1 should fail
-        let result = cmd_extract_per_topic(path, temp_output(), 2, false);
-        assert!(result.is_err(), "count > 1 should fail");
-        assert!(result.unwrap_err().to_string().contains("count > 1"));
+        let output = temp_output();
+        let result = cmd_extract_per_topic(path, output.clone(), 1, false);
+        assert!(
+            result.is_ok(),
+            "per-topic extraction with count=1 should succeed: {:?}",
+            result.err()
+        );
+        let _ = std::fs::remove_file(&output);
     }
 
     #[test]
-    fn test_cmd_extract_per_topic_not_implemented() {
+    fn test_cmd_extract_per_topic_count_multiple() {
         let path = fixture_path("robocodec_test_0.mcap");
         if !path.exists() {
             return;
         }
 
-        // Even with count=1, should return not implemented
-        let result = cmd_extract_per_topic(path, temp_output(), 1, false);
-        assert!(result.is_err(), "per-topic extraction not yet implemented");
+        let output = temp_output();
+        let result = cmd_extract_per_topic(path, output.clone(), 3, false);
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("not yet implemented")
+            result.is_ok(),
+            "per-topic extraction with count>1 should succeed: {:?}",
+            result.err()
         );
+        let _ = std::fs::remove_file(&output);
     }
 
     // ========================================================================
@@ -656,21 +867,20 @@ mod tests {
     }
 
     #[test]
-    fn test_cmd_extract_time_range_not_implemented() {
+    fn test_cmd_extract_time_range_specific_range() {
         let path = fixture_path("robocodec_test_0.mcap");
         if !path.exists() {
             return;
         }
 
-        // Valid range that's not "0,MAX" should fail with not implemented
-        let result = cmd_extract_time_range(path, temp_output(), "1000,2000".to_string(), false);
-        assert!(result.is_err(), "time range filtering not yet implemented");
+        let output = temp_output();
+        let result = cmd_extract_time_range(path, output.clone(), "0,MAX".to_string(), false);
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("not yet implemented")
+            result.is_ok(),
+            "time range extraction should succeed: {:?}",
+            result.err()
         );
+        let _ = std::fs::remove_file(&output);
     }
 
     #[test]
@@ -680,7 +890,6 @@ mod tests {
             return;
         }
 
-        // Even with 0,MAX range, invalid output should fail
         let result = cmd_extract_time_range(
             path,
             PathBuf::from("/nonexistent/output/dir/file.mcap"),
@@ -695,20 +904,23 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_cmd_create_fixture_not_implemented() {
+    fn test_cmd_create_fixture() {
         let path = fixture_path("robocodec_test_0.mcap");
         if !path.exists() {
             return;
         }
 
-        let result = cmd_create_fixture(path, None, None);
-        assert!(result.is_err(), "fixture creation not yet implemented");
+        let temp_dir =
+            std::env::temp_dir().join(format!("robocodec_fixture_{}", std::process::id()));
+        let result = cmd_create_fixture(path, Some(temp_dir.clone()), Some("test".to_string()));
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("not yet implemented")
+            result.is_ok(),
+            "fixture creation should succeed: {:?}",
+            result.err()
         );
+
+        // Clean up
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[test]
@@ -718,12 +930,25 @@ mod tests {
             return;
         }
 
-        let temp_dir = std::env::temp_dir().join("robocodec_fixture_test");
-        let result = cmd_create_fixture(path, Some(temp_dir.clone()), Some("test".to_string()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("robocodec_fixture_custom_{}", std::process::id()));
+        let result =
+            cmd_create_fixture(path, Some(temp_dir.clone()), Some("my_fixture".to_string()));
+        assert!(
+            result.is_ok(),
+            "fixture creation should succeed: {:?}",
+            result.err()
+        );
 
-        assert!(result.is_err(), "fixture creation not yet implemented");
+        // Verify output file exists
+        let output_file = temp_dir.join("my_fixture.mcap");
+        assert!(
+            output_file.exists(),
+            "fixture file should exist at {:?}",
+            output_file
+        );
 
-        // Clean up temp dir
+        // Clean up
         let _ = std::fs::remove_dir_all(temp_dir);
     }
 

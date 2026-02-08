@@ -266,6 +266,26 @@ impl FormatReader for McapReader {
         Ok(Box::new(stream))
     }
 
+    fn iter_raw_boxed(&self) -> crate::core::Result<crate::io::traits::RawMessageIter<'_>> {
+        let raw_iter = self.iter_raw()?;
+        let stream = raw_iter.stream()?;
+        // Convert MCAP-specific RawMessage to unified RawMessage
+        Ok(Box::new(stream.map(|result| {
+            result.map(|(msg, ch)| {
+                (
+                    crate::io::metadata::RawMessage {
+                        channel_id: msg.channel_id,
+                        log_time: msg.log_time,
+                        publish_time: msg.publish_time,
+                        data: msg.data,
+                        sequence: msg.sequence,
+                    },
+                    ch,
+                )
+            })
+        })))
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

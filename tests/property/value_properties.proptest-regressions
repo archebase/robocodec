@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc ef16048e1a8ca3336e5b72faa2e945ac09df08ecdf42c305b334b43d8138312a # shrinks to secs = -2, nanos = 2000000001
+cc 7aa5ce64e5c2553b325f3fc4c3447608e8c05e40afee13e9ab0a166181c3bc8c # shrinks to secs = -1, nanos = 1000000001
