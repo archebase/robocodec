@@ -1097,7 +1097,7 @@ impl FormatWriter for ParallelMcapWriter<BufWriter<File>> {
                 // Default to message encoding for backward compatibility
                 encoding
             };
-            self.add_schema(&schema_name, schema_encoding, schema_data.as_bytes())?
+            self.add_schema(schema_name, schema_encoding, schema_data.as_bytes())?
         } else {
             0
         };
