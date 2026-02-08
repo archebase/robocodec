@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use clap::Subcommand;
 
 use crate::cli::{Progress, Result, open_reader, parse_time_range};
-use robocodec::{FormatReader, FormatWriter};
+use robocodec::io::RawMessage;
+use robocodec::{FormatReader, FormatWriter, RoboReader, RoboWriter};
 
 /// Extract subsets of data from files.
 #[derive(Subcommand, Clone, Debug)]
@@ -162,7 +163,7 @@ fn cmd_extract_messages(
     let output_str = output
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in output path"))?;
-    let mut writer = robocodec::RoboWriter::create(output_str)?;
+    let mut writer = RoboWriter::create(output_str)?;
 
     // Add all channels to writer
     let channel_map = add_channels_to_writer(&reader, &mut writer)?;
@@ -186,7 +187,7 @@ fn cmd_extract_messages(
 
         // Remap channel_id to writer's channel_id
         if let Some(&new_ch_id) = channel_map.get(&raw_msg.channel_id) {
-            let write_msg = robocodec::io::RawMessage {
+            let write_msg = RawMessage {
                 channel_id: new_ch_id,
                 log_time: raw_msg.log_time,
                 publish_time: raw_msg.publish_time,
@@ -253,7 +254,7 @@ fn cmd_extract_topics(
     let output_str = output
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in output path"))?;
-    let mut writer = robocodec::RoboWriter::create(output_str)?;
+    let mut writer = RoboWriter::create(output_str)?;
 
     // Only add matching channels to writer
     let channel_map = add_matching_channels_to_writer(&reader, &mut writer, &matching_channels)?;
@@ -272,7 +273,7 @@ fn cmd_extract_topics(
 
         // Only write messages from matching channels
         if let Some(&new_ch_id) = channel_map.get(&raw_msg.channel_id) {
-            let write_msg = robocodec::io::RawMessage {
+            let write_msg = RawMessage {
                 channel_id: new_ch_id,
                 log_time: raw_msg.log_time,
                 publish_time: raw_msg.publish_time,
@@ -323,7 +324,7 @@ fn cmd_extract_per_topic(
     let output_str = output
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in output path"))?;
-    let mut writer = robocodec::RoboWriter::create(output_str)?;
+    let mut writer = RoboWriter::create(output_str)?;
 
     // Add all channels to writer
     let channel_map = add_channels_to_writer(&reader, &mut writer)?;
@@ -357,7 +358,7 @@ fn cmd_extract_per_topic(
         if *ch_count < count
             && let Some(&new_ch_id) = channel_map.get(&raw_msg.channel_id)
         {
-            let write_msg = robocodec::io::RawMessage {
+            let write_msg = RawMessage {
                 channel_id: new_ch_id,
                 log_time: raw_msg.log_time,
                 publish_time: raw_msg.publish_time,
@@ -412,7 +413,7 @@ fn cmd_extract_time_range(
     let output_str = output
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in output path"))?;
-    let mut writer = robocodec::RoboWriter::create(output_str)?;
+    let mut writer = RoboWriter::create(output_str)?;
 
     // Add all channels to writer
     let channel_map = add_channels_to_writer(&reader, &mut writer)?;
@@ -434,7 +435,7 @@ fn cmd_extract_time_range(
             && raw_msg.log_time <= end_ns
             && let Some(&new_ch_id) = channel_map.get(&raw_msg.channel_id)
         {
-            let write_msg = robocodec::io::RawMessage {
+            let write_msg = RawMessage {
                 channel_id: new_ch_id,
                 log_time: raw_msg.log_time,
                 publish_time: raw_msg.publish_time,
@@ -490,7 +491,7 @@ fn cmd_create_fixture(
     let output_str = output_path
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Invalid UTF-8 in output path"))?;
-    let mut writer = robocodec::RoboWriter::create(output_str)?;
+    let mut writer = RoboWriter::create(output_str)?;
 
     // Add all channels to writer
     let channel_count = reader.channels().len();
@@ -511,7 +512,7 @@ fn cmd_create_fixture(
         if *ch_count < 1
             && let Some(&new_ch_id) = channel_map.get(&raw_msg.channel_id)
         {
-            let write_msg = robocodec::io::RawMessage {
+            let write_msg = RawMessage {
                 channel_id: new_ch_id,
                 log_time: raw_msg.log_time,
                 publish_time: raw_msg.publish_time,
@@ -541,8 +542,8 @@ fn cmd_create_fixture(
 
 /// Add all channels from reader to writer, returning a map from old channel_id to new channel_id.
 fn add_channels_to_writer(
-    reader: &robocodec::RoboReader,
-    writer: &mut robocodec::RoboWriter,
+    reader: &RoboReader,
+    writer: &mut RoboWriter,
 ) -> Result<std::collections::HashMap<u16, u16>> {
     let mut channel_map = std::collections::HashMap::new();
 
@@ -561,8 +562,8 @@ fn add_channels_to_writer(
 
 /// Add only matching channels from reader to writer.
 fn add_matching_channels_to_writer(
-    reader: &robocodec::RoboReader,
-    writer: &mut robocodec::RoboWriter,
+    reader: &RoboReader,
+    writer: &mut RoboWriter,
     matching_channels: &std::collections::HashSet<u16>,
 ) -> Result<std::collections::HashMap<u16, u16>> {
     let mut channel_map = std::collections::HashMap::new();

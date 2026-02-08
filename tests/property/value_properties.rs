@@ -178,9 +178,9 @@ proptest! {
         prop_assert!(total_nanos >= 0);
     }
 
-    /// Property: Duration can be negative
+    /// Property: Duration can be negative when secs < 0 and nanos in [0, 1e9)
     #[test]
-    fn prop_duration_can_be_negative(secs in -1000i32..0, nanos in any::<i32>()) {
+    fn prop_duration_can_be_negative(secs in -1000i32..0i32, nanos in 0i32..1_000_000_000i32) {
         let dur = CodecValue::duration_from_secs_nanos(secs, nanos);
         let total_nanos = dur.as_duration_nanos().unwrap();
 
