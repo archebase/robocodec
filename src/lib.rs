@@ -154,6 +154,8 @@
 //! - **[`ChannelInfo`]** - Channel/topic metadata
 //! - **[`ReaderConfig`]** - Configuration for readers (parallel processing, chunk merging)
 //! - **[`WriterConfig`]** - Configuration for writers
+//! - **[`DecodedMessage`]** - Decoded message field name to value mapping
+//! - **[`CodecValue`]** - Value type for decoded message fields
 //!
 //! ## S3 Authentication
 //!
@@ -197,6 +199,9 @@ pub mod core;
 
 // Re-export core error type for public API
 pub use core::{CodecError, Result};
+
+// Re-export core value types (decoded message representation)
+pub use core::value::{CodecValue, DecodedMessage};
 
 // Encoding/decoding (hidden from docs but available for advanced use)
 #[doc(hidden)]
@@ -246,8 +251,7 @@ pub use transform::{TransformBuilder, TransformError};
 /// # Example
 ///
 /// ```no_run
-/// # use robocodec::{Decoder, CodecError};
-/// # use robocodec::core::DecodedMessage;
+/// # use robocodec::{Decoder, CodecError, DecodedMessage};
 /// # struct MyDecoder;
 /// # impl Decoder for MyDecoder {
 /// #     fn decode(&self, data: &[u8], schema: &str, type_name: Option<&str>) -> Result<DecodedMessage, CodecError> {
@@ -279,8 +283,7 @@ pub trait Decoder: Send + Sync {
     /// # Example
     ///
     /// ```no_run
-    /// # use robocodec::{Decoder, CodecError};
-    /// # use robocodec::core::DecodedMessage;
+    /// # use robocodec::{Decoder, CodecError, DecodedMessage};
     /// # fn test(decoder: &dyn Decoder, data: &[u8]) -> Result<(), CodecError> {
     /// let schema = "int32 value\nstring name";
     /// let message = decoder.decode(data, schema, Some("test/Type"))?;
