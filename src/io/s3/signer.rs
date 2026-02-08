@@ -195,7 +195,7 @@ fn build_canonical_query_string(query: &str) -> String {
         .collect();
 
     // Sort by parameter name, then by value
-    params.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    params.sort_by(|a, b| a.0.cmp(b.0).then(a.1.cmp(b.1)));
 
     params
         .iter()
