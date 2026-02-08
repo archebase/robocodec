@@ -71,8 +71,20 @@ impl DynCodec for CdrCodec {
                     crate::schema::parse_schema(type_name, schema_text)?
                 };
 
-                // Decode using the existing CDR decoder
-                self.decoder.decode(&parsed_schema, data, Some(type_name))
+                // Decode using the appropriate method based on schema encoding.
+                // ROS1 bag messages are serialized WITHOUT a CDR encapsulation header
+                // and use packed layout (no alignment padding), so they need
+                // decode_headerless_ros1() instead of decode().
+                let is_ros1 = schema_encoding
+                    .as_ref()
+                    .is_some_and(|enc| enc.to_lowercase().contains("ros1"));
+
+                if is_ros1 {
+                    self.decoder
+                        .decode_headerless_ros1(&parsed_schema, data, Some(type_name))
+                } else {
+                    self.decoder.decode(&parsed_schema, data, Some(type_name))
+                }
             }
             _ => Err(CodecError::invalid_schema(
                 schema.type_name(),
