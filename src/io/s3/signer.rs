@@ -8,23 +8,6 @@ use crate::io::s3::config::AwsCredentials;
 use http::{HeaderMap, HeaderValue, Method, Uri};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Sign an HTTP request with AWS `SigV4`.
-///
-/// This function adds the necessary AWS Signature Version 4 headers to authenticate
-/// requests to AWS S3 or compatible services.
-///
-/// # Arguments
-///
-/// * `credentials` - AWS credentials (access key ID, secret access key, optional token)
-/// * `region` - AWS region (e.g., "us-east-1")
-/// * `service` - AWS service name (typically "s3")
-/// * `method` - HTTP method
-/// * `uri` - Request URI
-/// * `headers` - Existing request headers (will be modified in-place)
-///
-/// # Returns
-///
-/// Ok(()) if signing succeeded, Err otherwise.
 pub fn sign_request(
     credentials: &AwsCredentials,
     region: &str,
@@ -48,8 +31,19 @@ pub fn sign_request(
     let amz_date = format_amz_date(now.as_secs());
     let date_stamp = &amz_date[..8];
 
-    // Extract host from URI
-    let host = uri.host().ok_or("Invalid URI: missing host")?.to_string();
+    // Extract host from URI - include port for non-standard ports
+    // This matches what reqwest sends: host:port for non-standard ports
+    let host = if let Some(port) = uri.port_u16() {
+        // Include port if explicitly specified (e.g., 127.0.0.1:9000)
+        format!(
+            "{}:{}",
+            uri.host().ok_or("Invalid URI: missing host")?,
+            port
+        )
+    } else {
+        // For implicit ports (443 for https, 80 for http), use host only
+        uri.host().ok_or("Invalid URI: missing host")?.to_string()
+    };
 
     // Build the path and query string
     let path = uri.path();
@@ -397,6 +391,50 @@ mod tests {
         assert!(canonical.contains("host:example.com\n"));
         assert!(canonical.contains("x-amz-content-sha256:UNSIGNED-PAYLOAD\n"));
         assert!(canonical.contains("x-amz-date:20250101T000000Z\n"));
+    }
+
+    #[test]
+    fn test_sign_request_with_non_standard_port() {
+        let creds = AwsCredentials::new(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        )
+        .unwrap();
+
+        // Test with explicit port 9000 (common for MinIO)
+        let uri = Uri::from_str("https://127.0.0.1:9000/bucket/key").unwrap();
+        let mut headers = HeaderMap::new();
+
+        let result = sign_request(&creds, "us-east-1", "s3", &Method::GET, &uri, &mut headers);
+        assert!(result.is_ok());
+
+        // Host header should include the port
+        let host = headers.get("Host").unwrap().to_str().unwrap();
+        assert_eq!(host, "127.0.0.1:9000");
+
+        // The canonical headers should also include the port
+        let auth = headers.get("Authorization").unwrap().to_str().unwrap();
+        assert!(auth.contains("AKIAIOSFODNN7EXAMPLE"));
+    }
+
+    #[test]
+    fn test_sign_request_with_standard_port() {
+        let creds = AwsCredentials::new(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        )
+        .unwrap();
+
+        // Test with standard HTTPS port (no explicit port in URI)
+        let uri = Uri::from_str("https://examplebucket.s3.amazonaws.com/test.txt").unwrap();
+        let mut headers = HeaderMap::new();
+
+        let result = sign_request(&creds, "us-east-1", "s3", &Method::GET, &uri, &mut headers);
+        assert!(result.is_ok());
+
+        // Host header should NOT include port for implicit standard ports
+        let host = headers.get("Host").unwrap().to_str().unwrap();
+        assert_eq!(host, "examplebucket.s3.amazonaws.com");
     }
 
     #[test]
