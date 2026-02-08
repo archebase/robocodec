@@ -333,6 +333,15 @@ impl BagParser {
                 let value = &field_bytes[eq_pos + 1..];
 
                 Self::parse_field(&mut fields, name, value);
+            } else {
+                return Err(CodecError::parse(
+                    "BagParser",
+                    format!(
+                        "Header field is missing equals sign (field_len={}, bytes={:?})",
+                        field_len,
+                        String::from_utf8_lossy(&field_bytes[..field_len.min(64)]),
+                    ),
+                ));
             }
         }
 
@@ -439,10 +448,9 @@ impl BagParser {
             match header_fields.op {
                 Some(OP_CONNECTION) => {
                     // Connection data section also contains field=value pairs
-                    let data_fields = Self::parse_record_header(&data).unwrap_or_default();
-                    if let Some(conn) = Self::connection_from_fields(&header_fields, &data_fields) {
-                        connections.insert(conn.conn_id, conn);
-                    }
+                    let data_fields = Self::parse_record_header(&data)?;
+                    let conn = Self::connection_from_fields(&header_fields, &data_fields)?;
+                    connections.insert(conn.conn_id, conn);
                 }
                 Some(OP_CHUNK_INFO) => {
                     if let Some(chunk_info) =
@@ -462,16 +470,60 @@ impl BagParser {
     }
 
     /// Create a `BagConnection` from parsed header and data fields.
+    ///
+    /// Returns an error if required fields are missing. Per the ROS bag spec,
+    /// connection records must have `conn` and `topic` in the header, and
+    /// `topic`, `type`, and `md5sum` in the data section.
     fn connection_from_fields(
         header_fields: &RecordHeader,
         data_fields: &RecordHeader,
-    ) -> Option<BagConnection> {
-        Some(BagConnection {
-            conn_id: header_fields.conn?,
-            topic: header_fields.topic.clone()?,
-            // type, md5sum, message_definition come from the data section
-            message_type: data_fields.message_type.clone()?,
-            md5sum: data_fields.md5sum.clone().unwrap_or_default(),
+    ) -> Result<BagConnection> {
+        let conn_id = header_fields.conn.ok_or_else(|| {
+            CodecError::parse(
+                "BagParser",
+                "Connection record missing 'conn' field in header",
+            )
+        })?;
+        let topic = header_fields.topic.clone().ok_or_else(|| {
+            CodecError::parse(
+                "BagParser",
+                "Connection record missing 'topic' field in header",
+            )
+        })?;
+        let message_type = data_fields.message_type.clone().ok_or_else(|| {
+            CodecError::parse(
+                "BagParser",
+                format!(
+                    "Connection record for topic '{}' missing 'type' field in data section",
+                    topic
+                ),
+            )
+        })?;
+        // topic must also be present in the data section per ROS bag spec
+        if data_fields.topic.is_none() {
+            return Err(CodecError::parse(
+                "BagParser",
+                format!(
+                    "Connection record for topic '{}' missing 'topic' field in data section",
+                    topic
+                ),
+            ));
+        }
+        let md5sum = data_fields.md5sum.clone().ok_or_else(|| {
+            CodecError::parse(
+                "BagParser",
+                format!(
+                    "Connection record for topic '{}' missing 'md5sum' field in data section",
+                    topic
+                ),
+            )
+        })?;
+
+        Ok(BagConnection {
+            conn_id,
+            topic,
+            message_type,
+            md5sum,
             message_definition: data_fields.message_definition.clone().unwrap_or_default(),
             caller_id: data_fields.callerid.clone().unwrap_or_default(),
         })
@@ -539,10 +591,9 @@ impl BagParser {
             match header_fields.op {
                 Some(OP_CONNECTION) => {
                     // Connection data section also contains field=value pairs
-                    let data_fields = Self::parse_record_header(&data).unwrap_or_default();
-                    if let Some(conn) = Self::connection_from_fields(&header_fields, &data_fields) {
-                        connections.insert(conn.conn_id, conn);
-                    }
+                    let data_fields = Self::parse_record_header(&data)?;
+                    let conn = Self::connection_from_fields(&header_fields, &data_fields)?;
+                    connections.insert(conn.conn_id, conn);
                 }
                 Some(OP_CHUNK) => {
                     // Record chunk info from the chunk header

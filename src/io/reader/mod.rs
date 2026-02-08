@@ -336,6 +336,36 @@ impl RoboReader {
         Ok(DecodedMessageIter::new(boxed_iter))
     }
 
+    /// Iterate over raw (undecoded) messages.
+    ///
+    /// Returns a boxed iterator that yields raw messages with their channel
+    /// information. Messages are not decoded - they contain raw bytes as
+    /// stored in the file.
+    ///
+    /// This is useful for operations that need to copy or filter messages
+    /// without the overhead of decoding (e.g., extracting subsets of data).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use robocodec::io::RoboReader;
+    /// # fn test() -> Result<(), Box<dyn std::error::Error>> {
+    /// let reader = RoboReader::open("data.bag")?;
+    /// for result in reader.iter_raw()? {
+    ///     let (raw_msg, channel) = result?;
+    ///     println!("Topic: {}, data size: {}", channel.topic, raw_msg.data.len());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the format does not support raw iteration.
+    pub fn iter_raw(&self) -> Result<crate::io::traits::RawMessageIter<'_>> {
+        self.inner.iter_raw_boxed()
+    }
+
     /// Get the file information as a unified struct.
     #[must_use]
     pub fn file_info(&self) -> crate::io::metadata::FileInfo {

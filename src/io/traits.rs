@@ -18,6 +18,13 @@ use super::metadata::{ChannelInfo, FileInfo, RawMessage, TimestampedDecodedMessa
 // Re-export filter types
 use super::filter::TopicFilter;
 
+/// A boxed iterator over raw (undecoded) messages with channel info.
+///
+/// This type alias simplifies the complex return type used by
+/// `FormatReader::iter_raw_boxed()` and `RoboReader::iter_raw()`.
+pub type RawMessageIter<'a> =
+    Box<dyn Iterator<Item = Result<(RawMessage, ChannelInfo)>> + Send + 'a>;
+
 /// Trait for iterating over decoded messages with timestamps.
 ///
 /// This trait abstracts over format-specific iterator implementations,
@@ -314,6 +321,28 @@ pub trait FormatReader: Send + Sync {
     ) -> Result<Box<dyn DecodedMessageIterator + Send + Sync + '_>> {
         Err(CodecError::unsupported(
             "decoded_with_timestamp_boxed() not supported for this format reader",
+        ))
+    }
+
+    /// Iterate over raw (undecoded) messages as a boxed iterator.
+    ///
+    /// This method provides a trait-based approach for raw message iteration,
+    /// allowing format readers to provide raw messages without exposing
+    /// concrete iterator types.
+    ///
+    /// The default implementation returns an error. Format-specific readers
+    /// should override this method to provide their implementation.
+    ///
+    /// # Returns
+    ///
+    /// A boxed iterator yielding `(RawMessage, ChannelInfo)` tuples.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the format reader does not support raw iteration.
+    fn iter_raw_boxed(&self) -> Result<RawMessageIter<'_>> {
+        Err(CodecError::unsupported(
+            "iter_raw_boxed() not supported for this format reader",
         ))
     }
 

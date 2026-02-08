@@ -373,7 +373,7 @@ fn test_fixture_bag_small_chunk_streaming() {
         !all_messages.is_empty(),
         "Expected messages with 64-byte streaming chunks"
     );
-    assert!(parser.channels().len() > 0);
+    assert!(!parser.channels().is_empty());
 
     // Compare with the larger chunk parse
     let (large_chunk_msgs, _, _) = parse_fixture_bag("robocodec_test_19.bag");

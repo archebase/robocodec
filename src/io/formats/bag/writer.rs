@@ -359,8 +359,12 @@ impl BagWriter {
             self.connections_written_to_chunk.insert(conn_id);
         }
 
-        // Calculate message offset within the chunk data (for index lookups)
-        let offset = self.chunk_buffer.len() - self.current_chunk_position;
+        // Calculate message offset within the chunk data (for index lookups).
+        // The offset must be relative to the start of chunk DATA content,
+        // not the chunk record. Subtract the chunk header length because
+        // chunk_buffer includes the placeholder header at current_chunk_position.
+        let chunk_header_len = Self::chunk_header_length();
+        let offset = self.chunk_buffer.len() - self.current_chunk_position - chunk_header_len;
 
         // Write message data record header
         let _header_len =
@@ -624,6 +628,11 @@ impl BagWriter {
     }
 
     /// Write connection record to buffer.
+    ///
+    /// ROS1 bag connection record format:
+    /// - Header: `op=0x07`, `conn=<id>`, `topic=<name>`
+    /// - Data: `topic=<name>`, `type=<type>`, `md5sum=<md5>`,
+    ///   `message_definition=<def>`, optionally `callerid=<id>`, `latching=<0|1>`
     fn write_connection_record_to_buffer(buffer: &mut Vec<u8>, conn: &ConnectionInfo) {
         // Connection header
         let mut fields = BTreeMap::new();
@@ -634,14 +643,19 @@ impl BagWriter {
         Self::write_header(buffer, &fields);
 
         // Connection data (nested header with type info)
+        // The `topic` field is required in the data section per the ROS bag spec.
         let mut data_fields = BTreeMap::new();
+        data_fields.insert("topic".to_string(), conn.topic.as_bytes().to_vec());
         data_fields.insert("type".to_string(), conn.datatype.as_bytes().to_vec());
         data_fields.insert("md5sum".to_string(), conn.md5sum.as_bytes().to_vec());
         data_fields.insert(
             "message_definition".to_string(),
             conn.message_definition.as_bytes().to_vec(),
         );
-        if let Some(ref callerid) = conn.callerid {
+        // Only include callerid if it's non-empty (a bare "/" is not a valid callerid)
+        if let Some(ref callerid) = conn.callerid
+            && !callerid.is_empty()
+        {
             // Ensure callerid has leading slash like the original ROS bag format
             let callerid_with_slash = if callerid.starts_with('/') {
                 callerid.clone()
