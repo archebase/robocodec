@@ -33,6 +33,21 @@ fn fixture_path(name: &str) -> PathBuf {
     path
 }
 
+/// Path to the ROS1 bag used by these tests.
+///
+/// If the environment variable `ROBOCODEC_ROS1_BAG_PATH` is set and that path
+/// exists, it is used (e.g. a full-size production bag). Otherwise the default
+/// fixture `tests/fixtures/robocodec_test_24_leju_claw.bag` is used.
+fn ros1_bag_path() -> PathBuf {
+    if let Ok(env_path) = std::env::var("ROBOCODEC_ROS1_BAG_PATH") {
+        let p = PathBuf::from(&env_path);
+        if p.exists() {
+            return p;
+        }
+    }
+    fixture_path("robocodec_test_24_leju_claw.bag")
+}
+
 /// Build a `SchemaMetadata` cache from channel info, exactly mirroring
 /// the production path in `roboflow-sources/src/decode.rs`.
 fn build_schema_cache(
@@ -74,7 +89,7 @@ fn build_schema_cache(
 /// path that was broken before the fix.
 #[test]
 fn test_streaming_decode_dynamic_ros1_bag() {
-    let path = fixture_path("robocodec_test_24_leju_claw.bag");
+    let path = ros1_bag_path();
     if !path.exists() {
         eprintln!("Skipping: fixture not found at {}", path.display());
         return;
@@ -171,7 +186,7 @@ fn test_streaming_decode_dynamic_ros1_bag() {
 /// "String length 1600351329 exceeds maximum" error before the fix.
 #[test]
 fn test_decode_dynamic_leju_claw_state_topic() {
-    let path = fixture_path("robocodec_test_24_leju_claw.bag");
+    let path = ros1_bag_path();
     if !path.exists() {
         eprintln!("Skipping: fixture not found at {}", path.display());
         return;
@@ -251,7 +266,7 @@ fn test_decode_dynamic_leju_claw_state_topic() {
 /// Header, exercising the same seq-field path as `/leju_claw_state`.
 #[test]
 fn test_decode_dynamic_sensors_data_raw_topic() {
-    let path = fixture_path("robocodec_test_24_leju_claw.bag");
+    let path = ros1_bag_path();
     if !path.exists() {
         eprintln!("Skipping: fixture not found at {}", path.display());
         return;
@@ -320,12 +335,94 @@ fn test_decode_dynamic_sensors_data_raw_topic() {
 }
 
 // ============================================================================
+// Targeted: /tf must decode (tf2_msgs/TFMessage with nested Header)
+// ============================================================================
+
+/// Ensure `/tf` (tf2_msgs/TFMessage) messages decode successfully.
+///
+/// TFMessage contains a dynamic array of geometry_msgs/TransformStamped,
+/// each with std_msgs/Header (seq, stamp, frame_id), child_frame_id string,
+/// and Transform. This exercises nested Header resolution and ROS1 string
+/// reading (no null terminator). Uses fixture `robocodec_test_24_leju_claw.bag`.
+#[test]
+fn test_decode_dynamic_tf_topic() {
+    let path = ros1_bag_path();
+    if !path.exists() {
+        eprintln!("Skipping: fixture not found at {}", path.display());
+        return;
+    }
+
+    let data = std::fs::read(&path).expect("Failed to read fixture bag");
+
+    let mut parser = StreamingBagParser::new();
+    let mut all_records = Vec::new();
+
+    for chunk in data.chunks(64 * 1024) {
+        let records = parser.parse_chunk(chunk).expect("parse_chunk failed");
+        all_records.extend(records);
+    }
+
+    let channels = parser.channels();
+    let factory = CodecFactory::new();
+    let schema_cache = build_schema_cache(&channels, &factory);
+
+    let mut tf_decoded = 0usize;
+    let mut tf_errors = Vec::new();
+
+    for record in &all_records {
+        let channel_id = record.conn_id as u16;
+        let Some(channel_info) = channels.get(&channel_id) else {
+            continue;
+        };
+
+        if channel_info.topic != "/tf" {
+            continue;
+        }
+
+        let schema = schema_cache
+            .get(&channel_id)
+            .expect("Should have schema for /tf");
+
+        let codec = factory
+            .get_codec(schema.encoding())
+            .expect("Should have CDR codec");
+
+        match codec.decode_dynamic(&record.data, schema) {
+            Ok(decoded) => {
+                tf_decoded += 1;
+                // TFMessage has "transforms" array
+                assert!(!decoded.is_empty(), "Decoded TFMessage should have fields");
+                assert!(
+                    decoded.contains_key("transforms"),
+                    "Decoded TFMessage should have 'transforms' field"
+                );
+            }
+            Err(e) => {
+                tf_errors.push(format!("{e}"));
+            }
+        }
+    }
+
+    assert!(
+        tf_decoded > 0,
+        "Expected at least one /tf message to decode, but got 0 (errors: {:?})",
+        tf_errors
+    );
+    assert!(
+        tf_errors.is_empty(),
+        "All /tf messages should decode, but {} failed: {:?}",
+        tf_errors.len(),
+        tf_errors
+    );
+}
+
+// ============================================================================
 // Verify ROS1 schema encoding is detected for CDR channels
 // ============================================================================
 
 #[test]
 fn test_ros1_bag_schema_encoding_detected() {
-    let path = fixture_path("robocodec_test_24_leju_claw.bag");
+    let path = ros1_bag_path();
     if !path.exists() {
         eprintln!("Skipping: fixture not found at {}", path.display());
         return;
