@@ -33,6 +33,21 @@ fn fixture_path(name: &str) -> PathBuf {
     path
 }
 
+/// Path to the ROS1 bag used by these tests.
+///
+/// If the environment variable `ROBOCODEC_ROS1_BAG_PATH` is set and that path
+/// exists, it is used (e.g. a full-size production bag). Otherwise the default
+/// fixture `tests/fixtures/robocodec_test_24_leju_claw.bag` is used.
+fn ros1_bag_path() -> PathBuf {
+    if let Ok(env_path) = std::env::var("ROBOCODEC_ROS1_BAG_PATH") {
+        let p = PathBuf::from(&env_path);
+        if p.exists() {
+            return p;
+        }
+    }
+    fixture_path("robocodec_test_24_leju_claw.bag")
+}
+
 /// Build a `SchemaMetadata` cache from channel info, exactly mirroring
 /// the production path in `roboflow-sources/src/decode.rs`.
 fn build_schema_cache(
@@ -74,7 +89,7 @@ fn build_schema_cache(
 /// path that was broken before the fix.
 #[test]
 fn test_streaming_decode_dynamic_ros1_bag() {
-    let path = fixture_path("robocodec_test_24_leju_claw.bag");
+    let path = ros1_bag_path();
     if !path.exists() {
         eprintln!("Skipping: fixture not found at {}", path.display());
         return;
@@ -171,7 +186,7 @@ fn test_streaming_decode_dynamic_ros1_bag() {
 /// "String length 1600351329 exceeds maximum" error before the fix.
 #[test]
 fn test_decode_dynamic_leju_claw_state_topic() {
-    let path = fixture_path("robocodec_test_24_leju_claw.bag");
+    let path = ros1_bag_path();
     if !path.exists() {
         eprintln!("Skipping: fixture not found at {}", path.display());
         return;
@@ -251,7 +266,7 @@ fn test_decode_dynamic_leju_claw_state_topic() {
 /// Header, exercising the same seq-field path as `/leju_claw_state`.
 #[test]
 fn test_decode_dynamic_sensors_data_raw_topic() {
-    let path = fixture_path("robocodec_test_24_leju_claw.bag");
+    let path = ros1_bag_path();
     if !path.exists() {
         eprintln!("Skipping: fixture not found at {}", path.display());
         return;
@@ -331,7 +346,7 @@ fn test_decode_dynamic_sensors_data_raw_topic() {
 /// reading (no null terminator). Uses fixture `robocodec_test_24_leju_claw.bag`.
 #[test]
 fn test_decode_dynamic_tf_topic() {
-    let path = fixture_path("robocodec_test_24_leju_claw.bag");
+    let path = ros1_bag_path();
     if !path.exists() {
         eprintln!("Skipping: fixture not found at {}", path.display());
         return;
@@ -407,7 +422,7 @@ fn test_decode_dynamic_tf_topic() {
 
 #[test]
 fn test_ros1_bag_schema_encoding_detected() {
-    let path = fixture_path("robocodec_test_24_leju_claw.bag");
+    let path = ros1_bag_path();
     if !path.exists() {
         eprintln!("Skipping: fixture not found at {}", path.display());
         return;
