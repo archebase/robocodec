@@ -1492,7 +1492,7 @@ mod s3_integration_tests {
         };
         let url = format!("{}/", config.endpoint);
         let available = client.head(&url).send().await.is_ok();
-        
+
         if !available && std::env::var("S3_TESTS_REQUIRE_AVAILABLE").is_ok() {
             panic!(
                 "S3_TESTS_REQUIRE_AVAILABLE is set but S3 is not available at {}. \
@@ -1500,7 +1500,7 @@ mod s3_integration_tests {
                 config.endpoint
             );
         }
-        
+
         available
     }
 

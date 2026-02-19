@@ -35,8 +35,8 @@ use std::collections::HashMap;
 use crate::io::formats::bag::stream::{BagMessageRecord, StreamingBagParser};
 use crate::io::metadata::{ChannelInfo, FileFormat};
 use crate::io::traits::FormatReader;
-use crate::io::transport::local::LocalTransport;
 use crate::io::transport::Transport;
+use crate::io::transport::local::LocalTransport;
 use crate::{CodecError, Result};
 
 /// Transport-based BAG reader.

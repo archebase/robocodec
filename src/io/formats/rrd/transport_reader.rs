@@ -36,8 +36,8 @@ use crate::io::formats::rrd::stream::{RrdMessageRecord, StreamingRrdParser};
 use crate::io::metadata::{ChannelInfo, FileFormat};
 use crate::io::streaming::StreamingParser;
 use crate::io::traits::FormatReader;
-use crate::io::transport::local::LocalTransport;
 use crate::io::transport::Transport;
+use crate::io::transport::local::LocalTransport;
 use crate::{CodecError, Result};
 
 /// Transport-based RRD reader.
