@@ -1,5 +1,6 @@
 # Rust
 /target/
+robocodec-cli/target/
 **/*.rs.bk
 *.pdb
 Cargo.lock
