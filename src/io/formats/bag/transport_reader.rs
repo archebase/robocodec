@@ -389,6 +389,7 @@ impl<'a> Iterator for BagTransportRawIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_bag_message_record_fields() {
@@ -400,5 +401,259 @@ mod tests {
         assert_eq!(msg.conn_id, 5);
         assert_eq!(msg.log_time, 1234567890);
         assert_eq!(msg.data, vec![0x01, 0x02, 0x03]);
+    }
+
+    #[test]
+    fn test_bag_transport_reader_open_nonexistent() {
+        let result = BagTransportReader::open("/nonexistent/path/file.bag");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_bag_transport_reader_open_empty_file() {
+        let file = NamedTempFile::new().unwrap();
+        let result = BagTransportReader::open(file.path());
+        // Empty file behavior - may succeed with no messages or fail depending on implementation
+        match result {
+            Ok(reader) => {
+                // If it succeeds, should have no messages
+                assert_eq!(reader.message_count(), 0);
+            }
+            Err(_) => {
+                // Or it may fail to parse - both are acceptable
+            }
+        }
+    }
+
+    #[test]
+    fn test_bag_transport_reader_file_size() {
+        // Get the manifest directory for fixtures
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let reader = BagTransportReader::open(&fixture_path).unwrap();
+        let metadata = std::fs::metadata(&fixture_path).unwrap();
+
+        assert_eq!(reader.file_size(), metadata.len());
+        assert_eq!(reader.path(), fixture_path.to_string_lossy().as_ref());
+    }
+
+    #[test]
+    fn test_bag_transport_reader_channels() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let reader = BagTransportReader::open(&fixture_path).unwrap();
+
+        // Should have channels
+        assert!(!reader.channels().is_empty(), "Should have channels");
+
+        // Test channels() method returns correct data
+        let channels = reader.channels();
+        for (id, channel) in channels {
+            assert!(
+                !channel.topic.is_empty(),
+                "Channel {} should have topic",
+                id
+            );
+        }
+    }
+
+    #[test]
+    fn test_bag_transport_reader_message_count() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let reader = BagTransportReader::open(&fixture_path).unwrap();
+
+        // Should have messages
+        assert!(reader.message_count() > 0, "Should have messages");
+
+        // Test that message_count is consistent
+        let count = reader.message_count();
+        assert_eq!(
+            reader.message_count(),
+            count,
+            "Message count should be consistent"
+        );
+    }
+
+    #[test]
+    fn test_bag_transport_reader_timestamps() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let reader = BagTransportReader::open(&fixture_path).unwrap();
+
+        let start = reader.start_time();
+        let end = reader.end_time();
+
+        assert!(start.is_some(), "Should have start time");
+        assert!(end.is_some(), "Should have end time");
+        assert!(
+            end.unwrap() >= start.unwrap(),
+            "End time should be >= start time"
+        );
+    }
+
+    #[test]
+    fn test_bag_transport_reader_iter_raw() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let reader = BagTransportReader::open(&fixture_path).unwrap();
+        let expected_count = reader.message_count();
+
+        let iter = reader.iter_raw_boxed().unwrap();
+        let count = iter.filter(|r| r.is_ok()).count() as u64;
+
+        assert_eq!(count, expected_count, "Iterator should return all messages");
+    }
+
+    #[test]
+    fn test_bag_transport_reader_format() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let reader = BagTransportReader::open(&fixture_path).unwrap();
+        assert_eq!(reader.format(), FileFormat::Bag);
+    }
+
+    #[test]
+    fn test_bag_transport_reader_as_any() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let reader = BagTransportReader::open(&fixture_path).unwrap();
+
+        // Test as_any
+        let any_ref = reader.as_any();
+        assert!(any_ref.downcast_ref::<BagTransportReader>().is_some());
+    }
+
+    #[test]
+    fn test_bag_transport_reader_parser_accessors() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let mut reader = BagTransportReader::open(&fixture_path).unwrap();
+
+        // Test parser() accessor
+        let _parser = reader.parser();
+
+        // Test parser_mut() accessor
+        let _parser_mut = reader.parser_mut();
+
+        // Test messages() accessor
+        let _messages = reader.messages();
+    }
+
+    #[test]
+    fn test_bag_transport_reader_file_info() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let reader = BagTransportReader::open(&fixture_path).unwrap();
+        let info = reader.file_info();
+
+        assert_eq!(info.format, FileFormat::Bag);
+        assert!(!info.channels.is_empty());
+        assert!(info.message_count > 0);
+        assert!(info.size > 0);
+    }
+
+    /// Test multiple BAG fixtures
+    #[test]
+    fn test_bag_transport_reader_multiple_fixtures() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixtures = [
+            "robocodec_test_15.bag",
+            "robocodec_test_17.bag",
+            "robocodec_test_18.bag",
+        ];
+
+        for fixture_name in &fixtures {
+            let fixture_path = manifest_dir.join("tests/fixtures").join(fixture_name);
+
+            if !fixture_path.exists() {
+                continue;
+            }
+
+            let reader = BagTransportReader::open(&fixture_path)
+                .unwrap_or_else(|_| panic!("Failed to open {}", fixture_name));
+
+            assert!(
+                !reader.channels().is_empty(),
+                "{} should have channels",
+                fixture_name
+            );
+            assert!(
+                reader.message_count() > 0,
+                "{} should have messages",
+                fixture_name
+            );
+        }
+    }
+
+    #[test]
+    fn test_bag_transport_reader_as_any_mut() {
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let mut reader = BagTransportReader::open(&fixture_path).unwrap();
+
+        // Test as_any_mut
+        let any_ref = reader.as_any_mut();
+        assert!(any_ref.downcast_ref::<BagTransportReader>().is_some());
     }
 }

@@ -1,5 +1,6 @@
 # Rust
 /target/
+robocodec-cli/target/
 **/*.rs.bk
 *.pdb
 Cargo.lock
@@ -65,3 +66,6 @@ lcov.info
 *.profraw
 *.profdata
 coverage/
+coverage_html/
+coverage_report/
+coverage.txt

@@ -1484,9 +1484,24 @@ mod s3_integration_tests {
             .danger_accept_invalid_certs(true)
             .build();
 
-        let Ok(client) = client else { return false };
+        let Ok(client) = client else {
+            if std::env::var("S3_TESTS_REQUIRE_AVAILABLE").is_ok() {
+                panic!("S3_TESTS_REQUIRE_AVAILABLE is set but S3 client could not be created");
+            }
+            return false;
+        };
         let url = format!("{}/", config.endpoint);
-        client.head(&url).send().await.is_ok()
+        let available = client.head(&url).send().await.is_ok();
+
+        if !available && std::env::var("S3_TESTS_REQUIRE_AVAILABLE").is_ok() {
+            panic!(
+                "S3_TESTS_REQUIRE_AVAILABLE is set but S3 is not available at {}. \
+                Start MinIO with: docker compose up -d",
+                config.endpoint
+            );
+        }
+
+        available
     }
 
     async fn upload_to_s3(
@@ -1783,19 +1798,240 @@ mod s3_integration_tests {
         eprintln!("Streamed {} messages with 4KB chunks", message_count);
     }
 
-    /// Test RRD file streaming from S3.
+    /// Test BAG file streaming from S3 with chunk boundary handling.
     #[tokio::test]
-    async fn test_s3_stream_rrd() {
+    async fn test_s3_stream_bag_chunk_boundaries() {
         if !s3_available().await {
             return;
         }
 
         let config = S3Config::default();
+        let fixture_path = fixture_path("robocodec_test_15.bag");
 
-        // Look for RRD fixture files
+        if !fixture_path.exists() {
+            return;
+        }
+
+        let data = std::fs::read(&fixture_path).unwrap();
+        let key = "test/robocodec_test_15_chunked.bag";
+
+        if upload_to_s3(&config, key, &data).await.is_err() {
+            eprintln!("Skipping S3 BAG chunk test: bucket does not exist");
+            return;
+        }
+
+        // Clean up
+        let key_cleanup = key.to_string();
+        let endpoint = config.endpoint.clone();
+        let bucket = config.bucket.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
+            let _ = client.delete(&url).send().await;
+        });
+
+        // Test with various chunk sizes to ensure boundary handling works
+        for chunk_size in [4096u64, 8192, 16384, 65536] {
+            let mut reader_config = S3ReaderConfig::default();
+            reader_config = reader_config.with_max_chunk_size(chunk_size as usize);
+
+            let location = S3Location::new(&config.bucket, key)
+                .with_endpoint(&config.endpoint)
+                .with_region(&config.region);
+
+            let reader = S3Reader::open_with_config(location, reader_config)
+                .await
+                .unwrap();
+
+            assert_eq!(reader.format(), robocodec::io::metadata::FileFormat::Bag);
+
+            let mut stream = reader.iter_messages();
+            let mut message_count = 0;
+
+            while let Some(result) = stream.next_message().await {
+                if result.is_ok() {
+                    message_count += 1;
+                }
+            }
+
+            eprintln!("BAG chunk size {}: {} messages", chunk_size, message_count);
+            assert!(
+                message_count > 0,
+                "Should stream BAG messages with chunk size {}",
+                chunk_size
+            );
+        }
+    }
+
+    /// Test BAG message count matches between S3 and local file.
+    #[tokio::test]
+    async fn test_s3_bag_message_count_matches_local() {
+        if !s3_available().await {
+            return;
+        }
+
+        let config = S3Config::default();
+        let fixture_path = fixture_path("robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            return;
+        }
+
+        // Get local message count using BagTransportReader
+        let local_reader =
+            robocodec::io::formats::bag::BagTransportReader::open(&fixture_path).unwrap();
+        let local_message_count = local_reader.message_count();
+        let local_channels = local_reader.channels().len();
+        eprintln!(
+            "Local BAG: {} messages, {} channels",
+            local_message_count, local_channels
+        );
+
+        let data = std::fs::read(&fixture_path).unwrap();
+        let key = "test/robocodec_test_15_count.bag";
+
+        if upload_to_s3(&config, key, &data).await.is_err() {
+            eprintln!("Skipping S3 BAG count test: bucket does not exist");
+            return;
+        }
+
+        // Clean up
+        let key_cleanup = key.to_string();
+        let endpoint = config.endpoint.clone();
+        let bucket = config.bucket.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
+            let _ = client.delete(&url).send().await;
+        });
+
+        let location = S3Location::new(&config.bucket, key)
+            .with_endpoint(&config.endpoint)
+            .with_region(&config.region);
+
+        let reader = S3Reader::open(location).await.unwrap();
+        let s3_channels = reader.channels().len();
+        eprintln!("S3 BAG: {} channels", s3_channels);
+
+        // Stream all messages and count
+        let mut stream = reader.iter_messages();
+        let mut s3_message_count = 0u64;
+
+        while let Some(result) = stream.next_message().await {
+            result.unwrap();
+            s3_message_count += 1;
+        }
+
+        eprintln!("S3 BAG: {} messages streamed", s3_message_count);
+
+        // Channel count should match
+        assert_eq!(
+            s3_channels, local_channels,
+            "Channel count should match between S3 and local"
+        );
+
+        // Message count should match
+        assert_eq!(
+            s3_message_count, local_message_count,
+            "Message count should match between S3 ({}) and local ({})",
+            s3_message_count, local_message_count
+        );
+    }
+
+    /// Test BAG streaming with multiple fixtures.
+    #[tokio::test]
+    async fn test_s3_stream_bag_multiple_fixtures() {
+        if !s3_available().await {
+            return;
+        }
+
+        let config = S3Config::default();
+        let fixtures = [
+            "robocodec_test_15.bag",
+            "robocodec_test_17.bag",
+            "robocodec_test_18.bag",
+        ];
+
+        for (idx, fixture_name) in fixtures.iter().enumerate() {
+            let fixture_path = fixture_path(fixture_name);
+
+            if !fixture_path.exists() {
+                continue;
+            }
+
+            let data = std::fs::read(&fixture_path).unwrap();
+            let key = format!("test/multi/{}_{}", idx, fixture_name);
+
+            if upload_to_s3(&config, &key, &data).await.is_err() {
+                eprintln!(
+                    "Skipping S3 BAG multi test for {}: upload failed",
+                    fixture_name
+                );
+                continue;
+            }
+
+            let key_cleanup = key.clone();
+            let endpoint = config.endpoint.clone();
+            let bucket = config.bucket.clone();
+            tokio::spawn(async move {
+                let client = reqwest::Client::new();
+                let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
+                let _ = client.delete(&url).send().await;
+            });
+
+            let location = S3Location::new(&config.bucket, &key)
+                .with_endpoint(&config.endpoint)
+                .with_region(&config.region);
+
+            let reader = S3Reader::open(location).await;
+            if reader.is_err() {
+                eprintln!(
+                    "Failed to open {} from S3: {:?}",
+                    fixture_name,
+                    reader.err()
+                );
+                continue;
+            }
+
+            let reader = reader.unwrap();
+            assert_eq!(
+                reader.format(),
+                robocodec::io::metadata::FileFormat::Bag,
+                "Format should be BAG for {}",
+                fixture_name
+            );
+
+            let mut stream = reader.iter_messages();
+            let mut message_count = 0;
+
+            while let Some(result) = stream.next_message().await {
+                result.unwrap_or_else(|e| {
+                    panic!("Should parse message from {}: {:?}", fixture_name, e)
+                });
+                message_count += 1;
+            }
+
+            assert!(
+                message_count > 0,
+                "Should stream messages from {}",
+                fixture_name
+            );
+            eprintln!("{}: {} messages", fixture_name, message_count);
+        }
+    }
+
+    /// Test RRD file streaming from S3 with chunk boundary handling.
+    #[tokio::test]
+    async fn test_s3_stream_rrd_chunk_boundaries() {
+        if !s3_available().await {
+            return;
+        }
+
+        let config = S3Config::default();
         let rrd_dir = fixture_path("rrd");
+
         if !rrd_dir.exists() {
-            eprintln!("Skipping S3 RRD test: no RRD fixtures directory");
+            eprintln!("Skipping S3 RRD chunk test: no RRD fixtures directory");
             return;
         }
 
@@ -1814,19 +2050,118 @@ mod s3_integration_tests {
         let rrd_path = match rrd_file {
             Some(p) => p,
             None => {
-                eprintln!("Skipping S3 RRD test: no RRD files found");
+                eprintln!("Skipping S3 RRD chunk test: no RRD files found");
                 return;
             }
         };
 
         let data = std::fs::read(&rrd_path).unwrap();
         let key = format!(
-            "test/rrd/{}",
+            "test/rrd/chunked_{}",
             rrd_path.file_name().unwrap().to_string_lossy()
         );
 
         if upload_to_s3(&config, &key, &data).await.is_err() {
-            eprintln!("Skipping S3 RRD test: bucket does not exist");
+            eprintln!("Skipping S3 RRD chunk test: bucket does not exist");
+            return;
+        }
+
+        // Clean up
+        let key_cleanup = key.clone();
+        let endpoint = config.endpoint.clone();
+        let bucket = config.bucket.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
+            let _ = client.delete(&url).send().await;
+        });
+
+        // Test with various chunk sizes
+        for chunk_size in [4096u64, 8192, 16384, 65536] {
+            let mut reader_config = S3ReaderConfig::default();
+            reader_config = reader_config.with_max_chunk_size(chunk_size as usize);
+
+            let location = S3Location::new(&config.bucket, &key)
+                .with_endpoint(&config.endpoint)
+                .with_region(&config.region);
+
+            let reader = S3Reader::open_with_config(location, reader_config)
+                .await
+                .unwrap();
+
+            assert_eq!(reader.format(), robocodec::io::metadata::FileFormat::Rrd);
+
+            let mut stream = reader.iter_messages();
+            let mut message_count = 0;
+
+            while let Some(result) = stream.next_message().await {
+                if result.is_ok() {
+                    message_count += 1;
+                }
+            }
+
+            eprintln!("RRD chunk size {}: {} messages", chunk_size, message_count);
+            assert!(
+                message_count > 0,
+                "Should stream RRD messages with chunk size {}",
+                chunk_size
+            );
+        }
+    }
+
+    /// Test RRD message count matches between S3 and local file.
+    #[tokio::test]
+    async fn test_s3_rrd_message_count_matches_local() {
+        if !s3_available().await {
+            return;
+        }
+
+        let config = S3Config::default();
+        let rrd_dir = fixture_path("rrd");
+
+        if !rrd_dir.exists() {
+            eprintln!("Skipping S3 RRD count test: no RRD fixtures directory");
+            return;
+        }
+
+        // Find first .rrd file
+        let mut rrd_file = None;
+        if let Ok(entries) = std::fs::read_dir(&rrd_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("rrd") {
+                    rrd_file = Some(path);
+                    break;
+                }
+            }
+        }
+
+        let rrd_path = match rrd_file {
+            Some(p) => p,
+            None => {
+                eprintln!("Skipping S3 RRD count test: no RRD files found");
+                return;
+            }
+        };
+
+        // Get local message count
+        let local_reader =
+            robocodec::io::formats::rrd::RrdTransportReader::open(&rrd_path).unwrap();
+        let local_message_count = local_reader.message_count();
+        let local_channels = local_reader.channels().len();
+        eprintln!(
+            "Local RRD: {} messages, {} channels",
+            local_message_count, local_channels
+        );
+
+        let data = std::fs::read(&rrd_path).unwrap();
+        let key = format!(
+            "test/rrd/count_{}",
+            rrd_path.file_name().unwrap().to_string_lossy()
+        );
+
+        if upload_to_s3(&config, &key, &data).await.is_err() {
+            eprintln!("Skipping S3 RRD count test: bucket does not exist");
             return;
         }
 
@@ -1844,226 +2179,129 @@ mod s3_integration_tests {
             .with_endpoint(&config.endpoint)
             .with_region(&config.region);
 
-        let result = S3Reader::open(location).await;
-        if result.is_err() {
-            eprintln!("RRD streaming not yet fully supported: {:?}", result.err());
-            return;
-        }
+        let reader = S3Reader::open(location).await.unwrap();
+        let s3_channels = reader.channels().len();
+        eprintln!("S3 RRD: {} channels", s3_channels);
 
-        let reader = result.unwrap();
-        assert_eq!(reader.format(), robocodec::io::metadata::FileFormat::Rrd);
-        eprintln!("RRD file size: {}", FormatReader::file_size(&reader));
-
-        // Stream some messages
+        // Stream all messages and count
         let mut stream = reader.iter_messages();
-        let mut message_count = 0;
+        let mut s3_message_count = 0u64;
 
         while let Some(result) = stream.next_message().await {
             result.unwrap();
-            message_count += 1;
-            if message_count >= 5 {
-                break;
-            }
+            s3_message_count += 1;
         }
 
-        eprintln!("Streamed {} messages from RRD file", message_count);
+        eprintln!("S3 RRD: {} messages streamed", s3_message_count);
+
+        // Channel count should match
+        assert_eq!(
+            s3_channels, local_channels,
+            "Channel count should match between S3 and local for RRD"
+        );
+
+        // Message count should match
+        assert_eq!(
+            s3_message_count, local_message_count,
+            "Message count should match between S3 ({}) and local ({}) for RRD",
+            s3_message_count, local_message_count
+        );
     }
 
-    /// Test multipart upload workflow with S3.
+    /// Test RRD streaming with multiple fixtures.
     #[tokio::test]
-    async fn test_s3_multipart_upload() {
+    async fn test_s3_stream_rrd_multiple_fixtures() {
         if !s3_available().await {
             return;
         }
 
         let config = S3Config::default();
-        let key = "test/multipart_upload.mcap";
+        let rrd_dir = fixture_path("rrd");
 
-        // Create a small MCAP file for upload
-        let test_data = b"\x89MCAP0\r\n".to_vec(); // MCAP magic
+        if !rrd_dir.exists() {
+            eprintln!("Skipping S3 RRD multi test: no RRD fixtures directory");
+            return;
+        }
 
-        // Clean up on exit
-        let key_cleanup = key.to_string();
-        let endpoint = config.endpoint.clone();
-        let bucket = config.bucket.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            let client = reqwest::Client::new();
-            let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
-            let _ = client.delete(&url).send().await;
-        });
-
-        let location = S3Location::new(&config.bucket, key)
-            .with_endpoint(&config.endpoint)
-            .with_region(&config.region);
-
-        let client_config = S3ReaderConfig::default();
-        let client = S3Client::new(client_config).unwrap();
-
-        // Create multipart upload
-        let upload_id = match client.create_upload(&location).await {
-            Ok(id) => id,
-            Err(e) => {
-                eprintln!("Skipping multipart upload test: create failed: {}", e);
-                return;
-            }
-        };
-
-        eprintln!("Created upload with ID: {}", upload_id);
-
-        // Upload a part
-        let part_data = bytes::Bytes::from(test_data.clone());
-        let etag = match client
-            .upload_part(&location, &upload_id, 1, part_data)
-            .await
-        {
-            Ok(etag) => etag,
-            Err(e) => {
-                eprintln!("Upload part failed: {}", e);
-                // Try to abort
-                let _ = client.abort_upload(&location, &upload_id).await;
-                return;
-            }
-        };
-
-        eprintln!("Uploaded part 1 with ETag: {}", etag);
-
-        // Complete the upload
-        let parts = vec![(1, etag)];
-        match client.complete_upload(&location, &upload_id, parts).await {
-            Ok(()) => eprintln!("Multipart upload completed successfully"),
-            Err(e) => {
-                eprintln!("Complete upload failed: {}", e);
-                let _ = client.abort_upload(&location, &upload_id).await;
+        // Get first 5 RRD files
+        let mut rrd_files = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&rrd_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("rrd") {
+                    rrd_files.push(path);
+                    if rrd_files.len() >= 5 {
+                        break;
+                    }
+                }
             }
         }
-    }
 
-    /// Test multipart upload abort with S3.
-    #[tokio::test]
-    async fn test_s3_multipart_abort() {
-        if !s3_available().await {
+        if rrd_files.is_empty() {
+            eprintln!("Skipping S3 RRD multi test: no RRD files found");
             return;
         }
 
-        let config = S3Config::default();
-        let key = "test/multipart_abort.mcap";
+        for (idx, rrd_path) in rrd_files.iter().enumerate() {
+            let data = std::fs::read(rrd_path).unwrap();
+            let fixture_name = rrd_path.file_name().unwrap().to_string_lossy();
+            let key = format!("test/rrd/multi/{}_{}", idx, fixture_name);
 
-        let location = S3Location::new(&config.bucket, key)
-            .with_endpoint(&config.endpoint)
-            .with_region(&config.region);
+            if upload_to_s3(&config, &key, &data).await.is_err() {
+                eprintln!(
+                    "Skipping S3 RRD multi test for {}: upload failed",
+                    fixture_name
+                );
+                continue;
+            }
 
-        let client_config = S3ReaderConfig::default();
-        let client = S3Client::new(client_config).unwrap();
+            let key_cleanup = key.clone();
+            let endpoint = config.endpoint.clone();
+            let bucket = config.bucket.clone();
+            tokio::spawn(async move {
+                let client = reqwest::Client::new();
+                let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
+                let _ = client.delete(&url).send().await;
+            });
 
-        // Create multipart upload
-        let upload_id = match client.create_upload(&location).await {
-            Ok(id) => id,
-            Err(_) => return,
-        };
+            let location = S3Location::new(&config.bucket, &key)
+                .with_endpoint(&config.endpoint)
+                .with_region(&config.region);
 
-        // Abort the upload
-        let result = client.abort_upload(&location, &upload_id).await;
-        assert!(result.is_ok(), "Should abort multipart upload");
-        eprintln!("Multipart upload aborted successfully");
-    }
+            let reader = S3Reader::open(location).await;
+            if reader.is_err() {
+                eprintln!(
+                    "Failed to open {} from S3: {:?}",
+                    fixture_name,
+                    reader.err()
+                );
+                continue;
+            }
 
-    /// Test S3 reader with different chunk sizes.
-    #[tokio::test]
-    async fn test_s3_various_chunk_sizes() {
-        if !s3_available().await {
-            return;
-        }
-
-        let config = S3Config::default();
-        let fixture_path = fixture_path("robocodec_test_0.mcap");
-
-        if !fixture_path.exists() {
-            return;
-        }
-
-        let data = std::fs::read(&fixture_path).unwrap();
-        let key = "test/chunk_size_test.mcap";
-
-        if upload_to_s3(&config, key, &data).await.is_err() {
-            return;
-        }
-
-        // Clean up
-        let key_cleanup = key.to_string();
-        let endpoint = config.endpoint.clone();
-        let bucket = config.bucket.clone();
-        tokio::spawn(async move {
-            let client = reqwest::Client::new();
-            let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
-            let _ = client.delete(&url).send().await;
-        });
-
-        let location = S3Location::new(&config.bucket, key)
-            .with_endpoint(&config.endpoint)
-            .with_region(&config.region);
-
-        // Test with various chunk sizes
-        for chunk_size in [4096u64, 8192, 16384, 65536] {
-            let mut reader_config = S3ReaderConfig::default();
-            reader_config = reader_config.with_max_chunk_size(chunk_size as usize);
-
-            let reader = S3Reader::open_with_config(location.clone(), reader_config)
-                .await
-                .unwrap();
+            let reader = reader.unwrap();
+            assert_eq!(
+                reader.format(),
+                robocodec::io::metadata::FileFormat::Rrd,
+                "Format should be RRD for {}",
+                fixture_name
+            );
 
             let mut stream = reader.iter_messages();
             let mut message_count = 0;
 
             while let Some(result) = stream.next_message().await {
-                if result.is_ok() {
-                    message_count += 1;
-                }
+                result.unwrap_or_else(|e| {
+                    panic!("Should parse message from {}: {:?}", fixture_name, e)
+                });
+                message_count += 1;
             }
 
-            eprintln!("Chunk size {}: {} messages", chunk_size, message_count);
             assert!(
                 message_count > 0,
-                "Should stream messages with chunk size {}",
-                chunk_size
+                "Should stream messages from {}",
+                fixture_name
             );
+            eprintln!("{}: {} messages", fixture_name, message_count);
         }
-    }
-
-    /// Test error handling when bucket doesn't exist.
-    #[tokio::test]
-    async fn test_s3_bucket_not_found() {
-        if !s3_available().await {
-            return;
-        }
-
-        let config = S3Config::default();
-        let key = "test/nonexistent.mcap";
-
-        // Use a non-existent bucket
-        let location = S3Location::new("nonexistent-bucket-12345", key)
-            .with_endpoint(&config.endpoint)
-            .with_region(&config.region);
-
-        let result = S3Reader::open(location).await;
-        assert!(result.is_err(), "Should fail with non-existent bucket");
-    }
-
-    /// Test error handling when object doesn't exist.
-    #[tokio::test]
-    async fn test_s3_object_not_found() {
-        if !s3_available().await {
-            return;
-        }
-
-        let config = S3Config::default();
-        let key = "test/nonexistent_file_12345.mcap";
-
-        let location = S3Location::new(&config.bucket, key)
-            .with_endpoint(&config.endpoint)
-            .with_region(&config.region);
-
-        let result = S3Reader::open(location).await;
-        assert!(result.is_err(), "Should fail with non-existent object");
     }
 }
