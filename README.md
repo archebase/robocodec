@@ -102,8 +102,12 @@ Robocodec supports reading directly from S3-compatible storage using `s3://` URL
 ```rust
 use robocodec::RoboReader;
 
-// Format and S3 access auto-detected
+// MCAP format
 let reader = RoboReader::open("s3://my-bucket/path/to/data.mcap")?;
+println!("Found {} channels", reader.channels().len());
+
+// ROS1 BAG format (streaming read)
+let reader = RoboReader::open("s3://my-bucket/path/to/data.bag")?;
 println!("Found {} channels", reader.channels().len());
 ```
 
