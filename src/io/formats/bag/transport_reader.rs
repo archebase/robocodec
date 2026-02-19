@@ -389,7 +389,6 @@ impl<'a> Iterator for BagTransportRawIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -402,15 +401,6 @@ mod tests {
         assert_eq!(msg.conn_id, 5);
         assert_eq!(msg.log_time, 1234567890);
         assert_eq!(msg.data, vec![0x01, 0x02, 0x03]);
-    }
-
-    /// Helper to create a minimal valid BAG file
-    fn create_test_bag_file() -> NamedTempFile {
-        let mut file = NamedTempFile::new().unwrap();
-        // Write minimal BAG header
-        file.write_all(b"#ROSBAG V2.0\n").unwrap();
-        file.flush().unwrap();
-        file
     }
 
     #[test]

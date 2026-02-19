@@ -377,7 +377,6 @@ impl<'a> Iterator for RrdTransportRawIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -391,15 +390,6 @@ mod tests {
         assert_eq!(msg.topic, "/test");
         assert_eq!(msg.index, 5);
         assert_eq!(msg.data, vec![0x01, 0x02, 0x03]);
-    }
-
-    /// Helper to create a minimal RRD file header
-    fn create_test_rrd_file() -> NamedTempFile {
-        let mut file = NamedTempFile::new().unwrap();
-        // Write RRD magic (RRF2)
-        file.write_all(b"RRF2").unwrap();
-        file.flush().unwrap();
-        file
     }
 
     #[test]
@@ -476,7 +466,7 @@ mod tests {
             return;
         }
 
-        let reader = RrdTransportReader::open(&rrd_file.unwrap()).unwrap();
+        let reader = RrdTransportReader::open(rrd_file.unwrap()).unwrap();
 
         // Should have at least one channel
         assert!(!reader.channels().is_empty(), "Should have channels");
@@ -513,7 +503,7 @@ mod tests {
             return;
         }
 
-        let reader = RrdTransportReader::open(&rrd_file.unwrap()).unwrap();
+        let reader = RrdTransportReader::open(rrd_file.unwrap()).unwrap();
 
         // Should have messages
         assert!(reader.message_count() > 0, "Should have messages");
@@ -548,7 +538,7 @@ mod tests {
             return;
         }
 
-        let reader = RrdTransportReader::open(&rrd_file.unwrap()).unwrap();
+        let reader = RrdTransportReader::open(rrd_file.unwrap()).unwrap();
 
         let start = reader.start_time();
         let end = reader.end_time();
@@ -583,7 +573,7 @@ mod tests {
             return;
         }
 
-        let reader = RrdTransportReader::open(&rrd_file.unwrap()).unwrap();
+        let reader = RrdTransportReader::open(rrd_file.unwrap()).unwrap();
         let expected_count = reader.message_count();
 
         let iter = reader.iter_raw_boxed().unwrap();
@@ -613,7 +603,7 @@ mod tests {
             return;
         }
 
-        let reader = RrdTransportReader::open(&rrd_file.unwrap()).unwrap();
+        let reader = RrdTransportReader::open(rrd_file.unwrap()).unwrap();
         assert_eq!(reader.format(), FileFormat::Rrd);
     }
 
@@ -638,7 +628,7 @@ mod tests {
             return;
         }
 
-        let reader = RrdTransportReader::open(&rrd_file.unwrap()).unwrap();
+        let reader = RrdTransportReader::open(rrd_file.unwrap()).unwrap();
 
         // Test as_any
         let any_ref = reader.as_any();
@@ -666,7 +656,7 @@ mod tests {
             return;
         }
 
-        let mut reader = RrdTransportReader::open(&rrd_file.unwrap()).unwrap();
+        let mut reader = RrdTransportReader::open(rrd_file.unwrap()).unwrap();
 
         // Test parser() accessor
         let _parser = reader.parser();
@@ -699,7 +689,7 @@ mod tests {
             return;
         }
 
-        let reader = RrdTransportReader::open(&rrd_file.unwrap()).unwrap();
+        let reader = RrdTransportReader::open(rrd_file.unwrap()).unwrap();
         let info = reader.file_info();
 
         assert_eq!(info.format, FileFormat::Rrd);
@@ -767,7 +757,7 @@ mod tests {
             return;
         }
 
-        let mut reader = RrdTransportReader::open(&rrd_file.unwrap()).unwrap();
+        let mut reader = RrdTransportReader::open(rrd_file.unwrap()).unwrap();
 
         // Test as_any_mut
         let any_ref = reader.as_any_mut();
