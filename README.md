@@ -109,6 +109,10 @@ println!("Found {} channels", reader.channels().len());
 // ROS1 BAG format (streaming read)
 let reader = RoboReader::open("s3://my-bucket/path/to/data.bag")?;
 println!("Found {} channels", reader.channels().len());
+
+// RRD format (streaming read)
+let reader = RoboReader::open("s3://my-bucket/path/to/data.rrd")?;
+println!("Found {} channels", reader.channels().len());
 ```
 
 **S3-compatible services** (AWS S3, Alibaba Cloud OSS, MinIO, etc.) require credentials via environment variables:

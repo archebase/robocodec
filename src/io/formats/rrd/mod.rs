@@ -61,6 +61,10 @@ pub mod reader;
 #[cfg(feature = "remote")]
 pub mod stream;
 
+// Transport-based reader (S3, HTTP support)
+#[cfg(feature = "remote")]
+pub mod transport_reader;
+
 /// Writer implementation.
 pub mod writer;
 
@@ -73,4 +77,6 @@ pub use stream::{
     Compression, MessageKind, RRD_STREAM_MAGIC, RrdMessageRecord, RrdStreamHeader,
     StreamingRrdParser,
 };
+#[cfg(feature = "remote")]
+pub use transport_reader::RrdTransportReader;
 pub use writer::{RrdCompression as WriterCompression, RrdWriter};

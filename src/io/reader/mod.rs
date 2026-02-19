@@ -223,7 +223,7 @@ impl RoboReader {
                 let path_obj = std::path::Path::new(path);
                 let format = detect_format(path_obj)?;
 
-                // MCAP and BAG formats support transport-based reading
+                // MCAP, BAG, and RRD formats support transport-based reading
                 match format {
                     FileFormat::Mcap => {
                         return Ok(Self {
@@ -246,9 +246,14 @@ impl RoboReader {
                         });
                     }
                     FileFormat::Rrd => {
-                        return Err(CodecError::unsupported(
-                            "RRD format does not support transport-based reading. Use local file access.",
-                        ));
+                        return Ok(Self {
+                            inner: Box::new(
+                                crate::io::formats::rrd::RrdTransportReader::open_from_transport(
+                                    transport,
+                                    path.to_string(),
+                                )?,
+                            ),
+                        });
                     }
                     FileFormat::Unknown => {
                         return Err(CodecError::parse(
