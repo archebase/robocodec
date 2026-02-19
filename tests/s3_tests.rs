@@ -1484,9 +1484,24 @@ mod s3_integration_tests {
             .danger_accept_invalid_certs(true)
             .build();
 
-        let Ok(client) = client else { return false };
+        let Ok(client) = client else {
+            if std::env::var("S3_TESTS_REQUIRE_AVAILABLE").is_ok() {
+                panic!("S3_TESTS_REQUIRE_AVAILABLE is set but S3 client could not be created");
+            }
+            return false;
+        };
         let url = format!("{}/", config.endpoint);
-        client.head(&url).send().await.is_ok()
+        let available = client.head(&url).send().await.is_ok();
+        
+        if !available && std::env::var("S3_TESTS_REQUIRE_AVAILABLE").is_ok() {
+            panic!(
+                "S3_TESTS_REQUIRE_AVAILABLE is set but S3 is not available at {}. \
+                Start MinIO with: docker compose up -d",
+                config.endpoint
+            );
+        }
+        
+        available
     }
 
     async fn upload_to_s3(

@@ -54,6 +54,25 @@ test-rust: ## Run Rust tests
 	cargo test
 	@echo "✓ Rust tests passed"
 
+test-s3: ## Run S3 tests with MinIO (starts MinIO if not running)
+	@echo "Checking MinIO status..."
+	@if ! curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; then \
+		echo "Starting MinIO..."; \
+		docker compose up -d; \
+		echo "Waiting for MinIO to be ready..."; \
+		for i in {1..30}; do \
+			if curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; then \
+				echo "MinIO is ready!"; \
+				break; \
+			fi; \
+			echo "Waiting... ($$i/30)"; \
+			sleep 2; \
+		done; \
+	fi
+	@echo "Running S3 tests..."
+	S3_TESTS_REQUIRE_AVAILABLE=1 cargo test --test s3_tests s3_integration
+	@echo "✓ S3 tests passed"
+
 test-python: ## Run Python tests (builds extension first)
 	@echo "Building Python extension..."
 	maturin develop --features python
@@ -175,6 +194,28 @@ coverage-rust: ## Run Rust tests with coverage (requires cargo-llvm-cov)
 	cargo llvm-cov --workspace --lcov --output-path lcov.info
 	@echo ""
 	@echo "✓ Rust coverage report: target/llvm-cov/html/index.html"
+
+coverage-rust-with-s3: ## Run Rust tests with coverage including S3 tests (requires MinIO)
+	@echo "Running Rust tests with coverage (including S3)..."
+	@echo "Checking MinIO status..."
+	@if ! curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; then \
+		echo "Starting MinIO..."; \
+		docker compose up -d; \
+		echo "Waiting for MinIO to be ready..."; \
+		for i in {1..30}; do \
+			if curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; then \
+				echo "MinIO is ready!"; \
+				break; \
+			fi; \
+			echo "Waiting... ($$i/30)"; \
+			sleep 2; \
+		done; \
+	fi
+	@echo "Running coverage with S3 tests..."
+	S3_TESTS_REQUIRE_AVAILABLE=1 cargo llvm-cov --workspace --html --output-dir target/llvm-cov/html
+	S3_TESTS_REQUIRE_AVAILABLE=1 cargo llvm-cov --workspace --lcov --output-path lcov.info
+	@echo ""
+	@echo "✓ Rust coverage report (with S3): target/llvm-cov/html/index.html"
 
 coverage-python: ## Run Python tests with coverage (requires pytest-cov)
 	@echo "Building Python extension..."
