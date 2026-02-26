@@ -4,9 +4,7 @@
 
 //! Wiremock-based tests for S3 functionality.
 
-use robocodec::io::s3::{
-    S3Client, S3Location, S3ReaderConfig, S3ReaderConstructor,
-};
+use robocodec::io::s3::{S3Client, S3Location, S3ReaderConfig, S3ReaderConstructor};
 use robocodec::io::traits::FormatReader;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
@@ -47,8 +45,7 @@ async fn test_s3_client_404() {
     let config = S3ReaderConfig::default();
     let client = S3Client::new(config).unwrap();
 
-    let location =
-        S3Location::new("test-bucket", "missing.mcap").with_endpoint(mock_server.uri());
+    let location = S3Location::new("test-bucket", "missing.mcap").with_endpoint(mock_server.uri());
 
     let result = client.fetch_range(&location, 0, 100).await;
     assert!(result.is_err());
@@ -87,8 +84,7 @@ async fn test_s3_client_empty_response() {
     let config = S3ReaderConfig::default();
     let client = S3Client::new(config).unwrap();
 
-    let location =
-        S3Location::new("test-bucket", "empty.mcap").with_endpoint(mock_server.uri());
+    let location = S3Location::new("test-bucket", "empty.mcap").with_endpoint(mock_server.uri());
 
     let result = client.fetch_range(&location, 0, 100).await;
     assert!(result.is_ok());
@@ -128,8 +124,7 @@ async fn test_s3_client_500_error() {
     let config = S3ReaderConfig::default();
     let client = S3Client::new(config).unwrap();
 
-    let location =
-        S3Location::new("test-bucket", "error.mcap").with_endpoint(mock_server.uri());
+    let location = S3Location::new("test-bucket", "error.mcap").with_endpoint(mock_server.uri());
 
     let result = client.fetch_range(&location, 0, 100).await;
     assert!(result.is_err());

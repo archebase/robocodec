@@ -6,8 +6,8 @@
 
 use robocodec::io::traits::FormatReader;
 
-use super::integration::{ensure_bucket_exists, s3_available, upload_to_s3, S3Config};
 use super::fixture_path;
+use super::integration::{S3Config, ensure_bucket_exists, s3_available, upload_to_s3};
 
 /// Test RoboReader::open with BAG file via S3.
 ///
@@ -47,14 +47,18 @@ async fn test_robo_reader_open_s3_bag_no_panic() {
         let _ = client.delete(&url).send().await;
     });
 
-    let s3_url = format!("s3://{}/{}?endpoint={}", config.bucket, key, config.endpoint);
+    let s3_url = format!(
+        "s3://{}/{}?endpoint={}",
+        config.bucket, key, config.endpoint
+    );
 
     // This should NOT panic - previously panicked at std::ops::function.rs:250:5
     let result = tokio::task::spawn_blocking(move || {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             robocodec::io::RoboReader::open(&s3_url)
         }))
-    }).await;
+    })
+    .await;
 
     match result {
         Ok(Ok(Ok(reader))) => {
@@ -65,7 +69,10 @@ async fn test_robo_reader_open_s3_bag_no_panic() {
             );
             assert!(reader.message_count() > 0, "Should have messages");
             assert!(!reader.channels().is_empty(), "Should have channels");
-            eprintln!("RoboReader::open succeeded: {} messages", reader.message_count());
+            eprintln!(
+                "RoboReader::open succeeded: {} messages",
+                reader.message_count()
+            );
         }
         Ok(Ok(Err(e))) => {
             eprintln!("RoboReader::open returned error (not panic): {}", e);
@@ -128,11 +135,13 @@ async fn test_robo_reader_open_s3_mcap() {
         let _ = client.delete(&url).send().await;
     });
 
-    let s3_url = format!("s3://{}/{}?endpoint={}", config.bucket, key, config.endpoint);
+    let s3_url = format!(
+        "s3://{}/{}?endpoint={}",
+        config.bucket, key, config.endpoint
+    );
 
-    let result = tokio::task::spawn_blocking(move || {
-        robocodec::io::RoboReader::open(&s3_url)
-    }).await;
+    let result =
+        tokio::task::spawn_blocking(move || robocodec::io::RoboReader::open(&s3_url)).await;
 
     match result {
         Ok(Ok(reader)) => {
@@ -142,7 +151,10 @@ async fn test_robo_reader_open_s3_mcap() {
                 "Format should be MCAP"
             );
             assert!(reader.message_count() > 0, "Should have messages");
-            eprintln!("RoboReader::open (MCAP) succeeded: {} messages", reader.message_count());
+            eprintln!(
+                "RoboReader::open (MCAP) succeeded: {} messages",
+                reader.message_count()
+            );
         }
         Ok(Err(e)) => {
             let err_str = e.to_string();
@@ -153,7 +165,10 @@ async fn test_robo_reader_open_s3_mcap() {
                 );
                 // Don't panic - this is a known limitation of StreamingMcapParser
             } else {
-                panic!("RoboReader::open (MCAP) failed with unexpected error: {}", e);
+                panic!(
+                    "RoboReader::open (MCAP) failed with unexpected error: {}",
+                    e
+                );
             }
         }
         Err(e) => panic!("Task join failed: {:?}", e),
@@ -195,11 +210,13 @@ async fn test_robo_reader_open_s3_rrd() {
         let _ = client.delete(&url).send().await;
     });
 
-    let s3_url = format!("s3://{}/{}?endpoint={}", config.bucket, key, config.endpoint);
+    let s3_url = format!(
+        "s3://{}/{}?endpoint={}",
+        config.bucket, key, config.endpoint
+    );
 
-    let result = tokio::task::spawn_blocking(move || {
-        robocodec::io::RoboReader::open(&s3_url)
-    }).await;
+    let result =
+        tokio::task::spawn_blocking(move || robocodec::io::RoboReader::open(&s3_url)).await;
 
     match result {
         Ok(Ok(reader)) => {
@@ -209,7 +226,10 @@ async fn test_robo_reader_open_s3_rrd() {
                 "Format should be RRD"
             );
             assert!(reader.message_count() > 0, "Should have messages");
-            eprintln!("RoboReader::open (RRD) succeeded: {} messages", reader.message_count());
+            eprintln!(
+                "RoboReader::open (RRD) succeeded: {} messages",
+                reader.message_count()
+            );
         }
         Ok(Err(e)) => panic!("RoboReader::open (RRD) failed: {}", e),
         Err(e) => panic!("Task join failed: {:?}", e),

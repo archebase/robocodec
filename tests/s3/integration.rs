@@ -6,9 +6,7 @@
 
 use std::time::Duration;
 
-use robocodec::io::s3::{
-    AwsCredentials, S3Location, S3Reader,
-};
+use robocodec::io::s3::{AwsCredentials, S3Location, S3Reader};
 use robocodec::io::traits::FormatReader;
 
 use super::fixture_path;
@@ -26,8 +24,7 @@ impl Default for S3Config {
         Self {
             endpoint: std::env::var("MINIO_ENDPOINT")
                 .unwrap_or_else(|_| "http://localhost:9000".to_string()),
-            bucket: std::env::var("MINIO_BUCKET")
-                .unwrap_or_else(|_| "test-fixtures".to_string()),
+            bucket: std::env::var("MINIO_BUCKET").unwrap_or_else(|_| "test-fixtures".to_string()),
             region: std::env::var("MINIO_REGION").unwrap_or_else(|_| "us-east-1".to_string()),
         }
     }
@@ -66,15 +63,20 @@ async fn send_signed_request(
     path: &str,
     body: Option<Vec<u8>>,
 ) -> Result<reqwest::Response, Box<dyn std::error::Error>> {
-    use robocodec::io::s3::sign_request;
     use http::{HeaderMap, Uri};
+    use robocodec::io::s3::sign_request;
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .danger_accept_invalid_certs(true)
         .build()?;
 
-    let url = format!("{}/{}/{}", config.endpoint, config.bucket, path.trim_start_matches('/'));
+    let url = format!(
+        "{}/{}/{}",
+        config.endpoint,
+        config.bucket,
+        path.trim_start_matches('/')
+    );
     let uri: Uri = url.parse()?;
     let credentials = get_aws_credentials();
 
@@ -90,7 +92,8 @@ async fn send_signed_request(
         &method,
         &uri,
         &mut headers,
-    ).map_err(|e| format!("Failed to sign request: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to sign request: {}", e))?;
 
     let mut request = client.request(method, &url);
     for (key, value) in headers {
@@ -129,7 +132,8 @@ async fn create_bucket(config: &S3Config) -> Result<(), Box<dyn std::error::Erro
         &method,
         &uri,
         &mut headers,
-    ).map_err(|e| format!("Failed to sign request: {}", e))?;
+    )
+    .map_err(|e| format!("Failed to sign request: {}", e))?;
 
     let mut request = client.request(method, &url);
     for (key, value) in headers {
@@ -239,7 +243,7 @@ async fn test_s3_read_mcap() {
         .with_region(&config.region);
 
     let result = S3Reader::open(location).await;
-    
+
     // MCAP files with CHUNK records may fail due to StreamingMcapParser limitations
     match result {
         Ok(reader) => {
@@ -249,7 +253,10 @@ async fn test_s3_read_mcap() {
         Err(e) => {
             let err_str = e.to_string();
             if err_str.contains("Invalid format") || err_str.contains("parse") {
-                eprintln!("S3Reader::open (MCAP) failed with parsing error - known limitation: {}", e);
+                eprintln!(
+                    "S3Reader::open (MCAP) failed with parsing error - known limitation: {}",
+                    e
+                );
             } else {
                 panic!("S3Reader::open (MCAP) failed: {}", e);
             }
@@ -299,7 +306,10 @@ async fn test_s3_stream_messages() {
         Err(e) => {
             let err_str = e.to_string();
             if err_str.contains("Invalid format") || err_str.contains("parse") {
-                eprintln!("S3Reader::open failed with parsing error - known MCAP limitation: {}", e);
+                eprintln!(
+                    "S3Reader::open failed with parsing error - known MCAP limitation: {}",
+                    e
+                );
                 return;
             }
             panic!("S3Reader::open failed: {}", e);

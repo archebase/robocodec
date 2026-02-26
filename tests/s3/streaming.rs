@@ -4,7 +4,7 @@
 
 //! Streaming parser tests for S3 functionality.
 
-use robocodec::io::s3::{StreamingBagParser, StreamingMcapParser, MCAP_MAGIC};
+use robocodec::io::s3::{MCAP_MAGIC, StreamingBagParser, StreamingMcapParser};
 use robocodec::io::streaming::StreamingParser;
 
 use super::fixture_path;
