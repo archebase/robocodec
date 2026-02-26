@@ -219,8 +219,9 @@ impl RoboReader {
         {
             if let Some(transport) = Self::parse_url_to_transport(path)? {
                 // Use transport-based reading
-                // Detect format from path extension
-                let path_obj = std::path::Path::new(path);
+                // Detect format from path extension (strip query params for S3 URLs)
+                let path_for_detection = path.split('?').next().unwrap_or(path);
+                let path_obj = std::path::Path::new(path_for_detection);
                 let format = detect_format(path_obj)?;
 
                 // MCAP, BAG, and RRD formats support transport-based reading
