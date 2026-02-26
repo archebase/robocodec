@@ -418,10 +418,10 @@ impl S3Client {
 
         // Sign the request if credentials are available
         if let Some(credentials) = self.config.credentials()
-            && signer::should_sign(credentials)
+            && signer::should_sign(&credentials)
         {
             let region = location.region().unwrap_or(DEFAULT_AWS_REGION);
-            signer::sign_request(credentials, region, "s3", method, &uri, &mut headers).map_err(
+            signer::sign_request(&credentials, region, "s3", method, &uri, &mut headers).map_err(
                 |e| FatalError::HttpError {
                     status: None,
                     message: format!("Failed to sign request: {e}"),
@@ -515,10 +515,10 @@ impl S3Client {
 
         // Sign the request if credentials are available
         if let Some(credentials) = self.config.credentials()
-            && signer::should_sign(credentials)
+            && signer::should_sign(&credentials)
         {
             let region = location.region().unwrap_or(DEFAULT_AWS_REGION);
-            signer::sign_request(credentials, region, "s3", method, &uri, &mut headers).map_err(
+            signer::sign_request(&credentials, region, "s3", method, &uri, &mut headers).map_err(
                 |e| FatalError::HttpError {
                     status: None,
                     message: format!("Failed to sign request: {e}"),

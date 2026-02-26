@@ -214,8 +214,11 @@ pub struct S3ReaderConfig {
     /// Number of bytes to scan for header (default: 1MB)
     pub(crate) header_scan_limit: usize,
 
-    /// AWS credentials (None = use default credential chain)
+    /// AWS credentials (None = lazy load from env at request time)
     pub(crate) credentials: Option<AwsCredentials>,
+
+    /// Whether to use lazy credential loading from env
+    pub(crate) lazy_credentials: bool,
 
     /// Retry configuration
     pub(crate) retry: RetryConfig,
@@ -236,10 +239,8 @@ impl Default for S3ReaderConfig {
             buffer_size: 64 * 1024,           // 64KB
             max_chunk_size: 10 * 1024 * 1024, // 10MB
             header_scan_limit: 1024 * 1024,   // 1MB
-            credentials: AwsCredentials::from_env().filter(|c| {
-                // Filter out empty credentials that might have been set from env
-                !c.access_key_id().is_empty() && !c.secret_access_key().is_empty()
-            }),
+            credentials: None,
+            lazy_credentials: true, // Lazy load from env by default
             retry: RetryConfig::default(),
             request_timeout: Duration::from_secs(30),
             pool_max_idle: 10,
@@ -274,9 +275,26 @@ impl S3ReaderConfig {
     }
 
     /// Get the AWS credentials.
+    ///
+    /// If lazy credential loading is enabled and no explicit credentials were set,
+    /// this will attempt to load from environment variables at access time.
     #[must_use]
-    pub fn credentials(&self) -> Option<&AwsCredentials> {
-        self.credentials.as_ref()
+    pub fn credentials(&self) -> Option<AwsCredentials> {
+        if let Some(ref creds) = self.credentials {
+            return Some(creds.clone());
+        }
+
+        if self.lazy_credentials {
+            AwsCredentials::from_env()
+        } else {
+            None
+        }
+    }
+
+    /// Check if lazy credential loading is enabled.
+    #[must_use]
+    pub fn lazy_credentials(&self) -> bool {
+        self.lazy_credentials
     }
 
     /// Get the retry configuration.
@@ -332,12 +350,25 @@ impl S3ReaderConfig {
 
     /// Set the AWS credentials.
     ///
-    /// Accepts `None` to use default credential chain, or `Some(creds)` for explicit credentials.
+    /// Accepts `None` to use lazy credential loading from environment variables.
     /// Invalid credentials (empty access key or secret) will be ignored.
+    /// Calling this method disables lazy loading (even if credentials are filtered out).
     #[must_use]
     pub fn with_credentials(mut self, credentials: Option<AwsCredentials>) -> Self {
         self.credentials = credentials
             .filter(|c| !c.access_key_id().is_empty() && !c.secret_access_key().is_empty());
+        // Disable lazy loading when explicit credentials are set (even if filtered out)
+        self.lazy_credentials = false;
+        self
+    }
+
+    /// Set whether to use lazy credential loading from environment variables.
+    ///
+    /// When enabled (default), credentials are read from environment variables
+    /// at request time, allowing credentials to be set after the client is created.
+    #[must_use]
+    pub fn with_lazy_credentials(mut self, lazy: bool) -> Self {
+        self.lazy_credentials = lazy;
         self
     }
 
