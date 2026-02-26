@@ -117,6 +117,8 @@ pub struct StreamingBagParser {
     version: Option<String>,
     /// Cached channel map (converted from connections)
     cached_channels: HashMap<u16, ChannelInfo>,
+    /// Message counts per connection ID
+    connection_message_counts: HashMap<u32, u64>,
 }
 
 impl StreamingBagParser {
@@ -132,6 +134,7 @@ impl StreamingBagParser {
             buffer_pos: 0,
             version: None,
             cached_channels: HashMap::new(),
+            connection_message_counts: HashMap::new(),
         }
     }
 
@@ -169,6 +172,12 @@ impl StreamingBagParser {
         }
 
         self.message_count += messages.len() as u64;
+        for msg in &messages {
+            *self
+                .connection_message_counts
+                .entry(msg.conn_id)
+                .or_insert(0) += 1;
+        }
         Ok(messages)
     }
 
@@ -625,7 +634,11 @@ impl StreamingBagParser {
                     schema: Some(conn.message_definition.clone()),
                     schema_data: None,
                     schema_encoding: Some("ros1msg".to_string()),
-                    message_count: 0,
+                    message_count: self
+                        .connection_message_counts
+                        .get(conn_id)
+                        .copied()
+                        .unwrap_or(0),
                     callerid: if conn.caller_id.is_empty() {
                         None
                     } else {
