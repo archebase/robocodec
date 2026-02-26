@@ -18,8 +18,8 @@ use std::io::Read;
 use crate::io::metadata::{ChannelInfo, FileFormat};
 use crate::io::streaming::parser::StreamingParser;
 use crate::io::traits::FormatReader;
-use crate::io::transport::Transport;
 use crate::io::transport::local::LocalTransport;
+use crate::io::transport::Transport;
 use crate::{CodecError, Result};
 
 use super::s3_adapter::MessageRecord;
@@ -229,10 +229,9 @@ impl FormatReader for McapTransportReader {
                     ));
                 }
                 Poll::Pending => {
-                    return Err(CodecError::encode(
-                        "Transport",
-                        "Unexpected pending from non-async transport".to_string(),
-                    ));
+                    // Async transport returned pending - yield and retry
+                    std::thread::yield_now();
+                    continue;
                 }
             }
         }
