@@ -1504,23 +1504,133 @@ mod s3_integration_tests {
         available
     }
 
-    async fn upload_to_s3(
+    /// Get AWS credentials from environment variables
+    fn get_aws_credentials() -> robocodec::io::s3::AwsCredentials {
+        let access_key = std::env::var("AWS_ACCESS_KEY_ID")
+            .or_else(|_| std::env::var("MINIO_USER"))
+            .unwrap_or_else(|_| "minioadmin".to_string());
+        let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
+            .or_else(|_| std::env::var("MINIO_PASSWORD"))
+            .unwrap_or_else(|_| "minioadmin".to_string());
+        robocodec::io::s3::AwsCredentials::new(
+            &access_key, &secret_key).unwrap()
+    }
+
+    /// Sign and send an S3 request
+    async fn send_signed_request(
         config: &S3Config,
-        key: &str,
-        data: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+        method: http::Method,
+        path: &str,
+        body: Option<Vec<u8>>,
+    ) -> Result<reqwest::Response, Box<dyn std::error::Error>> {
+        use robocodec::io::s3::sign_request;
+        use http::{HeaderMap, Uri};
+
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .danger_accept_invalid_certs(true)
             .build()?;
 
-        let url = format!("{}/{}/{}", config.endpoint, config.bucket, key);
-        let response = client
-            .put(&url)
-            .header("Content-Type", "application/octet-stream")
-            .body(data.to_vec())
-            .send()
-            .await?;
+        let url = format!("{}/{}/{}", config.endpoint, config.bucket, path.trim_start_matches('/'));
+        let uri: Uri = url.parse()?;
+        let credentials = get_aws_credentials();
+
+        let mut headers = HeaderMap::new();
+        if body.is_some() {
+            headers.insert("Content-Type", "application/octet-stream".parse()?);
+        }
+
+        // Sign the request
+        sign_request(
+            &credentials,
+            &config.region,
+            "s3",
+            &method,
+            &uri,
+            &mut headers,
+        ).map_err(|e| format!("Failed to sign request: {}", e))?;
+
+        // Build and send request
+        let mut request = client.request(method, &url);
+        for (key, value) in headers {
+            if let Some(key) = key {
+                request = request.header(key, value);
+            }
+        }
+        if let Some(data) = body {
+            request = request.body(data);
+        }
+
+        Ok(request.send().await?)
+    }
+
+    async fn create_bucket(config: &S3Config) -> Result<(), Box<dyn std::error::Error>> {
+        use http::Method;
+        use robocodec::io::s3::sign_request;
+        use http::{HeaderMap, Uri};
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .danger_accept_invalid_certs(true)
+            .build()?;
+
+        let url = format!("{}/{}", config.endpoint, config.bucket);
+        let uri: Uri = url.parse()?;
+        let credentials = get_aws_credentials();
+        let method = Method::PUT;
+
+        let mut headers = HeaderMap::new();
+        sign_request(
+            &credentials,
+            &config.region,
+            "s3",
+            &method,
+            &uri,
+            &mut headers,
+        ).map_err(|e| format!("Failed to sign request: {}", e))?;
+
+        let mut request = client.request(method, &url);
+        for (key, value) in headers {
+            if let Some(key) = key {
+                request = request.header(key, value);
+            }
+        }
+
+        let response = request.send().await?;
+
+        // 200 = created, 409 = already exists (both are OK)
+        if response.status().is_success() || response.status() == 409 {
+            return Ok(());
+        }
+
+        Err(format!("Failed to create bucket: HTTP {}", response.status()).into())
+    }
+
+    async fn ensure_bucket_exists(config: &S3Config) -> Result<(), Box<dyn std::error::Error>> {
+        use http::Method;
+
+        // Try to create bucket (idempotent - returns 409 if exists)
+        match create_bucket(config).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Try to check if bucket exists via HEAD
+                let response = send_signed_request(config, Method::HEAD, "/", None).await;
+                match response {
+                    Ok(resp) if resp.status().is_success() || resp.status() == 403 => Ok(()),
+                    _ => Err(format!("Bucket does not exist and cannot be created: {}", e).into()),
+                }
+            }
+        }
+    }
+
+    async fn upload_to_s3(
+        config: &S3Config,
+        key: &str,
+        data: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use http::Method;
+
+        let response = send_signed_request(config, Method::PUT, key, Some(data.to_vec())).await?;
 
         if !response.status().is_success() {
             return Err(format!("Upload failed: HTTP {}", response.status()).into());
@@ -2302,6 +2412,108 @@ mod s3_integration_tests {
                 fixture_name
             );
             eprintln!("{}: {} messages", fixture_name, message_count);
+        }
+    }
+
+    /// Regression test: RoboReader::open("s3://...bag") should not panic
+    ///
+    /// This test verifies that opening a BAG file via S3 URL does not panic.
+    /// Previously, there was a panic in std::ops::function when using S3 transport.
+    ///
+    /// Requirements:
+    /// - MinIO running at localhost:9000 (or MINIO_ENDPOINT env var)
+    /// - Bucket exists (default: test-fixtures, or MINIO_BUCKET env var)
+    /// - Fixture file: tests/fixtures/robocodec_test_15.bag
+    #[tokio::test]
+    async fn test_robo_reader_open_s3_bag_no_panic() {
+        if !s3_available().await {
+            return;
+        }
+
+        let config = S3Config::default();
+        let fixture_path = fixture_path("robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let data = std::fs::read(&fixture_path).unwrap();
+        let key = "test/regression_robocodec_test_15.bag";
+
+        // Ensure bucket exists and upload fixture - fail the test if any step fails
+        ensure_bucket_exists(&config)
+            .await
+            .expect("S3/MinIO bucket check failed");
+
+        upload_to_s3(&config, key, &data)
+            .await
+            .expect("Failed to upload BAG fixture to S3/MinIO");
+
+        // Clean up after test
+        let key_cleanup = key.to_string();
+        let endpoint = config.endpoint.clone();
+        let bucket = config.bucket.clone();
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
+            let _ = client.delete(&url).send().await;
+        });
+
+        // Build S3 URL
+        let s3_url = format!(
+            "s3://{}/{}?endpoint={}",
+            config.bucket, key, config.endpoint
+        );
+
+        // This should NOT panic - previously panicked at std::ops::function.rs:250:5
+        // Run in spawn_blocking to catch panics properly
+        let result = tokio::task::spawn_blocking(move || {
+            // catch_unwind inside spawn_blocking to catch any panics from RoboReader::open
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                robocodec::io::RoboReader::open(&s3_url)
+            }))
+        })
+        .await;
+
+        match result {
+            Ok(Ok(Ok(reader))) => {
+                assert_eq!(
+                    reader.format(),
+                    robocodec::io::metadata::FileFormat::Bag,
+                    "Format should be BAG"
+                );
+                assert!(
+                    reader.message_count() > 0,
+                    "Should have messages"
+                );
+                assert!(
+                    !reader.channels().is_empty(),
+                    "Should have channels"
+                );
+                eprintln!("RoboReader::open succeeded: {} messages", reader.message_count());
+            }
+            Ok(Ok(Err(e))) => {
+                // Error is acceptable, panic is not
+                eprintln!("RoboReader::open returned error (not panic): {}", e);
+            }
+            Ok(Err(panic_info)) => {
+                let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Unknown panic".to_string()
+                };
+                panic!(
+                    "RoboReader::open('s3://...bag') panicked: {}. \
+                     This is the regression we are testing for!",
+                    panic_msg
+                );
+            }
+            Err(e) => {
+                panic!("Task join failed: {:?}", e);
+            }
         }
     }
 }
