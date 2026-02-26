@@ -656,4 +656,141 @@ mod tests {
         let any_ref = reader.as_any_mut();
         assert!(any_ref.downcast_ref::<BagTransportReader>().is_some());
     }
+
+    /// Regression test: BagTransportReader::open_from_transport should not panic
+    ///
+    /// This test verifies that opening a BAG file via the transport trait
+    /// does not panic. Previously, there was a panic in std::ops::function
+    /// when using certain transports.
+    #[test]
+    #[cfg(feature = "remote")]
+    fn test_bag_transport_reader_open_from_transport_no_panic() {
+        use crate::io::traits::FormatReader;
+        use crate::io::transport::memory::MemoryTransport;
+
+        // Get test fixture
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let data = std::fs::read(&fixture_path).unwrap();
+        let transport =
+            Box::new(MemoryTransport::new(data)) as Box<dyn crate::io::transport::Transport>;
+
+        // This should NOT panic - previously panicked at std::ops::function.rs:250:5
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            BagTransportReader::open_from_transport(transport, "test.bag".to_string())
+        }));
+
+        match result {
+            Ok(Ok(reader)) => {
+                assert_eq!(reader.format(), FileFormat::Bag);
+                assert!(reader.message_count() > 0, "Should have messages");
+                assert!(!reader.channels().is_empty(), "Should have channels");
+            }
+            Ok(Err(e)) => {
+                // Error is acceptable, panic is not
+                println!("Got expected error (not panic): {}", e);
+            }
+            Err(panic_info) => {
+                let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Unknown panic".to_string()
+                };
+                panic!(
+                    "BagTransportReader::open_from_transport panicked: {}",
+                    panic_msg
+                );
+            }
+        }
+    }
+
+    /// Regression test: BagTransportReader::open_from_transport with empty data
+    ///
+    /// Verifies that empty data is handled gracefully without panic.
+    #[test]
+    #[cfg(feature = "remote")]
+    fn test_bag_transport_reader_open_from_transport_empty_data() {
+        use crate::io::traits::FormatReader;
+        use crate::io::transport::memory::MemoryTransport;
+
+        let transport =
+            Box::new(MemoryTransport::new(vec![])) as Box<dyn crate::io::transport::Transport>;
+
+        // Should not panic with empty data
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            BagTransportReader::open_from_transport(transport, "empty.bag".to_string())
+        }));
+
+        match result {
+            Ok(Ok(reader)) => {
+                assert_eq!(reader.message_count(), 0);
+            }
+            Ok(Err(_)) => {
+                // Error is acceptable for empty data
+            }
+            Err(panic_info) => {
+                let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Unknown panic".to_string()
+                };
+                panic!(
+                    "BagTransportReader::open_from_transport panicked with empty data: {}",
+                    panic_msg
+                );
+            }
+        }
+    }
+
+    /// Regression test: BagTransportReader::open_from_transport with invalid data
+    ///
+    /// Verifies that invalid data is handled gracefully without panic.
+    #[test]
+    #[cfg(feature = "remote")]
+    fn test_bag_transport_reader_open_from_transport_invalid_data() {
+        use crate::io::traits::FormatReader;
+        use crate::io::transport::memory::MemoryTransport;
+
+        // Invalid data that is not a valid BAG file
+        let invalid_data = b"NOT_A_BAG_FILE".to_vec();
+        let transport = Box::new(MemoryTransport::new(invalid_data))
+            as Box<dyn crate::io::transport::Transport>;
+
+        // Should not panic with invalid data
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            BagTransportReader::open_from_transport(transport, "invalid.bag".to_string())
+        }));
+
+        match result {
+            Ok(Ok(_)) => {
+                // Unexpected success, but not a failure
+            }
+            Ok(Err(_)) => {
+                // Error is expected for invalid data
+            }
+            Err(panic_info) => {
+                let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    (*s).to_string()
+                } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Unknown panic".to_string()
+                };
+                panic!(
+                    "BagTransportReader::open_from_transport panicked with invalid data: {}",
+                    panic_msg
+                );
+            }
+        }
+    }
 }
