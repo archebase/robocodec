@@ -37,16 +37,6 @@ async fn test_robo_reader_open_s3_bag_no_panic() {
         .await
         .expect("Failed to upload BAG fixture to S3/MinIO");
 
-    // Clean up after test
-    let key_cleanup = key.to_string();
-    let endpoint = config.endpoint.clone();
-    let bucket = config.bucket.clone();
-    tokio::spawn(async move {
-        let client = reqwest::Client::new();
-        let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
-        let _ = client.delete(&url).send().await;
-    });
-
     let s3_url = format!(
         "s3://{}/{}?endpoint={}",
         config.bucket, key, config.endpoint
@@ -59,6 +49,16 @@ async fn test_robo_reader_open_s3_bag_no_panic() {
         }))
     })
     .await;
+
+    // Clean up after test completes
+    let key_cleanup = key.to_string();
+    let endpoint = config.endpoint.clone();
+    let bucket = config.bucket.clone();
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
+        let _ = client.delete(&url).send().await;
+    });
 
     match result {
         Ok(Ok(Ok(reader))) => {
@@ -126,6 +126,15 @@ async fn test_robo_reader_open_s3_mcap() {
         .await
         .expect("Failed to upload MCAP fixture to S3/MinIO");
 
+    let s3_url = format!(
+        "s3://{}/{}?endpoint={}",
+        config.bucket, key, config.endpoint
+    );
+
+    let result =
+        tokio::task::spawn_blocking(move || robocodec::io::RoboReader::open(&s3_url)).await;
+
+    // Clean up after test completes
     let key_cleanup = key.to_string();
     let endpoint = config.endpoint.clone();
     let bucket = config.bucket.clone();
@@ -134,14 +143,6 @@ async fn test_robo_reader_open_s3_mcap() {
         let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
         let _ = client.delete(&url).send().await;
     });
-
-    let s3_url = format!(
-        "s3://{}/{}?endpoint={}",
-        config.bucket, key, config.endpoint
-    );
-
-    let result =
-        tokio::task::spawn_blocking(move || robocodec::io::RoboReader::open(&s3_url)).await;
 
     match result {
         Ok(Ok(reader)) => {
@@ -201,6 +202,15 @@ async fn test_robo_reader_open_s3_rrd() {
         .await
         .expect("Failed to upload RRD fixture to S3/MinIO");
 
+    let s3_url = format!(
+        "s3://{}/{}?endpoint={}",
+        config.bucket, key, config.endpoint
+    );
+
+    let result =
+        tokio::task::spawn_blocking(move || robocodec::io::RoboReader::open(&s3_url)).await;
+
+    // Clean up after test completes
     let key_cleanup = key.to_string();
     let endpoint = config.endpoint.clone();
     let bucket = config.bucket.clone();
@@ -209,14 +219,6 @@ async fn test_robo_reader_open_s3_rrd() {
         let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
         let _ = client.delete(&url).send().await;
     });
-
-    let s3_url = format!(
-        "s3://{}/{}?endpoint={}",
-        config.bucket, key, config.endpoint
-    );
-
-    let result =
-        tokio::task::spawn_blocking(move || robocodec::io::RoboReader::open(&s3_url)).await;
 
     match result {
         Ok(Ok(reader)) => {

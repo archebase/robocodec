@@ -2,72 +2,40 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Transport-based MCAP reader.
+//! Transport-based MCAP reader using mcap::MessageStream.
 //!
 //! This module provides [`McapTransportReader`], which implements the
 //! [`FormatReader`](crate::io::traits::FormatReader) trait using the
-//! unified transport layer for I/O and the streaming parser for parsing.
-//!
-//! This provides a clean separation between I/O (transport) and parsing,
-//! allowing the same reader to work with local files, S3, or any other
-//! transport implementation.
+//! unified transport layer for I/O and the official mcap crate's
+//! `MessageStream` for proper MCAP parsing including CHUNK handling.
 
 use std::collections::HashMap;
-use std::io::Read;
+use std::pin::Pin;
+use std::task::{Context, Poll, Waker};
 
 use crate::io::metadata::{ChannelInfo, FileFormat};
-use crate::io::streaming::parser::StreamingParser;
 use crate::io::traits::FormatReader;
-use crate::io::transport::Transport;
 use crate::io::transport::local::LocalTransport;
 use crate::{CodecError, Result};
 
-use super::s3_adapter::MessageRecord;
-use super::streaming::McapStreamingParser;
-
 /// Transport-based MCAP reader.
 ///
-/// This reader uses the unified transport layer for I/O and the streaming
-/// parser for MCAP parsing. It implements `FormatReader` for consistent
-/// access across all robotics data formats.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use robocodec::io::formats::mcap::McapTransportReader;
-/// use robocodec::io::traits::FormatReader;
-///
-/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-/// // Open from local file using transport
-/// let mut reader = McapTransportReader::open("data.mcap")?;
-///
-/// // Access channels
-/// for (id, channel) in reader.channels() {
-///     println!("Channel {}: {}", id, channel.topic);
-/// }
-/// # Ok(())
-/// # }
-/// ```
+/// This reader buffers data from the transport and uses the official
+/// mcap crate's `MessageStream` for proper parsing, including CHUNK
+/// record decompression.
 pub struct McapTransportReader {
-    /// The streaming parser
-    parser: McapStreamingParser,
     /// File path (for reporting)
     path: String,
-    /// All parsed messages (for sequential iteration)
-    messages: Vec<MessageRecord>,
+    /// All parsed message timestamps (for start/end time)
+    message_timestamps: Vec<u64>,
+    /// Discovered channels
+    channels: HashMap<u16, ChannelInfo>,
     /// File size
     file_size: u64,
 }
 
 impl McapTransportReader {
     /// Open a MCAP file from the local filesystem.
-    ///
-    /// This is a convenience method that creates a `LocalTransport` and
-    /// initializes the reader.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be opened or is not a valid MCAP file.
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let path_ref = path.as_ref();
         let transport = LocalTransport::open(path_ref).map_err(|e| {
@@ -79,76 +47,114 @@ impl McapTransportReader {
         Self::with_transport(transport, path_ref.to_string_lossy().to_string())
     }
 
-    /// Create a new reader from a transport.
-    ///
-    /// This method reads the entire file through the transport to parse
-    /// all messages. For large files, consider using streaming methods
-    /// or the parallel reader instead.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the transport cannot be read or the data is
-    /// not a valid MCAP file.
-    pub fn with_transport(mut transport: LocalTransport, path: String) -> Result<Self> {
-        let mut parser = McapStreamingParser::new();
-        let mut messages = Vec::new();
+    /// Create from a LocalTransport.
+    fn with_transport(
+        mut transport: impl crate::io::transport::Transport,
+        path: String,
+    ) -> Result<Self> {
         let file_size = transport.len().unwrap_or(0);
 
-        let chunk_size = 64 * 1024; // 64KB chunks
-        let mut buffer = vec![0u8; chunk_size];
-        let mut total_read = 0;
+        // Read all data from transport into buffer
+        let buffer = Self::read_all_from_transport(&mut transport, &path)?;
 
-        // Read and parse the entire file
+        // Use mcap::MessageStream to parse the buffered data
+        Self::parse_from_buffer(buffer, path, file_size)
+    }
+
+    /// Read all data from a transport into a buffer.
+    fn read_all_from_transport(
+        transport: &mut dyn crate::io::transport::Transport,
+        path: &str,
+    ) -> Result<Vec<u8>> {
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+
+        const CHUNK_SIZE: usize = 64 * 1024;
+        let mut buffer = vec![0u8; CHUNK_SIZE];
+        let mut result = Vec::new();
+
+        // SAFETY: Transport is Unpin, pinning is temporary
+        let mut pinned = unsafe { Pin::new_unchecked(transport) };
+
         loop {
-            let n = transport.file_mut().read(&mut buffer).map_err(|e| {
-                CodecError::encode("Transport", format!("Failed to read from {path}: {e}"))
-            })?;
-
-            if n == 0 {
-                break;
-            }
-            total_read += n;
-
-            match parser.parse_chunk(&buffer[..n]) {
-                Ok(chunk_messages) => {
-                    messages.extend(chunk_messages);
+            match pinned.as_mut().poll_read(&mut cx, &mut buffer) {
+                Poll::Ready(Ok(0)) => break,
+                Poll::Ready(Ok(n)) => {
+                    result.extend_from_slice(&buffer[..n]);
                 }
-                Err(_) if total_read == n && n < 8 => {
-                    // Empty or very short file - might be valid but with no messages
-                    break;
+                Poll::Ready(Err(e)) => {
+                    return Err(CodecError::encode(
+                        "Transport",
+                        format!("Failed to read from {path}: {e}"),
+                    ));
+                }
+                Poll::Pending => {
+                    std::thread::yield_now();
+                    continue;
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Parse MCAP data from a buffer.
+    fn parse_from_buffer(buffer: Vec<u8>, path: String, file_size: u64) -> Result<Self> {
+        let mut channels = HashMap::new();
+        let mut message_timestamps = Vec::new();
+
+        // Use mcap::MessageStream for proper parsing
+        let stream = mcap::MessageStream::new(&buffer).map_err(|e| {
+            CodecError::parse(
+                "MCAP",
+                format!("Failed to create message stream for {path}: {e}"),
+            )
+        })?;
+
+        for result in stream {
+            match result {
+                Ok(message) => {
+                    let channel_id = message.channel.id;
+
+                    // Store channel if not already seen
+                    if let std::collections::hash_map::Entry::Vacant(e) = channels.entry(channel_id)
+                    {
+                        let schema = message.channel.schema.as_ref();
+                        let schema_text =
+                            schema.and_then(|s| String::from_utf8(s.data.to_vec()).ok());
+                        let schema_data = schema.map(|s| s.data.to_vec());
+                        let schema_encoding = schema.map(|s| s.encoding.clone());
+
+                        e.insert(ChannelInfo {
+                            id: channel_id,
+                            topic: message.channel.topic.clone(),
+                            message_type: schema.map(|s| s.name.clone()).unwrap_or_default(),
+                            encoding: message.channel.message_encoding.clone(),
+                            schema: schema_text,
+                            schema_data,
+                            schema_encoding,
+                            message_count: 0,
+                            callerid: None,
+                        });
+                    }
+
+                    // Store message timestamp
+                    message_timestamps.push(message.log_time);
                 }
                 Err(e) => {
-                    return Err(CodecError::parse(
-                        "MCAP",
-                        format!("Failed to parse MCAP data at {path}: {e}"),
-                    ));
+                    // Log error but continue parsing
+                    eprintln!("Warning: Error reading message from {}: {}", path, e);
+                    continue;
                 }
             }
         }
 
         Ok(Self {
-            parser,
             path,
-            messages,
+            message_timestamps,
+            channels,
             file_size,
         })
-    }
-
-    /// Get all parsed messages.
-    #[must_use]
-    pub fn messages(&self) -> &[MessageRecord] {
-        &self.messages
-    }
-
-    /// Get the streaming parser.
-    #[must_use]
-    pub fn parser(&self) -> &McapStreamingParser {
-        &self.parser
-    }
-
-    /// Get a mutable reference to the streaming parser.
-    pub fn parser_mut(&mut self) -> &mut McapStreamingParser {
-        &mut self.parser
     }
 }
 
@@ -161,103 +167,25 @@ impl FormatReader for McapTransportReader {
     where
         Self: Sized,
     {
-        let mut parser = McapStreamingParser::new();
-        let mut messages = Vec::new();
         let file_size = transport.len().unwrap_or(0);
-
-        // Read all data from the transport using poll-based interface
-        use std::pin::Pin;
-        use std::task::{Context, Poll, Waker};
-
-        // Create a no-op waker for polling
-        let waker = Waker::noop();
-        let mut cx = Context::from_waker(waker);
-
-        const CHUNK_SIZE: usize = 64 * 1024; // 64KB chunks
-        let mut buffer = vec![0u8; CHUNK_SIZE];
-        let mut total_read = 0;
-
-        // # Safety
-        //
-        // Using `Pin::new_unchecked` here is safe because:
-        //
-        // 1. **Unpin requirement**: The `Transport` trait requires `Unpin`, which means
-        //    the transport can be safely moved. However, `poll_read` requires a `Pin`,
-        //    so we need to create one.
-        //
-        // 2. **No movement**: The transport is a mutable reference (`transport.as_mut()`)
-        //    that we pin in place. We never move the transport after pinning it.
-        //
-        // 3. **Local scope**: The pinned reference is only used within this function
-        //    and never escapes. It's dropped when the function returns.
-        //
-        // 4. **No interior mutability**: The transport's implementation of `poll_read`
-        //    doesn't rely on interior mutability that would be violated by moving.
-        //
-        // The `new_unchecked` is necessary because we have a mutable reference to
-        //    a trait object that already satisfies `Unpin`, but there's no safe way
-        //    to create a Pin from a mutable reference to a trait object.
-        let mut pinned_transport = unsafe { Pin::new_unchecked(transport.as_mut()) };
-
-        // Read and parse the entire file
-        loop {
-            match pinned_transport.as_mut().poll_read(&mut cx, &mut buffer) {
-                Poll::Ready(Ok(0)) => break,
-                Poll::Ready(Ok(n)) => {
-                    total_read += n;
-
-                    match parser.parse_chunk(&buffer[..n]) {
-                        Ok(chunk_messages) => {
-                            messages.extend(chunk_messages);
-                        }
-                        Err(_) if total_read == n && n < 8 => {
-                            // Empty or very short file - might be valid but with no messages
-                            break;
-                        }
-                        Err(e) => {
-                            return Err(CodecError::parse(
-                                "MCAP",
-                                format!("Failed to parse MCAP data at {path}: {e}"),
-                            ));
-                        }
-                    }
-                }
-                Poll::Ready(Err(e)) => {
-                    return Err(CodecError::encode(
-                        "Transport",
-                        format!("Failed to read from {path}: {e}"),
-                    ));
-                }
-                Poll::Pending => {
-                    // Async transport returned pending - yield and retry
-                    std::thread::yield_now();
-                    continue;
-                }
-            }
-        }
-
-        Ok(Self {
-            parser,
-            path,
-            messages,
-            file_size,
-        })
+        let buffer = Self::read_all_from_transport(transport.as_mut(), &path)?;
+        Self::parse_from_buffer(buffer, path, file_size)
     }
 
     fn channels(&self) -> &HashMap<u16, ChannelInfo> {
-        self.parser.channels()
+        &self.channels
     }
 
     fn message_count(&self) -> u64 {
-        self.parser.message_count()
+        self.message_timestamps.len() as u64
     }
 
     fn start_time(&self) -> Option<u64> {
-        self.messages.first().map(|m| m.log_time)
+        self.message_timestamps.first().copied()
     }
 
     fn end_time(&self) -> Option<u64> {
-        self.messages.last().map(|m| m.log_time)
+        self.message_timestamps.last().copied()
     }
 
     fn path(&self) -> &str {
@@ -286,16 +214,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_message_record_fields() {
-        let msg = MessageRecord {
-            channel_id: 5,
-            log_time: 1234567890,
-            publish_time: 1234567800,
-            data: vec![0x01, 0x02, 0x03],
-            sequence: 99,
-        };
-        assert_eq!(msg.channel_id, 5);
-        assert_eq!(msg.log_time, 1234567890);
-        assert_eq!(msg.data, vec![0x01, 0x02, 0x03]);
+    fn test_transport_reader_creation() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/robocodec_test_0.mcap");
+
+        if !path.exists() {
+            return;
+        }
+
+        let reader = McapTransportReader::open(&path).unwrap();
+        assert_eq!(reader.format(), FileFormat::Mcap);
+        assert!(reader.message_count() > 0);
+        assert!(!reader.channels().is_empty());
     }
 }
