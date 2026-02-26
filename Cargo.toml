@@ -60,7 +60,7 @@ zstd = "0.13"
 lz4_flex = "0.11"
 bzip2 = "0.4"
 crc32fast = "1.4"
-mcap = "0.24"
+mcap = { version = "0.24", features = ["zstd", "lz4"] }
 rosbag = "0.6"
 bytemuck = "1.15"
 chrono = "0.4"

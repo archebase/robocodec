@@ -10,7 +10,6 @@
 
 use std::collections::HashMap;
 
-use crate::io::formats::mcap::constants::{OP_CHANNEL, OP_MESSAGE, OP_SCHEMA};
 use crate::io::metadata::ChannelInfo;
 use crate::io::s3::FatalError;
 
@@ -114,230 +113,51 @@ impl McapS3Adapter {
         Ok(messages)
     }
 
-    /// Process a single MCAP record.
+    /// Process a single MCAP record using the mcap crate's parser.
     fn process_record(
         &mut self,
         opcode: u8,
         body: &[u8],
         messages: &mut Vec<MessageRecord>,
     ) -> Result<(), FatalError> {
-        match opcode {
-            OP_SCHEMA => {
-                let schema = self.parse_schema(body)?;
-                self.schemas.insert(schema.id, schema);
+        let record = mcap::parse_record(opcode, body)
+            .map_err(|e| FatalError::io_error(format!("MCAP parse error: {}", e)))?;
+
+        match record {
+            mcap::records::Record::Schema { header, data } => {
+                self.schemas.insert(
+                    header.id,
+                    SchemaInfo {
+                        id: header.id,
+                        name: header.name,
+                        encoding: header.encoding,
+                        data: data.into_owned(),
+                    },
+                );
             }
-            OP_CHANNEL => {
-                let channel = self.parse_channel(body)?;
-                self.channels.insert(channel.id, channel);
+            mcap::records::Record::Channel(ch) => {
+                self.channels.insert(
+                    ch.id,
+                    ChannelRecordInfo {
+                        id: ch.id,
+                        topic: ch.topic,
+                        message_encoding: ch.message_encoding,
+                        schema_id: ch.schema_id,
+                    },
+                );
             }
-            OP_MESSAGE => {
-                let msg = self.parse_message(body)?;
-                messages.push(msg);
+            mcap::records::Record::Message { header, data } => {
+                messages.push(MessageRecord {
+                    channel_id: header.channel_id,
+                    log_time: header.log_time,
+                    publish_time: header.publish_time,
+                    data: data.into_owned(),
+                    sequence: header.sequence as u64,
+                });
             }
-            // Ignore other records for streaming
             _ => {}
         }
         Ok(())
-    }
-
-    /// Parse a Schema record.
-    fn parse_schema(&self, body: &[u8]) -> Result<SchemaInfo, FatalError> {
-        const MIN_SCHEMA_LEN: usize = 4;
-
-        if body.len() < MIN_SCHEMA_LEN {
-            return Err(FatalError::invalid_format(
-                "MCAP Schema record",
-                body[..body.len().min(10)].to_vec(),
-            ));
-        }
-
-        let id = u16::from_le_bytes(
-            body[0..2]
-                .try_into()
-                .expect("MIN_SCHEMA_LEN ensures 2 bytes"),
-        );
-        let name_len = u16::from_le_bytes(
-            body[2..4]
-                .try_into()
-                .expect("MIN_SCHEMA_LEN ensures 4 bytes total"),
-        ) as usize;
-
-        if body.len() < 4 + name_len {
-            return Err(FatalError::invalid_format(
-                "MCAP Schema name (incomplete)",
-                vec![],
-            ));
-        }
-
-        let name = String::from_utf8(body[4..4 + name_len].to_vec())
-            .map_err(|_| FatalError::invalid_format("MCAP Schema name (invalid UTF-8)", vec![]))?;
-
-        let offset = 4 + name_len;
-        if body.len() < offset + 2 {
-            return Err(FatalError::invalid_format(
-                "MCAP Schema encoding length",
-                vec![],
-            ));
-        }
-
-        let encoding_len = u16::from_le_bytes(
-            body[offset..offset + 2]
-                .try_into()
-                .expect("slice is exactly 2 bytes after len check"),
-        ) as usize;
-        if body.len() < offset + 2 + encoding_len {
-            return Err(FatalError::invalid_format(
-                "MCAP Schema encoding (incomplete)",
-                vec![],
-            ));
-        }
-
-        let encoding = String::from_utf8(body[offset + 2..offset + 2 + encoding_len].to_vec())
-            .map_err(|_| {
-                FatalError::invalid_format("MCAP Schema encoding (invalid UTF-8)", vec![])
-            })?;
-
-        let data_start = offset + 2 + encoding_len;
-        let data = body[data_start..].to_vec();
-
-        Ok(SchemaInfo {
-            id,
-            name,
-            encoding,
-            data,
-        })
-    }
-
-    /// Parse a Channel record.
-    fn parse_channel(&self, body: &[u8]) -> Result<ChannelRecordInfo, FatalError> {
-        const MIN_CHANNEL_LEN: usize = 4;
-
-        if body.len() < MIN_CHANNEL_LEN {
-            return Err(FatalError::invalid_format(
-                "MCAP Channel record",
-                body[..body.len().min(10)].to_vec(),
-            ));
-        }
-
-        let id = u16::from_le_bytes(
-            body[0..2]
-                .try_into()
-                .expect("MIN_CHANNEL_LEN ensures 2 bytes"),
-        );
-        let topic_len = u16::from_le_bytes(
-            body[2..4]
-                .try_into()
-                .expect("MIN_CHANNEL_LEN ensures 4 bytes total"),
-        ) as usize;
-
-        if body.len() < 4 + topic_len {
-            return Err(FatalError::invalid_format(
-                "MCAP Channel topic (incomplete)",
-                vec![],
-            ));
-        }
-
-        let topic = String::from_utf8(body[4..4 + topic_len].to_vec()).map_err(|_| {
-            FatalError::invalid_format("MCAP Channel topic (invalid UTF-8)", vec![])
-        })?;
-
-        let offset = 4 + topic_len;
-        if body.len() < offset + 2 {
-            return Err(FatalError::invalid_format(
-                "MCAP Channel encoding length",
-                vec![],
-            ));
-        }
-
-        let encoding_len = u16::from_le_bytes(
-            body[offset..offset + 2]
-                .try_into()
-                .expect("slice is exactly 2 bytes after len check"),
-        ) as usize;
-        if body.len() < offset + 2 + encoding_len {
-            return Err(FatalError::invalid_format(
-                "MCAP Channel message encoding (incomplete)",
-                vec![],
-            ));
-        }
-
-        let message_encoding = String::from_utf8(
-            body[offset + 2..offset + 2 + encoding_len].to_vec(),
-        )
-        .map_err(|_| FatalError::invalid_format("MCAP Channel encoding (invalid UTF-8)", vec![]))?;
-
-        let schema_offset = offset + 2 + encoding_len;
-        if body.len() < schema_offset + 2 {
-            return Err(FatalError::invalid_format(
-                "MCAP Channel schema id (incomplete)",
-                vec![],
-            ));
-        }
-
-        let schema_id = u16::from_le_bytes(
-            body[schema_offset..schema_offset + 2]
-                .try_into()
-                .expect("slice is exactly 2 bytes after len check"),
-        );
-
-        Ok(ChannelRecordInfo {
-            id,
-            topic,
-            message_encoding,
-            schema_id,
-        })
-    }
-
-    /// Parse a Message record.
-    ///
-    /// MCAP Message record format:
-    /// - channel_id: u16 (2 bytes)
-    /// - sequence: u64 (8 bytes)
-    /// - log_time: u64 (8 bytes)
-    /// - publish_time: u64 (8 bytes)
-    /// - data: variable
-    ///
-    /// Total header: 26 bytes
-    fn parse_message(&self, body: &[u8]) -> Result<MessageRecord, FatalError> {
-        const MESSAGE_HEADER_LEN: usize = 26;
-
-        if body.len() < MESSAGE_HEADER_LEN {
-            return Err(FatalError::invalid_format(
-                "MCAP Message record",
-                body[..body.len().min(10)].to_vec(),
-            ));
-        }
-
-        let channel_id = u16::from_le_bytes(
-            body[0..2]
-                .try_into()
-                .expect("MESSAGE_HEADER_LEN ensures 2 bytes"),
-        );
-        let sequence = u64::from_le_bytes(
-            body[2..10]
-                .try_into()
-                .expect("MESSAGE_HEADER_LEN ensures 10 bytes"),
-        );
-        let log_time = u64::from_le_bytes(
-            body[10..18]
-                .try_into()
-                .expect("MESSAGE_HEADER_LEN ensures 18 bytes"),
-        );
-        let publish_time = u64::from_le_bytes(
-            body[18..26]
-                .try_into()
-                .expect("MESSAGE_HEADER_LEN ensures 26 bytes"),
-        );
-
-        let data = body[MESSAGE_HEADER_LEN..].to_vec();
-
-        Ok(MessageRecord {
-            channel_id,
-            log_time,
-            publish_time,
-            data,
-            sequence,
-        })
     }
 
     /// Get all discovered channels as `ChannelInfo`.
