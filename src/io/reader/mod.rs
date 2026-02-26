@@ -462,18 +462,14 @@ impl FormatReader for RoboReader {
                 Box::new(McapTransportReader::open_from_transport(transport, path)?)
             }
             FileFormat::Bag => {
-                // BAG readers don't support transport-based reading
-                return Err(CodecError::unsupported(
-                    "BAG format does not support transport-based reading. \
-                     Use local file access or S3Reader for S3 sources.",
-                ));
+                // BagTransportReader supports transport-based reading
+                use crate::io::formats::bag::BagTransportReader;
+                Box::new(BagTransportReader::open_from_transport(transport, path)?)
             }
             FileFormat::Rrd => {
-                // RRD readers don't support transport-based reading
-                return Err(CodecError::unsupported(
-                    "RRD format does not support transport-based reading. \
-                     Use local file access.",
-                ));
+                // RrdTransportReader supports transport-based reading
+                use crate::io::formats::rrd::RrdTransportReader;
+                Box::new(RrdTransportReader::open_from_transport(transport, path)?)
             }
             FileFormat::Unknown => {
                 return Err(CodecError::parse(
@@ -916,5 +912,82 @@ mod tests {
         let result = RoboReader::parse_url_to_transport("s3:///key");
         assert!(result.is_ok()); // Invalid S3 URL is treated as local path
         assert!(result.unwrap().is_none());
+    }
+
+    /// Test that BagTransportReader works via FormatReader::open_from_transport
+    /// Regression test: Previously BAG returned "unsupported" error
+    #[test]
+    #[cfg(feature = "remote")]
+    fn test_bag_transport_reader_via_trait() {
+        use crate::io::traits::FormatReader;
+        use crate::io::transport::memory::MemoryTransport;
+
+        // Get test fixture
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixture_path = manifest_dir.join("tests/fixtures/robocodec_test_15.bag");
+
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let data = std::fs::read(&fixture_path).unwrap();
+        let transport =
+            Box::new(MemoryTransport::new(data)) as Box<dyn crate::io::transport::Transport>;
+
+        // This should NOT return "unsupported" error anymore
+        let result = RoboReader::open_from_transport(transport, "test.bag".to_string());
+
+        match result {
+            Ok(reader) => {
+                assert_eq!(reader.format(), FileFormat::Bag);
+                assert!(reader.message_count() > 0, "Should have messages");
+                assert!(!reader.channels().is_empty(), "Should have channels");
+            }
+            Err(e) => {
+                let err_msg = format!("{}", e);
+                assert!(
+                    !err_msg.contains("does not support transport-based reading"),
+                    "Should NOT return unsupported error: {}",
+                    err_msg
+                );
+                // Other errors (parsing, etc.) are acceptable for this test
+            }
+        }
+    }
+
+    /// Test that RrdTransportReader works via FormatReader::open_from_transport
+    /// Regression test: Previously RRD returned "unsupported" error
+    #[test]
+    #[cfg(feature = "remote")]
+    fn test_rrd_transport_reader_via_trait() {
+        use crate::io::traits::FormatReader;
+        use crate::io::transport::memory::MemoryTransport;
+
+        // Create a minimal RRD file header for testing
+        // RRD files start with "RRF2" magic followed by version
+        let mut data = b"RRF2".to_vec();
+        data.extend_from_slice(&1u32.to_le_bytes()); // version 1
+
+        let transport =
+            Box::new(MemoryTransport::new(data)) as Box<dyn crate::io::transport::Transport>;
+
+        // This should NOT return "unsupported" error anymore
+        let result = RoboReader::open_from_transport(transport, "test.rrd".to_string());
+
+        match result {
+            Ok(reader) => {
+                assert_eq!(reader.format(), FileFormat::Rrd);
+            }
+            Err(e) => {
+                let err_msg = format!("{}", e);
+                assert!(
+                    !err_msg.contains("does not support transport-based reading"),
+                    "Should NOT return unsupported error: {}",
+                    err_msg
+                );
+                // Other errors (parsing, etc.) are acceptable for this test
+            }
+        }
     }
 }
