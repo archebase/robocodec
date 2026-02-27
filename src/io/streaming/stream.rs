@@ -215,11 +215,11 @@ impl FrameStream {
             .set_messages_buffered(self.message_buffer.len());
 
         // Extract state data if this is a state topic
-        if self.config.state_topics.contains(&msg.topic) {
-            if let Some(state) = Self::extract_state(&msg.data) {
-                let entries = self.state_buffer.entry(msg.topic.clone()).or_default();
-                entries.push((msg.log_time, state));
-            }
+        if self.config.state_topics.contains(&msg.topic)
+            && let Some(state) = Self::extract_state(&msg.data)
+        {
+            let entries = self.state_buffer.entry(msg.topic.clone()).or_default();
+            entries.push((msg.log_time, state));
         }
 
         // Check if we should emit frames
@@ -285,14 +285,14 @@ impl FrameStream {
 
             // Find image messages at this frame time
             let image_msg = self.find_image_at_time(frame_time).cloned();
-            if let Some(msg) = image_msg {
-                if let Some(mut frame) = self.create_frame(&msg, frame_time, self.frame_index) {
-                    // Find matching state using closest-state matching
-                    self.match_state_to_frame(&mut frame, frame_time);
-                    self.progress.increment_frames();
-                    frames.push(frame);
-                    self.frame_index += 1;
-                }
+            if let Some(msg) = image_msg
+                && let Some(mut frame) = self.create_frame(&msg, frame_time, self.frame_index)
+            {
+                // Find matching state using closest-state matching
+                self.match_state_to_frame(&mut frame, frame_time);
+                self.progress.increment_frames();
+                frames.push(frame);
+                self.frame_index += 1;
             }
 
             self.next_frame_time = Some(frame_time + frame_interval_ns);
@@ -358,12 +358,11 @@ impl FrameStream {
 
     fn match_state_to_frame(&self, frame: &mut AlignedFrame, frame_time: u64) {
         for state_topic in &self.config.state_topics {
-            if let Some(states) = self.state_buffer.get(state_topic) {
-                if let Some((_, state_data)) =
+            if let Some(states) = self.state_buffer.get(state_topic)
+                && let Some((_, state_data)) =
                     Self::find_closest_state(states, frame_time, self.config.max_state_latency_ns)
-                {
-                    frame.add_state(state_topic, state_data);
-                }
+            {
+                frame.add_state(state_topic, state_data);
             }
         }
     }

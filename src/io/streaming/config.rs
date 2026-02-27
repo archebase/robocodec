@@ -5,20 +5,15 @@
 //! Streaming configuration and types.
 
 /// Streaming mode for reading messages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StreamMode {
     /// Sequential single-threaded processing (low memory, slower)
     Sequential,
     /// Parallel multi-threaded processing (higher memory, faster)
     Parallel,
     /// Adaptive mode: automatically switches based on file size and network conditions
+    #[default]
     Adaptive,
-}
-
-impl Default for StreamMode {
-    fn default() -> Self {
-        StreamMode::Adaptive
-    }
 }
 
 /// Configuration for streaming operations.

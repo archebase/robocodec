@@ -193,7 +193,7 @@ async fn test_frame_alignment_closest_state() {
 
     // Debug: print available topics
     println!("Available channels:");
-    for (_, ch) in reader.channels() {
+    for ch in reader.channels().values() {
         println!("  - {} ({})", ch.topic, ch.message_type);
     }
 
