@@ -37,8 +37,7 @@ use crate::{CodecError, CodecValue, Result};
 ///     config
 /// ).await?;
 ///
-/// for result in reader.message_stream() {
-///     let msg = result?;
+/// for msg in reader.collect_messages()? {
 ///     println!("{} @ {}: {:?}", msg.topic, msg.log_time, msg.data);
 /// }
 /// # Ok(())

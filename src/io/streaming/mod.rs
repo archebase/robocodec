@@ -25,8 +25,7 @@
 //!     config
 //! ).await?;
 //!
-//! for result in reader.message_stream() {
-//!     let msg = result?;
+//! for msg in reader.collect_messages()? {
 //!     println!("{} @ {}: {:?}", msg.topic, msg.log_time, msg.data);
 //! }
 //! # Ok(())
@@ -51,8 +50,7 @@
 //!     .with_image_topic("/camera/image")
 //!     .with_state_topic("/joint_states");
 //!
-//! for result in reader.frame_stream(frame_config) {
-//!     let frame = result?;
+//! for frame in reader.collect_frames(frame_config)? {
 //!     println!("Frame {}: {} images, {} states",
 //!         frame.frame_index,
 //!         frame.images.len(),
