@@ -215,3 +215,162 @@ impl Default for ProgressTracker {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_progress_tracker_new() {
+        let tracker = ProgressTracker::new();
+        let event = tracker.download_event();
+        match event {
+            ProgressEvent::Download {
+                bytes_downloaded,
+                total_bytes,
+                percentage,
+            } => {
+                assert_eq!(bytes_downloaded, 0);
+                assert_eq!(total_bytes, None);
+                assert_eq!(percentage, 0.0);
+            }
+            _ => panic!("Expected Download event"),
+        }
+    }
+
+    #[test]
+    fn test_progress_tracker_with_totals() {
+        let tracker = ProgressTracker::with_totals(Some(1000), Some(500), Some(10));
+
+        let event = tracker.parsing_event();
+        match event {
+            ProgressEvent::Parsing {
+                total_messages,
+                total_chunks,
+                ..
+            } => {
+                assert_eq!(total_messages, Some(500));
+                assert_eq!(total_chunks, Some(10));
+            }
+            _ => panic!("Expected Parsing event"),
+        }
+    }
+
+    #[test]
+    fn test_update_bytes_downloaded() {
+        let tracker = ProgressTracker::with_totals(Some(1000), None, None);
+        tracker.update_bytes_downloaded(500);
+
+        let event = tracker.download_event();
+        match event {
+            ProgressEvent::Download {
+                bytes_downloaded,
+                percentage,
+                ..
+            } => {
+                assert_eq!(bytes_downloaded, 500);
+                assert_eq!(percentage, 50.0);
+            }
+            _ => panic!("Expected Download event"),
+        }
+    }
+
+    #[test]
+    fn test_increment_messages() {
+        let tracker = ProgressTracker::new();
+        tracker.increment_messages();
+        tracker.increment_messages();
+        tracker.increment_messages();
+
+        let event = tracker.parsing_event();
+        match event {
+            ProgressEvent::Parsing {
+                messages_parsed, ..
+            } => {
+                assert_eq!(messages_parsed, 3);
+            }
+            _ => panic!("Expected Parsing event"),
+        }
+    }
+
+    #[test]
+    fn test_set_total_bytes() {
+        let tracker = ProgressTracker::new();
+        tracker.set_total_bytes(2048);
+
+        let event = tracker.download_event();
+        match event {
+            ProgressEvent::Download { total_bytes, .. } => {
+                assert_eq!(total_bytes, Some(2048));
+            }
+            _ => panic!("Expected Download event"),
+        }
+    }
+
+    #[test]
+    fn test_percentage_calculation() {
+        let tracker = ProgressTracker::with_totals(Some(100), None, None);
+        tracker.update_bytes_downloaded(25);
+
+        let event = tracker.download_event();
+        match event {
+            ProgressEvent::Download { percentage, .. } => {
+                assert_eq!(percentage, 25.0);
+            }
+            _ => panic!("Expected Download event"),
+        }
+
+        // Test percentage capped at 100
+        tracker.update_bytes_downloaded(200);
+        let event = tracker.download_event();
+        match event {
+            ProgressEvent::Download { percentage, .. } => {
+                assert_eq!(percentage, 100.0);
+            }
+            _ => panic!("Expected Download event"),
+        }
+    }
+
+    #[test]
+    fn test_frame_alignment_event() {
+        let tracker = ProgressTracker::new();
+        tracker.increment_frames();
+        tracker.increment_frames();
+        tracker.set_messages_buffered(10);
+
+        let event = tracker.frame_alignment_event();
+        match event {
+            ProgressEvent::FrameAlignment {
+                frames_emitted,
+                messages_buffered,
+            } => {
+                assert_eq!(frames_emitted, 2);
+                assert_eq!(messages_buffered, 10);
+            }
+            _ => panic!("Expected FrameAlignment event"),
+        }
+    }
+
+    #[test]
+    fn test_progress_event_clone() {
+        let event = ProgressEvent::Download {
+            bytes_downloaded: 100,
+            total_bytes: Some(1000),
+            percentage: 10.0,
+        };
+        let cloned = event.clone();
+
+        match cloned {
+            ProgressEvent::Download {
+                bytes_downloaded,
+                total_bytes,
+                percentage,
+            } => {
+                assert_eq!(bytes_downloaded, 100);
+                assert_eq!(total_bytes, Some(1000));
+                assert_eq!(percentage, 10.0);
+            }
+            _ => panic!("Expected Download event"),
+        }
+    }
+}

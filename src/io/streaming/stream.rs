@@ -230,13 +230,23 @@ impl FrameStream {
     ///
     /// This method can be called multiple times and doesn't consume the stream.
     pub fn drain_remaining(&mut self) -> Vec<AlignedFrame> {
+        // Collect image messages first to avoid borrow issues
+        let mut image_messages: Vec<TimestampedMessage> = self
+            .message_buffer
+            .iter()
+            .filter(|msg| self.config.image_topics.contains(&msg.topic))
+            .cloned()
+            .collect();
+
+        // Sort by timestamp to ensure frames are in chronological order
+        image_messages.sort_by_key(|msg| msg.log_time);
+
         // Emit all remaining frames from buffered messages
         let mut frames = Vec::new();
-        for msg in &self.message_buffer {
-            if self.config.image_topics.contains(&msg.topic) {
-                if let Some(frame) = self.create_frame_for_message(msg) {
-                    frames.push(frame);
-                }
+        for msg in image_messages {
+            if let Some(frame) = self.create_frame_for_message(&msg, self.frame_index) {
+                frames.push(frame);
+                self.frame_index += 1;
             }
         }
         // Clear the buffer after processing
@@ -274,12 +284,14 @@ impl FrameStream {
             }
 
             // Find image messages at this frame time
-            if let Some(image_msg) = self.find_image_at_time(frame_time) {
-                if let Some(mut frame) = self.create_frame(image_msg, frame_time) {
+            let image_msg = self.find_image_at_time(frame_time).cloned();
+            if let Some(msg) = image_msg {
+                if let Some(mut frame) = self.create_frame(&msg, frame_time, self.frame_index) {
                     // Find matching state using closest-state matching
                     self.match_state_to_frame(&mut frame, frame_time);
                     self.progress.increment_frames();
                     frames.push(frame);
+                    self.frame_index += 1;
                 }
             }
 
@@ -297,8 +309,13 @@ impl FrameStream {
         })
     }
 
-    fn create_frame(&self, msg: &TimestampedMessage, frame_time: u64) -> Option<AlignedFrame> {
-        let mut frame = AlignedFrame::new(self.frame_index, frame_time);
+    fn create_frame(
+        &self,
+        msg: &TimestampedMessage,
+        frame_time: u64,
+        frame_index: usize,
+    ) -> Option<AlignedFrame> {
+        let mut frame = AlignedFrame::new(frame_index, frame_time);
 
         // Extract image data
         if let Some(image_data) = Self::extract_image(&msg.data) {
@@ -316,8 +333,12 @@ impl FrameStream {
         }
     }
 
-    fn create_frame_for_message(&self, msg: &TimestampedMessage) -> Option<AlignedFrame> {
-        let mut frame = AlignedFrame::new(self.frame_index, msg.log_time);
+    fn create_frame_for_message(
+        &self,
+        msg: &TimestampedMessage,
+        frame_index: usize,
+    ) -> Option<AlignedFrame> {
+        let mut frame = AlignedFrame::new(frame_index, msg.log_time);
 
         if let Some(image_data) = Self::extract_image(&msg.data) {
             frame.add_image(
@@ -411,62 +432,88 @@ impl FrameStream {
         match data {
             CodecValue::Struct(map) => {
                 // Check for CompressedImage format
-                if let (Some(format), Some(CodecValue::Bytes(data))) = (
-                    map.get("format").and_then(|v| {
-                        if let CodecValue::String(s) = v {
-                            Some(s.as_str())
-                        } else {
-                            None
-                        }
-                    }),
-                    map.get("data"),
-                ) {
-                    // Extract dimensions if available
-                    let width = map
-                        .get("width")
-                        .and_then(|v| match v {
-                            CodecValue::UInt32(w) => Some(*w),
-                            _ => None,
-                        })
-                        .unwrap_or(0);
-                    let height = map
-                        .get("height")
-                        .and_then(|v| match v {
-                            CodecValue::UInt32(h) => Some(*h),
-                            _ => None,
-                        })
-                        .unwrap_or(0);
+                if let Some(format) = map.get("format").and_then(|v| {
+                    if let CodecValue::String(s) = v {
+                        Some(s.as_str())
+                    } else {
+                        None
+                    }
+                }) {
+                    // Try to extract data as either Bytes or Array of UInt8
+                    if let Some(data) = Self::extract_byte_data(map.get("data")) {
+                        // Extract dimensions if available
+                        let width = map
+                            .get("width")
+                            .and_then(|v| match v {
+                                CodecValue::UInt32(w) => Some(*w),
+                                _ => None,
+                            })
+                            .unwrap_or(0);
+                        let height = map
+                            .get("height")
+                            .and_then(|v| match v {
+                                CodecValue::UInt32(h) => Some(*h),
+                                _ => None,
+                            })
+                            .unwrap_or(0);
 
-                    let is_encoded = format != "rgb8";
-                    return Some(ImageData {
-                        width,
-                        height,
-                        data: data.clone(),
-                        is_encoded,
-                        original_timestamp: 0,
-                    });
+                        let is_encoded = format != "rgb8";
+                        return Some(ImageData {
+                            width,
+                            height,
+                            data,
+                            is_encoded,
+                            original_timestamp: 0,
+                        });
+                    }
                 }
 
                 // Check for raw image
                 if let (
                     Some(CodecValue::UInt32(width)),
                     Some(CodecValue::UInt32(height)),
-                    Some(CodecValue::Bytes(data)),
-                ) = (map.get("width"), map.get("height"), map.get("data"))
-                {
+                    Some(data),
+                ) = (
+                    map.get("width"),
+                    map.get("height"),
+                    Self::extract_byte_data(map.get("data")),
+                ) {
                     let expected_rgb_size = (*width as usize) * (*height as usize) * 3;
                     let is_encoded = data.len() < expected_rgb_size;
 
                     return Some(ImageData {
                         width: *width,
                         height: *height,
-                        data: data.clone(),
+                        data,
                         is_encoded,
                         original_timestamp: 0,
                     });
                 }
 
                 None
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract byte data from either Bytes or Array(UInt8) CodecValue.
+    fn extract_byte_data(value: Option<&CodecValue>) -> Option<Vec<u8>> {
+        match value {
+            Some(CodecValue::Bytes(bytes)) => Some(bytes.clone()),
+            Some(CodecValue::Array(arr)) => {
+                let bytes: Vec<u8> = arr
+                    .iter()
+                    .filter_map(|v| match v {
+                        CodecValue::UInt8(n) => Some(*n),
+                        CodecValue::Int8(n) => Some(*n as u8),
+                        _ => None,
+                    })
+                    .collect();
+                if bytes.is_empty() && !arr.is_empty() {
+                    None
+                } else {
+                    Some(bytes)
+                }
             }
             _ => None,
         }

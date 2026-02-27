@@ -260,6 +260,13 @@ impl StreamingRoboReader {
             frames.push(frame);
             Ok(())
         })?;
+        // Sort frames by timestamp to ensure chronological order
+        // (necessary when multiple image topics are configured)
+        frames.sort_by_key(|f| f.timestamp);
+        // Reassign frame indices after sorting
+        for (i, frame) in frames.iter_mut().enumerate() {
+            frame.frame_index = i;
+        }
         Ok(frames)
     }
 
