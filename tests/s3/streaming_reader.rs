@@ -8,6 +8,7 @@ use robocodec::io::streaming::{StreamConfig, StreamingRoboReader};
 
 use super::fixture_path;
 use super::integration::{S3Config, ensure_bucket_exists, s3_available, upload_to_s3};
+use super::require_live_s3;
 
 fn spawn_best_effort_cleanup(config: &S3Config, key: &str) {
     let endpoint = config.endpoint.clone();
@@ -22,6 +23,10 @@ fn spawn_best_effort_cleanup(config: &S3Config, key: &str) {
 }
 
 async fn run_streaming_reader_s3_case(fixture_name: &str, key: &str) {
+    if !require_live_s3() {
+        return;
+    }
+
     assert!(
         s3_available().await,
         "MinIO/S3 is unavailable; StreamingRoboReader S3 test requires MinIO"

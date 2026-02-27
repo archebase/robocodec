@@ -6,6 +6,7 @@
 
 use super::fixture_path;
 use super::integration::{S3Config, ensure_bucket_exists, s3_available, upload_to_s3};
+use super::require_live_s3;
 
 async fn cleanup_s3_object(config: &S3Config, key: &str) {
     let client = reqwest::Client::new();
@@ -18,6 +19,10 @@ async fn cleanup_s3_object(config: &S3Config, key: &str) {
 /// Regression test: Previously this panicked at std::ops::function.rs:250:5.
 #[tokio::test]
 async fn test_robo_reader_open_s3_bag_no_panic() {
+    if !require_live_s3() {
+        return;
+    }
+
     assert!(s3_available().await, "MinIO/S3 is required for this test");
 
     let config = S3Config::default();
@@ -131,6 +136,10 @@ async fn test_robo_reader_open_s3_bag_no_panic() {
 /// Test RoboReader::open with MCAP file via S3.
 #[tokio::test]
 async fn test_robo_reader_open_s3_mcap() {
+    if !require_live_s3() {
+        return;
+    }
+
     assert!(s3_available().await, "MinIO/S3 is required for this test");
 
     let config = S3Config::default();
@@ -202,6 +211,10 @@ async fn test_robo_reader_open_s3_mcap() {
 /// Test RoboReader::open with RRD file via S3.
 #[tokio::test]
 async fn test_robo_reader_open_s3_rrd() {
+    if !require_live_s3() {
+        return;
+    }
+
     assert!(s3_available().await, "MinIO/S3 is required for this test");
 
     let config = S3Config::default();

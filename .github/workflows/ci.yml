@@ -243,4 +243,5 @@ jobs:
           MINIO_ENDPOINT: http://127.0.0.1:9000
           MINIO_BUCKET: test-bucket
           MINIO_REGION: us-east-1
+          ROBOCODEC_REQUIRE_S3: "1"
         run: cargo test --features remote -- s3_integration_tests
