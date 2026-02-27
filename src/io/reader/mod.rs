@@ -58,7 +58,7 @@ use crate::{CodecError, Result};
 /// This reuses a single runtime across all S3 operations, avoiding
 /// the overhead of creating a new runtime for each open/write.
 #[cfg(feature = "remote")]
-fn shared_runtime() -> &'static tokio::runtime::Runtime {
+pub(crate) fn shared_runtime() -> &'static tokio::runtime::Runtime {
     use std::sync::OnceLock;
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RT.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
@@ -437,6 +437,13 @@ impl RoboReader {
                     .map(ParallelReader::chunk_count)
             })
             .unwrap_or(0)
+    }
+
+    /// Consume the reader and return the inner format reader.
+    ///
+    /// This is useful for converting a RoboReader into a StreamingRoboReader.
+    pub(crate) fn into_inner(self) -> Box<dyn FormatReader> {
+        self.inner
     }
 }
 

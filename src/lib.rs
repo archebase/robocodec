@@ -224,6 +224,13 @@ pub use io::metadata::{ChannelInfo, DecodedMessageResult};
 pub use io::reader::ReaderConfig;
 pub use io::writer::{RoboWriter, WriterConfig};
 
+// Streaming API (requires `remote` feature)
+#[cfg(feature = "remote")]
+pub use io::streaming::{
+    AlignedFrame, FrameAlignmentConfig, ImageData, ProgressEvent, ProgressTracker, StreamConfig,
+    StreamEvent, StreamMode, StreamingRoboReader, TimestampedMessage,
+};
+
 // Format traits are available but hidden from documentation
 // Users don't need to import these - methods work directly on RoboReader/RoboWriter
 #[doc(hidden)]

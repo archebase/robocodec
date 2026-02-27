@@ -16,7 +16,6 @@ pub mod metadata;
 // Streaming parser interface (unified across formats)
 // Only available with remote feature since it uses FatalError from s3 module
 #[cfg(feature = "remote")]
-#[doc(hidden)]
 pub mod streaming;
 
 // Transport layer for different data sources
