@@ -5,8 +5,11 @@
 //! S3 test utilities and common imports.
 
 pub mod integration;
+pub mod parity;
+pub mod performance;
 pub mod roboreader;
 pub mod streaming;
+pub mod streaming_reader;
 pub mod wiremock;
 
 use std::path::PathBuf;

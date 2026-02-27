@@ -4,8 +4,6 @@
 
 //! RoboReader S3 tests - verifies all formats work via RoboReader::open("s3://...").
 
-use robocodec::io::traits::FormatReader;
-
 use super::fixture_path;
 use super::integration::{S3Config, ensure_bucket_exists, s3_available, upload_to_s3};
 
@@ -14,17 +12,16 @@ use super::integration::{S3Config, ensure_bucket_exists, s3_available, upload_to
 /// Regression test: Previously this panicked at std::ops::function.rs:250:5.
 #[tokio::test]
 async fn test_robo_reader_open_s3_bag_no_panic() {
-    if !s3_available().await {
-        return;
-    }
+    assert!(s3_available().await, "MinIO/S3 is required for this test");
 
     let config = S3Config::default();
     let fixture_path = fixture_path("robocodec_test_15.bag");
 
-    if !fixture_path.exists() {
-        eprintln!("Skipping test: fixture not found");
-        return;
-    }
+    assert!(
+        fixture_path.exists(),
+        "Fixture is required for this test: {}",
+        fixture_path.display()
+    );
 
     let data = std::fs::read(&fixture_path).unwrap();
     let key = "test/regression_robocodec_test_15.bag";
@@ -67,15 +64,36 @@ async fn test_robo_reader_open_s3_bag_no_panic() {
                 robocodec::io::metadata::FileFormat::Bag,
                 "Format should be BAG"
             );
-            assert!(reader.message_count() > 0, "Should have messages");
-            assert!(!reader.channels().is_empty(), "Should have channels");
-            eprintln!(
-                "RoboReader::open succeeded: {} messages",
-                reader.message_count()
-            );
+            let (count, channel_count) = std::thread::spawn(move || {
+                let mut channels = std::collections::HashSet::new();
+                let mut count = 0usize;
+
+                for result in reader
+                    .iter_raw()
+                    .expect("raw iteration should be available")
+                {
+                    match result {
+                        Ok((_, ch)) => {
+                            channels.insert(ch.id);
+                            count += 1;
+                        }
+                        Err(e) => panic!("Unexpected BAG raw iteration error: {}", e),
+                    }
+                }
+
+                (count, channels.len())
+            })
+            .join()
+            .expect("raw iteration thread should not panic");
+            assert!(count > 0, "Should have messages via raw iteration");
+            assert!(channel_count > 0, "Should have channels via raw iteration");
+            eprintln!("RoboReader::open succeeded: {} messages", count);
         }
         Ok(Ok(Err(e))) => {
-            eprintln!("RoboReader::open returned error (not panic): {}", e);
+            panic!(
+                "RoboReader::open('s3://...bag') returned error for valid uploaded BAG fixture: {}",
+                e
+            );
         }
         Ok(Err(panic_info)) => {
             let panic_msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
@@ -98,22 +116,18 @@ async fn test_robo_reader_open_s3_bag_no_panic() {
 }
 
 /// Test RoboReader::open with MCAP file via S3.
-///
-/// Note: MCAP files with CHUNK records may fail due to StreamingMcapParser limitations.
-/// This is a known issue unrelated to S3 transport.
 #[tokio::test]
 async fn test_robo_reader_open_s3_mcap() {
-    if !s3_available().await {
-        return;
-    }
+    assert!(s3_available().await, "MinIO/S3 is required for this test");
 
     let config = S3Config::default();
     let fixture_path = fixture_path("robocodec_test_0.mcap");
 
-    if !fixture_path.exists() {
-        eprintln!("Skipping test: fixture not found");
-        return;
-    }
+    assert!(
+        fixture_path.exists(),
+        "Fixture is required for this test: {}",
+        fixture_path.display()
+    );
 
     let data = std::fs::read(&fixture_path).unwrap();
     let key = "test/s3_mcap_test.mcap";
@@ -151,27 +165,19 @@ async fn test_robo_reader_open_s3_mcap() {
                 robocodec::io::metadata::FileFormat::Mcap,
                 "Format should be MCAP"
             );
-            assert!(reader.message_count() > 0, "Should have messages");
-            eprintln!(
-                "RoboReader::open (MCAP) succeeded: {} messages",
-                reader.message_count()
-            );
+            let count = std::thread::spawn(move || {
+                reader
+                    .iter_raw()
+                    .expect("raw iteration should be available")
+                    .filter(|r| r.is_ok())
+                    .count()
+            })
+            .join()
+            .expect("raw iteration thread should not panic");
+            assert!(count > 0, "Should have messages via raw iteration");
+            eprintln!("RoboReader::open (MCAP) succeeded: {} messages", count);
         }
-        Ok(Err(e)) => {
-            let err_str = e.to_string();
-            if err_str.contains("Invalid format") || err_str.contains("parse") {
-                eprintln!(
-                    "RoboReader::open (MCAP) failed with parsing error - this is a known limitation with CHUNK records: {}",
-                    e
-                );
-                // Don't panic - this is a known limitation of StreamingMcapParser
-            } else {
-                panic!(
-                    "RoboReader::open (MCAP) failed with unexpected error: {}",
-                    e
-                );
-            }
-        }
+        Ok(Err(e)) => panic!("RoboReader::open (MCAP) failed: {}", e),
         Err(e) => panic!("Task join failed: {:?}", e),
     }
 }
@@ -179,17 +185,16 @@ async fn test_robo_reader_open_s3_mcap() {
 /// Test RoboReader::open with RRD file via S3.
 #[tokio::test]
 async fn test_robo_reader_open_s3_rrd() {
-    if !s3_available().await {
-        return;
-    }
+    assert!(s3_available().await, "MinIO/S3 is required for this test");
 
     let config = S3Config::default();
     let fixture_path = fixture_path("rrd/file1.rrd");
 
-    if !fixture_path.exists() {
-        eprintln!("Skipping test: fixture not found");
-        return;
-    }
+    assert!(
+        fixture_path.exists(),
+        "Fixture is required for this test: {}",
+        fixture_path.display()
+    );
 
     let data = std::fs::read(&fixture_path).unwrap();
     let key = "test/s3_rrd_test.rrd";
@@ -227,11 +232,17 @@ async fn test_robo_reader_open_s3_rrd() {
                 robocodec::io::metadata::FileFormat::Rrd,
                 "Format should be RRD"
             );
-            assert!(reader.message_count() > 0, "Should have messages");
-            eprintln!(
-                "RoboReader::open (RRD) succeeded: {} messages",
-                reader.message_count()
-            );
+            let count = std::thread::spawn(move || {
+                reader
+                    .iter_raw()
+                    .expect("raw iteration should be available")
+                    .filter(|r| r.is_ok())
+                    .count()
+            })
+            .join()
+            .expect("raw iteration thread should not panic");
+            assert!(count > 0, "Should have messages via raw iteration");
+            eprintln!("RoboReader::open (RRD) succeeded: {} messages", count);
         }
         Ok(Err(e)) => panic!("RoboReader::open (RRD) failed: {}", e),
         Err(e) => panic!("Task join failed: {:?}", e),

@@ -214,9 +214,34 @@ impl RoboReader {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn open_with_config(path: &str, _config: ReaderConfig) -> Result<Self> {
-        // Try to parse as URL and create appropriate transport
         #[cfg(feature = "remote")]
         {
+            // ADR-004: Prefer direct streaming S3Reader for s3:// URLs.
+            if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
+                let s3_reader_result = std::thread::spawn(move || {
+                    shared_runtime().block_on(crate::io::s3::S3Reader::open(location))
+                })
+                .join()
+                .map_err(|_| {
+                    CodecError::encode(
+                        "S3",
+                        format!("Failed to join streaming S3 reader initialization for '{path}'"),
+                    )
+                })?;
+
+                let s3_reader = s3_reader_result.map_err(|e: crate::io::s3::FatalError| {
+                    CodecError::encode(
+                        "S3",
+                        format!("Failed to open streaming S3 reader for '{path}': {e}"),
+                    )
+                })?;
+
+                return Ok(Self {
+                    inner: Box::new(s3_reader),
+                });
+            }
+
+            // Keep transport path for non-S3 URL schemes.
             if let Some(transport) = Self::parse_url_to_transport(path)? {
                 // Use transport-based reading
                 // Detect format from path extension (strip query params for S3 URLs)

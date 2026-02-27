@@ -9,5 +9,6 @@
 //! - `wiremock` - Wiremock mock server tests
 //! - `integration` - S3 integration tests with MinIO
 //! - `roboreader` - RoboReader S3 tests (BAG, MCAP, RRD)
+//! - `streaming_reader` - StreamingRoboReader S3 tests via public API
 
 mod s3;

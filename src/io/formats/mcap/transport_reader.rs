@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
-use crate::io::metadata::{ChannelInfo, FileFormat};
+use crate::io::metadata::{ChannelInfo, FileFormat, RawMessage};
 use crate::io::traits::FormatReader;
 use crate::io::transport::local::LocalTransport;
 use crate::{CodecError, Result};
@@ -30,6 +30,8 @@ pub struct McapTransportReader {
     message_timestamps: Vec<u64>,
     /// Discovered channels
     channels: HashMap<u16, ChannelInfo>,
+    /// Parsed raw messages
+    raw_messages: Vec<RawMessage>,
     /// File size
     file_size: u64,
 }
@@ -102,6 +104,7 @@ impl McapTransportReader {
     fn parse_from_buffer(buffer: Vec<u8>, path: String, file_size: u64) -> Result<Self> {
         let mut channels = HashMap::new();
         let mut message_timestamps = Vec::new();
+        let mut raw_messages = Vec::new();
 
         // Use mcap::MessageStream for proper parsing
         let stream = mcap::MessageStream::new(&buffer).map_err(|e| {
@@ -140,11 +143,21 @@ impl McapTransportReader {
 
                     // Store message timestamp
                     message_timestamps.push(message.log_time);
+
+                    // Store raw message
+                    raw_messages.push(RawMessage {
+                        channel_id,
+                        log_time: message.log_time,
+                        publish_time: message.publish_time,
+                        data: message.data.to_vec(),
+                        sequence: Some(u64::from(message.sequence)),
+                    });
                 }
                 Err(e) => {
-                    // Log error but continue parsing
-                    eprintln!("Warning: Error reading message from {}: {}", path, e);
-                    continue;
+                    return Err(CodecError::parse(
+                        "MCAP",
+                        format!("Failed to parse message from {path}: {e}"),
+                    ));
                 }
             }
         }
@@ -153,6 +166,7 @@ impl McapTransportReader {
             path,
             message_timestamps,
             channels,
+            raw_messages,
             file_size,
         })
     }
@@ -198,6 +212,18 @@ impl FormatReader for McapTransportReader {
 
     fn file_size(&self) -> u64 {
         self.file_size
+    }
+
+    fn iter_raw_boxed(&self) -> Result<crate::io::traits::RawMessageIter<'_>> {
+        Ok(Box::new(self.raw_messages.iter().map(|msg| {
+            let channel = self.channels.get(&msg.channel_id).cloned().ok_or_else(|| {
+                CodecError::parse(
+                    "McapTransportReader",
+                    format!("Channel {} not found", msg.channel_id),
+                )
+            })?;
+            Ok((msg.clone(), channel))
+        })))
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

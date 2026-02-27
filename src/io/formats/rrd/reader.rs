@@ -389,6 +389,40 @@ impl FormatReader for RrdReader {
         Ok(Box::new(stream))
     }
 
+    fn iter_raw_boxed(&self) -> Result<crate::io::traits::RawMessageIter<'_>> {
+        let messages = DecodedMessageWithTimestampIter::parse_messages(self)?;
+        let channel = self
+            .channels
+            .get(&0)
+            .cloned()
+            .unwrap_or_else(|| ChannelInfo {
+                id: 0,
+                topic: DEFAULT_TOPIC.to_string(),
+                message_type: "rerun.ArrowMsg".to_string(),
+                encoding: MESSAGE_ENCODING_PROTOBUF.to_string(),
+                schema: None,
+                schema_data: None,
+                schema_encoding: Some(self.header.serializer_name().to_string()),
+                message_count: 0,
+                callerid: None,
+            });
+        let start_timestamp = self.start_time.unwrap_or(0);
+
+        Ok(Box::new(messages.into_iter().enumerate().map(
+            move |(index, (data, _topic))| {
+                let timestamp = start_timestamp + index as u64;
+                let raw = crate::io::metadata::RawMessage {
+                    channel_id: 0,
+                    log_time: timestamp,
+                    publish_time: timestamp,
+                    data,
+                    sequence: Some(index as u64),
+                };
+                Ok((raw, channel.clone()))
+            },
+        )))
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

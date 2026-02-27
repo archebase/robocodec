@@ -77,7 +77,10 @@ async fn test_streaming_reader_open_rrd() {
         .expect("Failed to open RRD file");
 
     assert!(reader.file_size() > 0, "File size should be greater than 0");
-    assert!(reader.message_count() > 0, "Message count should be greater than 0");
+    assert!(
+        reader.message_count() > 0,
+        "Message count should be greater than 0"
+    );
 }
 
 /// Test collecting all messages from a file.

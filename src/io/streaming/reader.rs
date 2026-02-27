@@ -75,7 +75,25 @@ impl StreamingRoboReader {
     /// # }
     /// ```
     pub async fn open(path: &str, config: StreamConfig) -> Result<Self> {
-        // Try to parse as URL and create appropriate transport
+        // Use RoboReader's incremental S3 path for s3:// URLs.
+        // This keeps streaming API behavior aligned with RoboReader::open().
+        #[cfg(feature = "remote")]
+        if crate::io::s3::S3Location::from_s3_url(path).is_ok() {
+            let reader = RoboReader::open_with_config(path, ReaderConfig::default())?;
+            let file_size = reader.file_size();
+            let message_count = reader.message_count();
+            let inner = reader.into_inner();
+
+            let progress = ProgressTracker::with_totals(Some(file_size), Some(message_count), None);
+
+            return Ok(Self {
+                inner,
+                config,
+                progress,
+            });
+        }
+
+        // Try to parse other URL schemes and create appropriate transport
         #[cfg(feature = "remote")]
         {
             if let Some(transport) = Self::parse_url_to_transport(path).await? {

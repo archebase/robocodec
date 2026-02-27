@@ -514,6 +514,53 @@ impl FormatReader for ParallelRrdReader {
         Ok(Box::new(stream))
     }
 
+    fn iter_raw_boxed(&self) -> Result<crate::io::traits::RawMessageIter<'_>> {
+        let channel = self
+            .channels
+            .get(&0)
+            .cloned()
+            .unwrap_or_else(|| ChannelInfo {
+                id: 0,
+                topic: DEFAULT_TOPIC.to_string(),
+                message_type: "rerun.ArrowMsg".to_string(),
+                encoding: MESSAGE_ENCODING_PROTOBUF.to_string(),
+                schema: None,
+                schema_data: None,
+                schema_encoding: Some("protobuf".to_string()),
+                message_count: 0,
+                callerid: None,
+            });
+        let start_timestamp = self.start_time.unwrap_or(0);
+
+        Ok(Box::new(self.message_index.iter().enumerate().map(
+            move |(index, msg_idx)| {
+                let offset = msg_idx.offset as usize;
+                let end = offset + msg_idx.length;
+
+                if end > self.mmap.len() {
+                    return Err(CodecError::parse(
+                        "ParallelRrdReader",
+                        format!(
+                            "Message index out of bounds at offset {offset} with length {}",
+                            msg_idx.length
+                        ),
+                    ));
+                }
+
+                let timestamp = start_timestamp + index as u64;
+                let raw = RawMessage {
+                    channel_id: 0,
+                    log_time: timestamp,
+                    publish_time: timestamp,
+                    data: self.mmap[offset..end].to_vec(),
+                    sequence: Some(index as u64),
+                };
+
+                Ok((raw, channel.clone()))
+            },
+        )))
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

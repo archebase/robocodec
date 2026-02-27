@@ -6,6 +6,7 @@
 
 use robocodec::io::s3::{S3Client, S3Location, S3ReaderConfig, S3ReaderConstructor};
 use robocodec::io::traits::FormatReader;
+use std::time::Duration;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{header, method, path as wiremock_path},
@@ -18,8 +19,13 @@ async fn test_s3_client_fetch_range_success() {
     let data = b"Hello, S3!";
     Mock::given(method("GET"))
         .and(wiremock_path("/test-bucket/test.mcap"))
-        .and(header("Range", "bytes=0-10"))
-        .respond_with(ResponseTemplate::new(206).set_body_bytes(data))
+        .and(header("Range", "bytes=0-9"))
+        .respond_with(
+            ResponseTemplate::new(206)
+                .insert_header("content-range", "bytes 0-9/10")
+                .insert_header("content-length", "10")
+                .set_body_bytes(data),
+        )
         .mount(&mock_server)
         .await;
 
@@ -28,7 +34,7 @@ async fn test_s3_client_fetch_range_success() {
 
     let location = S3Location::new("test-bucket", "test.mcap").with_endpoint(mock_server.uri());
 
-    let result = client.fetch_range(&location, 0, 11).await;
+    let result = client.fetch_range(&location, 0, 10).await;
     assert!(result.is_ok());
 }
 
@@ -77,7 +83,12 @@ async fn test_s3_client_empty_response() {
 
     Mock::given(method("GET"))
         .and(wiremock_path("/test-bucket/empty.mcap"))
-        .respond_with(ResponseTemplate::new(206).set_body_bytes(b""))
+        .respond_with(
+            ResponseTemplate::new(206)
+                .insert_header("content-range", "bytes 0-99/100")
+                .insert_header("content-length", "100")
+                .set_body_bytes(b""),
+        )
         .mount(&mock_server)
         .await;
 
@@ -87,8 +98,7 @@ async fn test_s3_client_empty_response() {
     let location = S3Location::new("test-bucket", "empty.mcap").with_endpoint(mock_server.uri());
 
     let result = client.fetch_range(&location, 0, 100).await;
-    assert!(result.is_ok());
-    assert!(result.unwrap().is_empty());
+    assert!(result.is_err());
 }
 
 #[tokio::test]
@@ -183,4 +193,67 @@ async fn test_s3_client_invalid_uri() {
 
     let result = client.fetch_range(&location, 0, 100).await;
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_s3_client_fetch_range_retries_then_succeeds() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(wiremock_path("/test-bucket/retry.mcap"))
+        .and(header("Range", "bytes=0-9"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(wiremock_path("/test-bucket/retry.mcap"))
+        .and(header("Range", "bytes=0-9"))
+        .respond_with(
+            ResponseTemplate::new(206)
+                .insert_header("content-range", "bytes 0-9/10")
+                .insert_header("content-length", "10")
+                .set_body_bytes(b"Hello, S3!"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let config = S3ReaderConfig::default().with_retry(
+        robocodec::io::s3::RetryConfig::default()
+            .with_max_retries(2)
+            .with_initial_delay(Duration::from_millis(1))
+            .with_max_delay(Duration::from_millis(2)),
+    );
+    let client = S3Client::new(config).unwrap();
+
+    let location = S3Location::new("test-bucket", "retry.mcap").with_endpoint(mock_server.uri());
+
+    let result = client.fetch_range(&location, 0, 10).await;
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().as_ref(), b"Hello, S3!");
+}
+
+#[tokio::test]
+async fn test_s3_client_fetch_range_malformed_content_range() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(wiremock_path("/test-bucket/malformed-range.mcap"))
+        .and(header("Range", "bytes=0-9"))
+        .respond_with(
+            ResponseTemplate::new(206)
+                .insert_header("content-range", "bytes invalid")
+                .set_body_bytes(b"Hello, S3!"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let client = S3Client::new(S3ReaderConfig::default()).unwrap();
+    let location =
+        S3Location::new("test-bucket", "malformed-range.mcap").with_endpoint(mock_server.uri());
+
+    let result = client.fetch_range(&location, 0, 10).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("Content-Range"));
 }

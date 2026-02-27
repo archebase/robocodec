@@ -11,7 +11,7 @@ on:
   pull_request:
     paths:
       - 'src/io/s3/**'
-      - 'tests/s3_integration_test.rs'
+      - 'tests/s3/**'
       - 'tests/s3_tests.rs'
       - 'docker-compose.yml'
       - '.github/workflows/test-s3.yml'
@@ -58,30 +58,39 @@ jobs:
 
       - name: Wait for MinIO to be healthy (bucket created)
         run: |
-        # Wait for MinIO healthcheck to pass (this means bucket exists)
-        for i in {1..60}; do
-          if docker compose ps | grep "robocodec-minio" | grep -q "healthy"; then
-            echo "MinIO is healthy and bucket is ready"
-            docker compose ps
-            break
-          fi
-          echo "Waiting for MinIO to be healthy... ($i/60)"
-          sleep 2
-        done
+          # Wait for MinIO healthcheck to pass (this means bucket exists)
+          for i in {1..60}; do
+            if docker compose ps | grep "robocodec-minio" | grep -q "healthy"; then
+              echo "MinIO is healthy and bucket is ready"
+              docker compose ps
+              break
+            fi
+            echo "Waiting for MinIO to be healthy... ($i/60)"
+            sleep 2
+          done
 
-        # Verify bucket exists
-        if ! curl -f http://localhost:9000/test-fixtures 2>/dev/null; then
-          echo "Bucket 'test-fixtures' not found"
-          docker compose logs minio minio-init
-          exit 1
-        fi
-        echo "Bucket 'test-fixtures' verified"
+          # Verify bucket exists
+          if ! curl -f http://localhost:9000/test-fixtures 2>/dev/null; then
+            echo "Bucket 'test-fixtures' not found"
+            docker compose logs minio minio-init
+            exit 1
+          fi
+          echo "Bucket 'test-fixtures' verified"
 
       - name: Run S3 unit tests
-        run: cargo test --package robocodec --lib io::s3
+        run: 'cargo test --package robocodec --lib io::s3'
 
       - name: Run S3 integration tests (with live MinIO)
-        run: cargo test --test s3_tests s3_integration
+        run: 'cargo test --features remote --test s3_tests s3::integration::'
+
+      - name: Run S3 RoboReader fail-fast tests
+        run: 'cargo test --features remote --test s3_tests s3::roboreader::'
+
+      - name: Run S3 parity fail-fast tests
+        run: 'cargo test --features remote --test s3_tests s3::parity::'
+
+      - name: Run S3 performance guardrail fail-fast tests
+        run: 'cargo test --features remote --test s3_tests s3::performance::'
 
       - name: Run clippy on S3 module
         run: cargo clippy --package robocodec -- -D warnings -D clippy::all
