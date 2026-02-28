@@ -249,36 +249,29 @@ impl RoboReader {
                 let path_obj = std::path::Path::new(path_for_detection);
                 let format = detect_format(path_obj)?;
 
-                // MCAP, BAG, and RRD formats support transport-based reading
                 match format {
                     FileFormat::Mcap => {
                         return Ok(Self {
-                            inner: Box::new(
-                                crate::io::formats::mcap::transport_reader::McapTransportReader::open_from_transport(
-                                    transport,
-                                    path.to_string(),
-                                )?,
-                            ),
+                            inner: Box::new(McapFormat::open_from_transport(
+                                transport,
+                                path.to_string(),
+                            )?),
                         });
                     }
                     FileFormat::Bag => {
                         return Ok(Self {
-                            inner: Box::new(
-                                crate::io::formats::bag::BagTransportReader::open_from_transport(
-                                    transport,
-                                    path.to_string(),
-                                )?,
-                            ),
+                            inner: Box::new(BagFormat::open_from_transport(
+                                transport,
+                                path.to_string(),
+                            )?),
                         });
                     }
                     FileFormat::Rrd => {
                         return Ok(Self {
-                            inner: Box::new(
-                                crate::io::formats::rrd::RrdTransportReader::open_from_transport(
-                                    transport,
-                                    path.to_string(),
-                                )?,
-                            ),
+                            inner: Box::new(RrdFormat::open_from_transport(
+                                transport,
+                                path.to_string(),
+                            )?),
                         });
                     }
                     FileFormat::Unknown => {
@@ -485,25 +478,10 @@ impl FormatReader for RoboReader {
         let path_obj = std::path::Path::new(&path);
         let format = detect_format(path_obj)?;
 
-        // Delegate to the appropriate format-specific reader
-        // Note: Most format readers don't support transport-based reading,
-        // so this will only work for transport-compatible readers
         let inner: Box<dyn FormatReader> = match format {
-            FileFormat::Mcap => {
-                // McapTransportReader supports transport-based reading
-                use crate::io::formats::mcap::transport_reader::McapTransportReader;
-                Box::new(McapTransportReader::open_from_transport(transport, path)?)
-            }
-            FileFormat::Bag => {
-                // BagTransportReader supports transport-based reading
-                use crate::io::formats::bag::BagTransportReader;
-                Box::new(BagTransportReader::open_from_transport(transport, path)?)
-            }
-            FileFormat::Rrd => {
-                // RrdTransportReader supports transport-based reading
-                use crate::io::formats::rrd::RrdTransportReader;
-                Box::new(RrdTransportReader::open_from_transport(transport, path)?)
-            }
+            FileFormat::Mcap => Box::new(McapFormat::open_from_transport(transport, path)?),
+            FileFormat::Bag => Box::new(BagFormat::open_from_transport(transport, path)?),
+            FileFormat::Rrd => Box::new(RrdFormat::open_from_transport(transport, path)?),
             FileFormat::Unknown => {
                 return Err(CodecError::parse(
                     "RoboReader",
@@ -947,7 +925,7 @@ mod tests {
         assert!(result.unwrap().is_none());
     }
 
-    /// Test that BagTransportReader works via FormatReader::open_from_transport
+    /// Test that BAG opens via FormatReader::open_from_transport
     /// Regression test: Previously BAG returned "unsupported" error
     #[test]
     #[cfg(feature = "remote")]
@@ -989,7 +967,7 @@ mod tests {
         }
     }
 
-    /// Test that RrdTransportReader works via FormatReader::open_from_transport
+    /// Test that RRD opens via FormatReader::open_from_transport
     /// Regression test: Previously RRD returned "unsupported" error
     #[test]
     #[cfg(feature = "remote")]

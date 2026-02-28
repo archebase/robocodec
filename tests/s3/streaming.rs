@@ -33,9 +33,11 @@ fn test_mcap_stream_invalid_magic() {
 #[test]
 fn test_mcap_stream_self_consistent() {
     let path = fixture_path("robocodec_test_0.mcap");
-    if !path.exists() {
-        return;
-    }
+    assert!(
+        path.exists(),
+        "Fixture required for streaming test is missing: {}",
+        path.display()
+    );
 
     let data = std::fs::read(&path).unwrap();
 
@@ -84,9 +86,11 @@ fn test_bag_stream_magic_detection() {
 #[test]
 fn test_bag_stream_self_consistent() {
     let path = fixture_path("robocodec_test_15.bag");
-    if !path.exists() {
-        return;
-    }
+    assert!(
+        path.exists(),
+        "Fixture required for streaming test is missing: {}",
+        path.display()
+    );
 
     let data = std::fs::read(&path).unwrap();
 
@@ -330,10 +334,12 @@ fn test_diagnostic_realistic_structure() {
 
 #[test]
 fn test_simple_mcap_file() {
-    let path = fixture_path("simple_streaming_test.mcap");
-    if !path.exists() {
-        return;
-    }
+    let path = fixture_path("robocodec_test_0.mcap");
+    assert!(
+        path.exists(),
+        "Fixture required for streaming test is missing: {}",
+        path.display()
+    );
 
     let data = std::fs::read(&path).unwrap();
     let mut parser = StreamingMcapParser::new();
@@ -344,14 +350,13 @@ fn test_simple_mcap_file() {
         assert!(result.is_ok(), "Chunk {} failed: {:?}", i, result);
     }
 
-    // Verify results
-    assert_eq!(parser.channels().len(), 1, "Should have 1 channel");
-    assert_eq!(parser.message_count(), 1, "Should have 1 message");
-
-    // Check channel details
-    let channels = parser.channels();
-    assert!(channels.contains_key(&1), "Should have channel id 1");
-    let channel = &channels[&1];
-    assert_eq!(channel.topic, "/camera/image_raw");
-    assert_eq!(channel.encoding, "cdr");
+    // Verify parser discovered channels/messages from real fixture data.
+    assert!(
+        parser.channels().len() > 0,
+        "Expected at least one channel in fixture"
+    );
+    assert!(
+        parser.message_count() > 0,
+        "Expected at least one message in fixture"
+    );
 }

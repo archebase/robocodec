@@ -53,6 +53,59 @@ impl RrdFormat {
         let writer = super::writer::RrdWriter::create(path)?;
         Ok(Box::new(writer))
     }
+
+    /// Open an RRD reader from a transport source.
+    #[cfg(feature = "remote")]
+    pub fn open_from_transport(
+        mut transport: Box<dyn crate::io::transport::Transport>,
+        path: String,
+    ) -> Result<ParallelRrdReader> {
+        use std::pin::Pin;
+        use std::task::{Context, Poll, Waker};
+
+        let mut data = Vec::new();
+        let mut buffer = vec![0u8; 64 * 1024];
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut pinned_transport = unsafe { Pin::new_unchecked(transport.as_mut()) };
+
+        loop {
+            match pinned_transport.as_mut().poll_read(&mut cx, &mut buffer) {
+                Poll::Ready(Ok(0)) => break,
+                Poll::Ready(Ok(n)) => data.extend_from_slice(&buffer[..n]),
+                Poll::Ready(Err(e)) => {
+                    return Err(CodecError::encode(
+                        "Transport",
+                        format!("Failed to read from {path}: {e}"),
+                    ));
+                }
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_path = std::env::temp_dir().join(format!(
+            "robocodec_rrd_transport_{}_{}.rrd",
+            std::process::id(),
+            unique
+        ));
+
+        std::fs::write(&temp_path, &data).map_err(|e| {
+            CodecError::encode(
+                "RRD",
+                format!("Failed to write temporary RRD data to {:?}: {e}", temp_path),
+            )
+        })?;
+
+        let mut reader = ParallelRrdReader::open(&temp_path)?;
+        reader.set_path_for_reporting(path);
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(reader)
+    }
 }
 
 /// RRD file header (RRF2 stream header format).

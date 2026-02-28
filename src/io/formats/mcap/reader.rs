@@ -56,6 +56,62 @@ impl McapFormat {
     pub fn check_summary<P: AsRef<Path>>(path: P) -> Result<(bool, bool)> {
         ParallelMcapReader::check_summary(path)
     }
+
+    /// Open an MCAP reader from a transport source.
+    #[cfg(feature = "remote")]
+    pub fn open_from_transport(
+        mut transport: Box<dyn crate::io::transport::Transport>,
+        path: String,
+    ) -> Result<McapReader> {
+        use std::pin::Pin;
+        use std::task::{Context, Poll, Waker};
+
+        let mut data = Vec::new();
+        let mut buffer = vec![0u8; 64 * 1024];
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut pinned_transport = unsafe { Pin::new_unchecked(transport.as_mut()) };
+
+        loop {
+            match pinned_transport.as_mut().poll_read(&mut cx, &mut buffer) {
+                Poll::Ready(Ok(0)) => break,
+                Poll::Ready(Ok(n)) => data.extend_from_slice(&buffer[..n]),
+                Poll::Ready(Err(e)) => {
+                    return Err(CodecError::encode(
+                        "Transport",
+                        format!("Failed to read from {path}: {e}"),
+                    ));
+                }
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_path = std::env::temp_dir().join(format!(
+            "robocodec_mcap_transport_{}_{}.mcap",
+            std::process::id(),
+            unique
+        ));
+
+        std::fs::write(&temp_path, &data).map_err(|e| {
+            CodecError::encode(
+                "MCAP",
+                format!(
+                    "Failed to write temporary MCAP data to {:?}: {e}",
+                    temp_path
+                ),
+            )
+        })?;
+
+        let mut reader = McapReader::open(&temp_path)?;
+        reader.path = path;
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(reader)
+    }
 }
 
 /// Raw message data from MCAP with metadata (undecoded).
@@ -226,7 +282,7 @@ impl FormatReader for McapReader {
         // Since ParallelMcapReader doesn't support transport, we can't either
         Err(CodecError::unsupported(
             "McapReader requires local file access for memory mapping. \
-             Use McapTransportReader for transport-based reading.",
+             Use McapFormat::open_from_transport for transport-based reading.",
         ))
     }
 

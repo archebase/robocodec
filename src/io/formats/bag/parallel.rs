@@ -62,6 +62,59 @@ impl BagFormat {
         let writer = BagWriter::create(path)?;
         Ok(Box::new(writer))
     }
+
+    /// Open a BAG reader from a transport source.
+    #[cfg(feature = "remote")]
+    pub fn open_from_transport(
+        mut transport: Box<dyn crate::io::transport::Transport>,
+        path: String,
+    ) -> Result<ParallelBagReader> {
+        use std::pin::Pin;
+        use std::task::{Context, Poll, Waker};
+
+        let mut data = Vec::new();
+        let mut buffer = vec![0u8; 64 * 1024];
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut pinned_transport = unsafe { Pin::new_unchecked(transport.as_mut()) };
+
+        loop {
+            match pinned_transport.as_mut().poll_read(&mut cx, &mut buffer) {
+                Poll::Ready(Ok(0)) => break,
+                Poll::Ready(Ok(n)) => data.extend_from_slice(&buffer[..n]),
+                Poll::Ready(Err(e)) => {
+                    return Err(CodecError::encode(
+                        "Transport",
+                        format!("Failed to read from {path}: {e}"),
+                    ));
+                }
+                Poll::Pending => std::thread::yield_now(),
+            }
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_path = std::env::temp_dir().join(format!(
+            "robocodec_bag_transport_{}_{}.bag",
+            std::process::id(),
+            unique
+        ));
+
+        std::fs::write(&temp_path, &data).map_err(|e| {
+            CodecError::encode(
+                "BAG",
+                format!("Failed to write temporary BAG data to {:?}: {e}", temp_path),
+            )
+        })?;
+
+        let mut reader = ParallelBagReader::open(&temp_path)?;
+        reader.path = path;
+
+        let _ = std::fs::remove_file(&temp_path);
+        Ok(reader)
+    }
 }
 
 /// Parallel BAG reader with memory-mapped file access.

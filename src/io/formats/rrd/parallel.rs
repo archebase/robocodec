@@ -118,6 +118,10 @@ impl ParallelRrdReader {
         })
     }
 
+    pub(crate) fn set_path_for_reporting(&mut self, path: String) {
+        self.path = path;
+    }
+
     /// Get the message index.
     #[must_use]
     pub fn message_index(&self) -> &[MessageIndex] {

@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
+#![cfg(feature = "remote")]
+
 //! S3 streaming reader and writer tests.
 //!
 //! This file is the entry point for S3 tests. The tests are organized into modules:

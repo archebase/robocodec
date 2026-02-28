@@ -136,7 +136,7 @@ The library exports these key types at the top level:
 - **S3**: `s3://bucket/path/file.mcap` (with optional `?endpoint=` and `?region=` query params)
 - **HTTP/HTTPS**: `https://example.com/file.mcap` (via HttpTransport)
 
-Transport-based reading uses `McapTransportReader` internally for streaming from remote sources.
+Transport-based reading dispatches to format readers via `FormatReader::open_from_transport`.
 
 - **`RoboWriter`** - Unified writer with format auto-detection
   - `create(path)` - Create writer based on extension

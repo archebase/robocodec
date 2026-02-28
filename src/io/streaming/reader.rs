@@ -5,6 +5,9 @@
 //! Streaming reader for high-performance message processing.
 
 use crate::io::detection::detect_format;
+use crate::io::formats::bag::BagFormat;
+use crate::io::formats::mcap::McapFormat;
+use crate::io::formats::rrd::RrdFormat;
 use crate::io::metadata::{ChannelInfo, FileFormat};
 use crate::io::reader::RoboReader;
 use crate::io::reader::config::ReaderConfig;
@@ -101,24 +104,16 @@ impl StreamingRoboReader {
                 let format = detect_format(path_obj)?;
 
                 let inner: Box<dyn FormatReader> = match format {
-                    FileFormat::Mcap => Box::new(
-                        crate::io::formats::mcap::transport_reader::McapTransportReader::open_from_transport(
-                            transport,
-                            path.to_string(),
-                        )?,
-                    ),
-                    FileFormat::Bag => Box::new(
-                        crate::io::formats::bag::BagTransportReader::open_from_transport(
-                            transport,
-                            path.to_string(),
-                        )?,
-                    ),
-                    FileFormat::Rrd => Box::new(
-                        crate::io::formats::rrd::RrdTransportReader::open_from_transport(
-                            transport,
-                            path.to_string(),
-                        )?,
-                    ),
+                    FileFormat::Mcap => Box::new(McapFormat::open_from_transport(
+                        transport,
+                        path.to_string(),
+                    )?),
+                    FileFormat::Bag => {
+                        Box::new(BagFormat::open_from_transport(transport, path.to_string())?)
+                    }
+                    FileFormat::Rrd => {
+                        Box::new(RrdFormat::open_from_transport(transport, path.to_string())?)
+                    }
                     FileFormat::Unknown => {
                         return Err(CodecError::parse(
                             "StreamingRoboReader",

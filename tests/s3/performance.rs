@@ -10,7 +10,6 @@ use robocodec::io::RoboReader;
 
 use super::fixture_path;
 use super::integration::{S3Config, ensure_bucket_exists, s3_available, upload_to_s3};
-use super::require_live_s3;
 
 // Conservative CI guardrail: protects against obvious regressions while tolerating
 // noisy shared runners and cold-start effects.
@@ -70,10 +69,6 @@ fn unique_key(prefix: &str, extension: &str) -> String {
 }
 
 async fn run_s3_perf_guardrail_case(fixture_name: &str, s3_key: String) {
-    if !require_live_s3() {
-        return;
-    }
-
     assert!(
         s3_available().await,
         "MinIO is unavailable; S3 performance tests require MinIO to be running"

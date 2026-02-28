@@ -206,27 +206,29 @@ async fn test_s3_docker_instructions() {
 
 #[tokio::test]
 async fn test_s3_read_mcap() {
-    if !s3_available().await {
-        return;
-    }
+    assert!(
+        s3_available().await,
+        "MinIO/S3 is unavailable; integration test requires live S3"
+    );
 
     let config = S3Config::default();
     let fixture_path = fixture_path("robocodec_test_0.mcap");
 
-    if !fixture_path.exists() {
-        return;
-    }
+    assert!(
+        fixture_path.exists(),
+        "Fixture required for S3 integration test is missing: {}",
+        fixture_path.display()
+    );
 
     let data = std::fs::read(&fixture_path).unwrap();
     let key = "test/robocodec_test_0.mcap";
 
-    if upload_to_s3(&config, key, &data).await.is_err() {
-        eprintln!(
-            "Skipping S3 test: bucket '{}' does not exist or is not accessible",
+    upload_to_s3(&config, key, &data).await.unwrap_or_else(|e| {
+        panic!(
+            "Failed to upload MCAP fixture to bucket '{}': {e}",
             config.bucket
-        );
-        return;
-    }
+        )
+    });
 
     // Clean up
     let key_cleanup = key.to_string();
@@ -242,51 +244,38 @@ async fn test_s3_read_mcap() {
         .with_endpoint(&config.endpoint)
         .with_region(&config.region);
 
-    let result = S3Reader::open(location).await;
-
-    // MCAP files with CHUNK records may fail due to StreamingMcapParser limitations
-    match result {
-        Ok(reader) => {
-            assert_eq!(reader.format(), robocodec::io::metadata::FileFormat::Mcap);
-            assert!(FormatReader::file_size(&reader) > 0);
-        }
-        Err(e) => {
-            let err_str = e.to_string();
-            if err_str.contains("Invalid format") || err_str.contains("parse") {
-                eprintln!(
-                    "S3Reader::open (MCAP) failed with parsing error - known limitation: {}",
-                    e
-                );
-            } else {
-                panic!("S3Reader::open (MCAP) failed: {}", e);
-            }
-        }
-    }
+    let reader = S3Reader::open(location)
+        .await
+        .unwrap_or_else(|e| panic!("S3Reader::open (MCAP) failed: {e}"));
+    assert_eq!(reader.format(), robocodec::io::metadata::FileFormat::Mcap);
+    assert!(FormatReader::file_size(&reader) > 0);
 }
 
 #[tokio::test]
 async fn test_s3_stream_messages() {
-    if !s3_available().await {
-        return;
-    }
+    assert!(
+        s3_available().await,
+        "MinIO/S3 is unavailable; integration test requires live S3"
+    );
 
     let config = S3Config::default();
     let fixture_path = fixture_path("robocodec_test_0.mcap");
 
-    if !fixture_path.exists() {
-        return;
-    }
+    assert!(
+        fixture_path.exists(),
+        "Fixture required for S3 integration test is missing: {}",
+        fixture_path.display()
+    );
 
     let data = std::fs::read(&fixture_path).unwrap();
     let key = "test/robocodec_test_0.mcap";
 
-    if upload_to_s3(&config, key, &data).await.is_err() {
-        eprintln!(
-            "Skipping S3 test: bucket '{}' does not exist. Create with: docker compose up -d",
+    upload_to_s3(&config, key, &data).await.unwrap_or_else(|e| {
+        panic!(
+            "Failed to upload MCAP fixture to bucket '{}': {e}",
             config.bucket
-        );
-        return;
-    }
+        )
+    });
 
     let key_cleanup = key.to_string();
     let endpoint = config.endpoint.clone();
@@ -301,20 +290,9 @@ async fn test_s3_stream_messages() {
         .with_endpoint(&config.endpoint)
         .with_region(&config.region);
 
-    let reader = match S3Reader::open(location).await {
-        Ok(reader) => reader,
-        Err(e) => {
-            let err_str = e.to_string();
-            if err_str.contains("Invalid format") || err_str.contains("parse") {
-                eprintln!(
-                    "S3Reader::open failed with parsing error - known MCAP limitation: {}",
-                    e
-                );
-                return;
-            }
-            panic!("S3Reader::open failed: {}", e);
-        }
-    };
+    let reader = S3Reader::open(location)
+        .await
+        .unwrap_or_else(|e| panic!("S3Reader::open failed: {e}"));
 
     eprintln!(
         "Opened S3 reader, file size: {}",
@@ -360,24 +338,29 @@ async fn test_s3_stream_messages() {
 
 #[tokio::test]
 async fn test_s3_stream_bag() {
-    if !s3_available().await {
-        return;
-    }
+    assert!(
+        s3_available().await,
+        "MinIO/S3 is unavailable; integration test requires live S3"
+    );
 
     let config = S3Config::default();
     let fixture_path = fixture_path("robocodec_test_15.bag");
 
-    if !fixture_path.exists() {
-        return;
-    }
+    assert!(
+        fixture_path.exists(),
+        "Fixture required for S3 integration test is missing: {}",
+        fixture_path.display()
+    );
 
     let data = std::fs::read(&fixture_path).unwrap();
     let key = "test/robocodec_test_15.bag";
 
-    if upload_to_s3(&config, key, &data).await.is_err() {
-        eprintln!("Skipping S3 BAG test: bucket does not exist");
-        return;
-    }
+    upload_to_s3(&config, key, &data).await.unwrap_or_else(|e| {
+        panic!(
+            "Failed to upload BAG fixture to bucket '{}': {e}",
+            config.bucket
+        )
+    });
 
     let key_cleanup = key.to_string();
     let endpoint = config.endpoint.clone();

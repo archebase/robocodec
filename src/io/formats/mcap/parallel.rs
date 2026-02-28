@@ -694,7 +694,7 @@ impl FormatReader for ParallelMcapReader {
     {
         Err(CodecError::unsupported(
             "ParallelMcapReader requires local file access for memory mapping. \
-             Use McapTransportReader for transport-based reading.",
+             Use McapFormat::open_from_transport for transport-based reading.",
         ))
     }
 

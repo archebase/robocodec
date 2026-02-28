@@ -11,7 +11,6 @@ use robocodec::io::traits::FormatReader;
 
 use super::fixture_path;
 use super::integration::{S3Config, ensure_bucket_exists, s3_available, upload_to_s3};
-use super::require_live_s3;
 
 #[derive(Debug)]
 struct ParitySnapshot {
@@ -126,10 +125,6 @@ fn spawn_best_effort_cleanup(config: &S3Config, key: &str) {
 }
 
 async fn run_local_vs_s3_parity_case(fixture_name: &str, s3_key: &str) {
-    if !require_live_s3() {
-        return;
-    }
-
     assert!(
         s3_available().await,
         "MinIO is unavailable; local vs S3 parity tests require MinIO to be running"
