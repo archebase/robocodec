@@ -243,4 +243,6 @@ jobs:
           MINIO_ENDPOINT: http://127.0.0.1:9000
           MINIO_BUCKET: test-bucket
           MINIO_REGION: us-east-1
+          MINIO_USER: minioadmin
+          MINIO_PASSWORD: minioadmin
         run: 'cargo test --features remote --test s3_tests s3::'
