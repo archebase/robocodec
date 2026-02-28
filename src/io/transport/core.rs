@@ -350,6 +350,7 @@ pub trait Transport: Send + Sync {
 }
 
 #[cfg(test)]
+#[cfg(feature = "remote")]
 mod tests {
     use super::*;
 

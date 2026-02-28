@@ -9,6 +9,7 @@ use crate::io::s3::{config::S3ReaderConfig, error::FatalError, location::S3Locat
 use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, Uri};
 use std::str::FromStr;
+use tokio::time::sleep;
 
 /// Default AWS region when not specified.
 const DEFAULT_AWS_REGION: &str = "us-east-1";
@@ -90,11 +91,28 @@ impl S3Client {
             .await?;
 
         self.check_response(&response, location)?;
-        self.check_range_status(response.status())?;
+        let expected_length =
+            self.validate_range_response_headers(&response, location, offset, length)?;
 
-        response.bytes().await.map_err(|e| FatalError::IoError {
+        let bytes = response.bytes().await.map_err(|e| FatalError::IoError {
             message: format!("Failed to read response body: {e}"),
-        })
+        })?;
+
+        if bytes.len() as u64 != expected_length {
+            return Err(FatalError::IoError {
+                message: format!(
+                    "Range GET body length mismatch for s3://{}/{}: expected {} bytes, got {} (offset={}, length={})",
+                    location.bucket(),
+                    location.key(),
+                    expected_length,
+                    bytes.len(),
+                    offset,
+                    length
+                ),
+            });
+        }
+
+        Ok(bytes)
     }
 
     /// Fetch the first N bytes from the S3 object (for header scanning).
@@ -406,63 +424,91 @@ impl S3Client {
         header_builder: F,
     ) -> Result<reqwest::Response, FatalError>
     where
-        F: FnOnce(&mut HeaderMap) -> Result<(), FatalError>,
+        F: Fn(&mut HeaderMap) -> Result<(), FatalError>,
     {
         let uri = Uri::from_str(url).map_err(|e| FatalError::HttpError {
             status: None,
             message: format!("Invalid URL: {e}"),
         })?;
 
-        let mut headers = HeaderMap::new();
-        header_builder(&mut headers)?;
+        let retry = self.config.retry().clone();
+        let max_retries = retry.max_retries();
 
-        // Sign the request if credentials are available
-        if let Some(credentials) = self.config.credentials()
-            && signer::should_sign(credentials)
-        {
-            let region = location.region().unwrap_or(DEFAULT_AWS_REGION);
-            signer::sign_request(credentials, region, "s3", method, &uri, &mut headers).map_err(
-                |e| FatalError::HttpError {
-                    status: None,
-                    message: format!("Failed to sign request: {e}"),
-                },
-            )?;
-        }
+        for attempt in 0..=max_retries {
+            let mut headers = HeaderMap::new();
+            header_builder(&mut headers)?;
 
-        // Build the request with signed headers
-        let request_builder = match *method {
-            Method::GET => self.client.get(url),
-            Method::HEAD => self.client.head(url),
-            _ => {
-                return Err(FatalError::HttpError {
-                    status: None,
-                    message: format!("Unsupported HTTP method: {method:?}"),
-                });
-            }
-        };
-
-        // Add headers (excluding 'host' which reqwest handles automatically)
-        let mut request_builder = request_builder;
-        for (name, value) in &headers {
-            if let Ok(value_str) = value.to_str()
-                && name.as_str() != "host"
+            // Sign the request if credentials are available
+            if let Some(credentials) = self.config.credentials()
+                && signer::should_sign(&credentials)
             {
-                request_builder = request_builder.header(name.as_str(), value_str);
+                let region = location.region().unwrap_or(DEFAULT_AWS_REGION);
+                signer::sign_request(&credentials, region, "s3", method, &uri, &mut headers)
+                    .map_err(|e| FatalError::HttpError {
+                        status: None,
+                        message: format!("Failed to sign request: {e}"),
+                    })?;
+            }
+
+            // Build the request with signed headers
+            let request_builder = match *method {
+                Method::GET => self.client.get(url),
+                Method::HEAD => self.client.head(url),
+                _ => {
+                    return Err(FatalError::HttpError {
+                        status: None,
+                        message: format!("Unsupported HTTP method: {method:?}"),
+                    });
+                }
+            };
+
+            // Add headers (excluding 'host' which reqwest handles automatically)
+            let mut request_builder = request_builder;
+            for (name, value) in &headers {
+                if let Ok(value_str) = value.to_str()
+                    && name.as_str() != "host"
+                {
+                    request_builder = request_builder.header(name.as_str(), value_str);
+                }
+            }
+
+            match request_builder.send().await {
+                Ok(response) => {
+                    if Self::is_retryable_status(response.status()) {
+                        if attempt < max_retries {
+                            sleep(retry.delay_for_attempt(attempt)).await;
+                            continue;
+                        }
+
+                        let status = response.status().as_u16();
+                        return Err(FatalError::HttpError {
+                            status: Some(status),
+                            message: format!(
+                                "HTTP {} after {} attempts for {} {}",
+                                status,
+                                attempt + 1,
+                                method,
+                                url
+                            ),
+                        });
+                    }
+
+                    return Ok(response);
+                }
+                Err(err) => {
+                    if Self::is_retryable_transport_error(&err) && attempt < max_retries {
+                        sleep(retry.delay_for_attempt(attempt)).await;
+                        continue;
+                    }
+
+                    return Err(Self::map_transport_error(err));
+                }
             }
         }
 
-        request_builder.send().await.map_err(|e| {
-            if e.is_connect() || e.is_timeout() {
-                FatalError::HttpError {
-                    status: None,
-                    message: format!("Connection failed: {e}"),
-                }
-            } else {
-                FatalError::HttpError {
-                    status: None,
-                    message: e.to_string(),
-                }
-            }
+        Err(FatalError::HttpError {
+            status: None,
+            message: format!("Failed to execute {} request for {}", method, url),
         })
     }
 
@@ -515,10 +561,10 @@ impl S3Client {
 
         // Sign the request if credentials are available
         if let Some(credentials) = self.config.credentials()
-            && signer::should_sign(credentials)
+            && signer::should_sign(&credentials)
         {
             let region = location.region().unwrap_or(DEFAULT_AWS_REGION);
-            signer::sign_request(credentials, region, "s3", method, &uri, &mut headers).map_err(
+            signer::sign_request(&credentials, region, "s3", method, &uri, &mut headers).map_err(
                 |e| FatalError::HttpError {
                     status: None,
                     message: format!("Failed to sign request: {e}"),
@@ -578,16 +624,233 @@ impl S3Client {
         Ok(())
     }
 
-    /// Check status code for range requests (206 is success).
-    fn check_range_status(&self, status: reqwest::StatusCode) -> Result<(), FatalError> {
-        if !status.is_success() && status.as_u16() != 206 {
-            // 206 is Partial Content (successful range request)
+    /// Validate status and headers for a range GET response.
+    fn validate_range_response_headers(
+        &self,
+        response: &reqwest::Response,
+        location: &S3Location,
+        offset: u64,
+        length: u64,
+    ) -> Result<u64, FatalError> {
+        let status = response.status();
+        if status != reqwest::StatusCode::PARTIAL_CONTENT {
             return Err(FatalError::HttpError {
                 status: Some(status.as_u16()),
-                message: format!("HTTP {}", status.as_u16()),
+                message: format!(
+                    "Range GET must return 206 Partial Content for s3://{}/{} (offset={}, length={}), got HTTP {}",
+                    location.bucket(),
+                    location.key(),
+                    offset,
+                    length,
+                    status.as_u16()
+                ),
             });
         }
-        Ok(())
+
+        let content_range = response
+            .headers()
+            .get(http::header::CONTENT_RANGE)
+            .ok_or_else(|| FatalError::HttpError {
+                status: Some(status.as_u16()),
+                message: format!(
+                    "Missing Content-Range header in 206 response for s3://{}/{} (offset={}, length={})",
+                    location.bucket(),
+                    location.key(),
+                    offset,
+                    length
+                ),
+            })?
+            .to_str()
+            .map_err(|e| FatalError::HttpError {
+                status: Some(status.as_u16()),
+                message: format!(
+                    "Invalid Content-Range header for s3://{}/{}: {}",
+                    location.bucket(),
+                    location.key(),
+                    e
+                ),
+            })?;
+
+        let (range_start, range_end, total_size) = Self::parse_content_range(content_range)?;
+        if range_start != offset {
+            return Err(FatalError::HttpError {
+                status: Some(status.as_u16()),
+                message: format!(
+                    "Unexpected Content-Range start for s3://{}/{}: expected {}, got {}",
+                    location.bucket(),
+                    location.key(),
+                    offset,
+                    range_start
+                ),
+            });
+        }
+
+        let expected_length = range_end
+            .checked_sub(range_start)
+            .and_then(|v| v.checked_add(1))
+            .ok_or_else(|| FatalError::HttpError {
+                status: Some(status.as_u16()),
+                message: format!(
+                    "Invalid Content-Range span for s3://{}/{}: {}",
+                    location.bucket(),
+                    location.key(),
+                    content_range
+                ),
+            })?;
+
+        if expected_length != length {
+            return Err(FatalError::HttpError {
+                status: Some(status.as_u16()),
+                message: format!(
+                    "Unexpected Content-Range length for s3://{}/{}: expected {}, got {} ({})",
+                    location.bucket(),
+                    location.key(),
+                    length,
+                    expected_length,
+                    content_range
+                ),
+            });
+        }
+
+        if let Some(total_size) = total_size
+            && range_end >= total_size
+        {
+            return Err(FatalError::HttpError {
+                status: Some(status.as_u16()),
+                message: format!(
+                    "Invalid Content-Range total for s3://{}/{}: {}",
+                    location.bucket(),
+                    location.key(),
+                    content_range
+                ),
+            });
+        }
+
+        if let Some(content_length) = response.headers().get(http::header::CONTENT_LENGTH) {
+            let content_length = content_length
+                .to_str()
+                .map_err(|e| FatalError::HttpError {
+                    status: Some(status.as_u16()),
+                    message: format!(
+                        "Invalid Content-Length header for s3://{}/{}: {}",
+                        location.bucket(),
+                        location.key(),
+                        e
+                    ),
+                })?
+                .parse::<u64>()
+                .map_err(|e| FatalError::HttpError {
+                    status: Some(status.as_u16()),
+                    message: format!(
+                        "Non-numeric Content-Length header for s3://{}/{}: {}",
+                        location.bucket(),
+                        location.key(),
+                        e
+                    ),
+                })?;
+
+            if content_length != expected_length {
+                return Err(FatalError::HttpError {
+                    status: Some(status.as_u16()),
+                    message: format!(
+                        "Content-Length mismatch for s3://{}/{}: expected {}, got {}",
+                        location.bucket(),
+                        location.key(),
+                        expected_length,
+                        content_length
+                    ),
+                });
+            }
+        }
+
+        Ok(expected_length)
+    }
+
+    fn parse_content_range(value: &str) -> Result<(u64, u64, Option<u64>), FatalError> {
+        let value = value.trim();
+        let bytes_prefix = "bytes ";
+        let rest = value
+            .strip_prefix(bytes_prefix)
+            .ok_or_else(|| FatalError::HttpError {
+                status: Some(206),
+                message: format!("Invalid Content-Range format: {value}"),
+            })?;
+
+        let (range, total) = rest.split_once('/').ok_or_else(|| FatalError::HttpError {
+            status: Some(206),
+            message: format!("Invalid Content-Range format: {value}"),
+        })?;
+
+        let (start, end) = range.split_once('-').ok_or_else(|| FatalError::HttpError {
+            status: Some(206),
+            message: format!("Invalid Content-Range range: {value}"),
+        })?;
+
+        let start = start.parse::<u64>().map_err(|e| FatalError::HttpError {
+            status: Some(206),
+            message: format!("Invalid Content-Range start in '{value}': {e}"),
+        })?;
+
+        let end = end.parse::<u64>().map_err(|e| FatalError::HttpError {
+            status: Some(206),
+            message: format!("Invalid Content-Range end in '{value}': {e}"),
+        })?;
+
+        if end < start {
+            return Err(FatalError::HttpError {
+                status: Some(206),
+                message: format!("Invalid Content-Range order: {value}"),
+            });
+        }
+
+        let total = if total == "*" {
+            None
+        } else {
+            Some(total.parse::<u64>().map_err(|e| FatalError::HttpError {
+                status: Some(206),
+                message: format!("Invalid Content-Range total in '{value}': {e}"),
+            })?)
+        };
+
+        Ok((start, end, total))
+    }
+
+    fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+        matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504)
+    }
+
+    fn is_retryable_transport_error(err: &reqwest::Error) -> bool {
+        err.is_connect() || err.is_timeout() || Self::is_transient_error_message(&err.to_string())
+    }
+
+    fn is_transient_error_message(message: &str) -> bool {
+        let message = message.to_ascii_lowercase();
+        [
+            "connection reset",
+            "connection closed",
+            "broken pipe",
+            "timed out",
+            "timeout",
+        ]
+        .iter()
+        .any(|needle| message.contains(needle))
+    }
+
+    fn map_transport_error(err: reqwest::Error) -> FatalError {
+        if err.is_connect()
+            || err.is_timeout()
+            || Self::is_transient_error_message(&err.to_string())
+        {
+            FatalError::HttpError {
+                status: None,
+                message: format!("Transient transport failure: {err}"),
+            }
+        } else {
+            FatalError::HttpError {
+                status: None,
+                message: err.to_string(),
+            }
+        }
     }
 
     /// Helper to insert a header into a `HeaderMap` with proper error handling.
@@ -700,45 +963,51 @@ mod tests {
         assert!(S3Client::new(config).is_err());
     }
 
-    // =========================================================================
-    // check_range_status error path tests
-    // =========================================================================
-
     #[test]
-    fn test_check_range_status_206_success() {
-        let client = S3Client::default_client().unwrap();
-        let status = reqwest::StatusCode::from_u16(206).unwrap();
-        let result = client.check_range_status(status);
-        assert!(result.is_ok());
+    fn test_parse_content_range_valid() {
+        let (start, end, total) = S3Client::parse_content_range("bytes 100-199/1000").unwrap();
+        assert_eq!(start, 100);
+        assert_eq!(end, 199);
+        assert_eq!(total, Some(1000));
     }
 
     #[test]
-    fn test_check_range_status_200_success() {
-        let client = S3Client::default_client().unwrap();
-        let status = reqwest::StatusCode::from_u16(200).unwrap();
-        let result = client.check_range_status(status);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_check_range_status_error() {
-        let client = S3Client::default_client().unwrap();
-        let status = reqwest::StatusCode::from_u16(404).unwrap();
-        let result = client.check_range_status(status);
+    fn test_parse_content_range_invalid_prefix() {
+        let result = S3Client::parse_content_range("items 0-9/10");
         assert!(result.is_err());
-        if let Err(FatalError::HttpError { status: s, .. }) = result {
-            assert_eq!(s, Some(404));
-        } else {
-            panic!("Expected HttpError with status 404");
-        }
     }
 
     #[test]
-    fn test_check_range_status_500_error() {
-        let client = S3Client::default_client().unwrap();
-        let status = reqwest::StatusCode::from_u16(500).unwrap();
-        let result = client.check_range_status(status);
+    fn test_parse_content_range_invalid_order() {
+        let result = S3Client::parse_content_range("bytes 20-10/100");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_retryable_status_classification() {
+        assert!(S3Client::is_retryable_status(
+            reqwest::StatusCode::TOO_MANY_REQUESTS
+        ));
+        assert!(S3Client::is_retryable_status(
+            reqwest::StatusCode::SERVICE_UNAVAILABLE
+        ));
+        assert!(!S3Client::is_retryable_status(
+            reqwest::StatusCode::FORBIDDEN
+        ));
+        assert!(!S3Client::is_retryable_status(
+            reqwest::StatusCode::NOT_FOUND
+        ));
+    }
+
+    #[test]
+    fn test_transient_error_message_classification() {
+        assert!(S3Client::is_transient_error_message(
+            "connection reset by peer while sending request"
+        ));
+        assert!(S3Client::is_transient_error_message("request timeout"));
+        assert!(!S3Client::is_transient_error_message(
+            "invalid header value"
+        ));
     }
 
     // =========================================================================

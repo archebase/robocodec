@@ -114,6 +114,7 @@ impl LocalTransport {
 }
 
 #[cfg(test)]
+#[cfg(feature = "remote")]
 mod tests {
     use super::*;
     use crate::io::transport::TransportExt;

@@ -22,10 +22,6 @@ pub mod sequential;
 #[cfg(feature = "remote")]
 pub mod stream;
 
-// Transport-based reader (S3, HTTP support)
-#[cfg(feature = "remote")]
-pub mod transport_reader;
-
 // Writer implementation
 pub mod writer;
 
@@ -40,6 +36,4 @@ pub use stream::{
     BAG_MAGIC_PREFIX, BagMessageRecord, BagRecord, BagRecordFields, BagRecordHeader,
     StreamingBagParser,
 };
-#[cfg(feature = "remote")]
-pub use transport_reader::BagTransportReader;
 pub use writer::{BagMessage, BagWriter};

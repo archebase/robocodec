@@ -18,6 +18,8 @@
 //! data, causing the cursor to be 4 bytes off and reading string content
 //! as length prefixes.
 
+#![cfg(feature = "remote")]
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 

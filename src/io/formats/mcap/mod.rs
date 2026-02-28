@@ -39,10 +39,6 @@ pub mod two_pass;
 #[cfg(feature = "remote")]
 pub mod streaming;
 
-// Transport-based reader
-#[cfg(feature = "remote")]
-pub mod transport_reader;
-
 // S3 adapter using mcap crate's LinearReader
 // Private to this crate - used internally by S3Reader
 #[cfg(feature = "remote")]
@@ -61,8 +57,6 @@ pub use streaming::{
     ChannelRecordInfo, McapS3Adapter, McapStreamingParser, MessageRecord, SchemaInfo,
     StreamingMcapParser,
 };
-#[cfg(feature = "remote")]
-pub use transport_reader::McapTransportReader;
 pub use two_pass::TwoPassMcapReader;
 pub use writer::ParallelMcapWriter;
 

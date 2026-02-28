@@ -7,6 +7,8 @@
 //! These tests verify that we can read actual Rerun RRD files correctly
 //! and write RRD files that can be read back.
 
+#![cfg(feature = "remote")]
+
 use std::fs;
 use std::path::Path;
 

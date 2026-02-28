@@ -58,7 +58,7 @@ use crate::{CodecError, Result};
 /// This reuses a single runtime across all S3 operations, avoiding
 /// the overhead of creating a new runtime for each open/write.
 #[cfg(feature = "remote")]
-fn shared_runtime() -> &'static tokio::runtime::Runtime {
+pub(crate) fn shared_runtime() -> &'static tokio::runtime::Runtime {
     use std::sync::OnceLock;
     static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RT.get_or_init(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"))
@@ -214,45 +214,64 @@ impl RoboReader {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn open_with_config(path: &str, _config: ReaderConfig) -> Result<Self> {
-        // Try to parse as URL and create appropriate transport
         #[cfg(feature = "remote")]
         {
+            // ADR-004: Prefer direct streaming S3Reader for s3:// URLs.
+            if let Ok(location) = crate::io::s3::S3Location::from_s3_url(path) {
+                let s3_reader_result = std::thread::spawn(move || {
+                    shared_runtime().block_on(crate::io::s3::S3Reader::open(location))
+                })
+                .join()
+                .map_err(|_| {
+                    CodecError::encode(
+                        "S3",
+                        format!("Failed to join streaming S3 reader initialization for '{path}'"),
+                    )
+                })?;
+
+                let s3_reader = s3_reader_result.map_err(|e: crate::io::s3::FatalError| {
+                    CodecError::encode(
+                        "S3",
+                        format!("Failed to open streaming S3 reader for '{path}': {e}"),
+                    )
+                })?;
+
+                return Ok(Self {
+                    inner: Box::new(s3_reader),
+                });
+            }
+
+            // Keep transport path for non-S3 URL schemes.
             if let Some(transport) = Self::parse_url_to_transport(path)? {
                 // Use transport-based reading
-                // Detect format from path extension
-                let path_obj = std::path::Path::new(path);
+                // Detect format from path extension (strip query params for S3 URLs)
+                let path_for_detection = path.split('?').next().unwrap_or(path);
+                let path_obj = std::path::Path::new(path_for_detection);
                 let format = detect_format(path_obj)?;
 
-                // MCAP, BAG, and RRD formats support transport-based reading
                 match format {
                     FileFormat::Mcap => {
                         return Ok(Self {
-                            inner: Box::new(
-                                crate::io::formats::mcap::transport_reader::McapTransportReader::open_from_transport(
-                                    transport,
-                                    path.to_string(),
-                                )?,
-                            ),
+                            inner: Box::new(McapFormat::open_from_transport(
+                                transport,
+                                path.to_string(),
+                            )?),
                         });
                     }
                     FileFormat::Bag => {
                         return Ok(Self {
-                            inner: Box::new(
-                                crate::io::formats::bag::BagTransportReader::open_from_transport(
-                                    transport,
-                                    path.to_string(),
-                                )?,
-                            ),
+                            inner: Box::new(BagFormat::open_from_transport(
+                                transport,
+                                path.to_string(),
+                            )?),
                         });
                     }
                     FileFormat::Rrd => {
                         return Ok(Self {
-                            inner: Box::new(
-                                crate::io::formats::rrd::RrdTransportReader::open_from_transport(
-                                    transport,
-                                    path.to_string(),
-                                )?,
-                            ),
+                            inner: Box::new(RrdFormat::open_from_transport(
+                                transport,
+                                path.to_string(),
+                            )?),
                         });
                     }
                     FileFormat::Unknown => {
@@ -437,6 +456,13 @@ impl RoboReader {
             })
             .unwrap_or(0)
     }
+
+    /// Consume the reader and return the inner format reader.
+    ///
+    /// This is useful for converting a RoboReader into a StreamingRoboReader.
+    pub(crate) fn into_inner(self) -> Box<dyn FormatReader> {
+        self.inner
+    }
 }
 
 impl FormatReader for RoboReader {
@@ -452,25 +478,10 @@ impl FormatReader for RoboReader {
         let path_obj = std::path::Path::new(&path);
         let format = detect_format(path_obj)?;
 
-        // Delegate to the appropriate format-specific reader
-        // Note: Most format readers don't support transport-based reading,
-        // so this will only work for transport-compatible readers
         let inner: Box<dyn FormatReader> = match format {
-            FileFormat::Mcap => {
-                // McapTransportReader supports transport-based reading
-                use crate::io::formats::mcap::transport_reader::McapTransportReader;
-                Box::new(McapTransportReader::open_from_transport(transport, path)?)
-            }
-            FileFormat::Bag => {
-                // BagTransportReader supports transport-based reading
-                use crate::io::formats::bag::BagTransportReader;
-                Box::new(BagTransportReader::open_from_transport(transport, path)?)
-            }
-            FileFormat::Rrd => {
-                // RrdTransportReader supports transport-based reading
-                use crate::io::formats::rrd::RrdTransportReader;
-                Box::new(RrdTransportReader::open_from_transport(transport, path)?)
-            }
+            FileFormat::Mcap => Box::new(McapFormat::open_from_transport(transport, path)?),
+            FileFormat::Bag => Box::new(BagFormat::open_from_transport(transport, path)?),
+            FileFormat::Rrd => Box::new(RrdFormat::open_from_transport(transport, path)?),
             FileFormat::Unknown => {
                 return Err(CodecError::parse(
                     "RoboReader",
@@ -914,7 +925,7 @@ mod tests {
         assert!(result.unwrap().is_none());
     }
 
-    /// Test that BagTransportReader works via FormatReader::open_from_transport
+    /// Test that BAG opens via FormatReader::open_from_transport
     /// Regression test: Previously BAG returned "unsupported" error
     #[test]
     #[cfg(feature = "remote")]
@@ -956,7 +967,7 @@ mod tests {
         }
     }
 
-    /// Test that RrdTransportReader works via FormatReader::open_from_transport
+    /// Test that RRD opens via FormatReader::open_from_transport
     /// Regression test: Previously RRD returned "unsupported" error
     #[test]
     #[cfg(feature = "remote")]

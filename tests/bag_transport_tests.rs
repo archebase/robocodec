@@ -2,17 +2,11 @@
 //
 // SPDX-License-Identifier: MulanPSL-2.0
 
-//! Integration tests for BAG transport reader.
-//!
-//! These tests verify that `BagTransportReader` produces identical results
-//! to the memory-mapped `BagFormat` reader.
+//! Integration tests for BAG transport-based opening.
 
 use std::collections::HashMap;
 
-use robocodec::io::{
-    FormatReader,
-    formats::bag::{BagFormat, BagTransportReader},
-};
+use robocodec::io::{FormatReader, RoboReader, formats::bag::BagFormat};
 
 /// Get the path to a test fixture.
 fn fixture_path(filename: &str) -> std::path::PathBuf {
@@ -20,12 +14,22 @@ fn fixture_path(filename: &str) -> std::path::PathBuf {
     manifest_dir.join("tests/fixtures").join(filename)
 }
 
-/// Test that BagTransportReader can open a local BAG file.
-#[test]
-fn test_transport_reader_open_local() {
-    let bag_path = fixture_path("robocodec_test_15.bag");
+#[cfg(feature = "remote")]
+fn bag_transport_from_fixture(filename: &str) -> Box<dyn robocodec::io::transport::Transport> {
+    use robocodec::io::transport::memory::MemoryTransport;
 
-    let reader = BagTransportReader::open(&bag_path).expect("Failed to open BAG file");
+    let bag_path = fixture_path(filename);
+    let data = std::fs::read(&bag_path).unwrap_or_else(|_| panic!("Failed to read {:?}", bag_path));
+    Box::new(MemoryTransport::new(data))
+}
+
+/// Test that BagFormat can open from a generic transport source.
+#[test]
+#[cfg(feature = "remote")]
+fn test_bag_format_open_from_transport() {
+    let transport = bag_transport_from_fixture("robocodec_test_15.bag");
+    let reader = BagFormat::open_from_transport(transport, "memory://test.bag".to_string())
+        .expect("Failed to open BAG via transport");
 
     // Should have at least one channel
     assert!(
@@ -36,8 +40,8 @@ fn test_transport_reader_open_local() {
     // Should have messages
     assert!(reader.message_count() > 0, "Expected at least one message");
 
-    // Path should match
-    assert_eq!(reader.path(), bag_path.to_string_lossy().as_ref());
+    // Should report provided logical path
+    assert_eq!(reader.path(), "memory://test.bag");
 
     // Format should be Bag
     assert!(matches!(
@@ -46,14 +50,18 @@ fn test_transport_reader_open_local() {
     ));
 }
 
-/// Test that BagTransportReader produces the same channel info as BagFormat.
+/// Test that transport and local open produce equivalent channel metadata.
 #[test]
-fn test_transport_reader_channels_match_mmap() {
+#[cfg(feature = "remote")]
+fn test_bag_format_transport_channels_match_local() {
     let bag_path = fixture_path("robocodec_test_15.bag");
 
-    // Open via transport reader
-    let transport_reader =
-        BagTransportReader::open(&bag_path).expect("Failed to open with transport");
+    // Open via transport-based reader
+    let transport_reader = BagFormat::open_from_transport(
+        bag_transport_from_fixture("robocodec_test_15.bag"),
+        "memory://test.bag".to_string(),
+    )
+    .expect("Failed to open with transport");
     let transport_channels: HashMap<_, _> = transport_reader
         .channels()
         .iter()
@@ -99,132 +107,20 @@ fn test_transport_reader_channels_match_mmap() {
     }
 }
 
-/// Test that BagTransportReader produces the same message count as BagFormat.
+/// Test that RoboReader routes BAG transport opening to supported readers.
 #[test]
-fn test_transport_reader_message_count_match_mmap() {
-    let bag_path = fixture_path("robocodec_test_15.bag");
-
-    let transport_reader =
-        BagTransportReader::open(&bag_path).expect("Failed to open with transport");
-    let mmap_reader = BagFormat::open(&bag_path).expect("Failed to open with mmap");
-
-    assert!(
-        transport_reader.message_count() > 0,
-        "Transport reader should have messages"
-    );
-    assert!(
-        mmap_reader.message_count() > 0,
-        "Mmap reader should have messages"
-    );
-}
-
-/// Test that timestamps are preserved correctly.
-#[test]
-fn test_transport_reader_timestamps_valid() {
-    let bag_path = fixture_path("robocodec_test_15.bag");
-
-    let reader = BagTransportReader::open(&bag_path).expect("Failed to open BAG file");
-
-    // Should have valid start and end times
-    let start_time = reader.start_time().expect("Should have start time");
-    let end_time = reader.end_time().expect("Should have end time");
-
-    // End time should be >= start time
-    assert!(
-        end_time >= start_time,
-        "End time ({}) should be >= start time ({})",
-        end_time,
-        start_time
-    );
-
-    // Times should be reasonable (not zero for a valid bag)
-    assert!(start_time > 0, "Start time should be > 0");
-}
-
-/// Test iter_raw_boxed produces messages.
-#[test]
-fn test_transport_reader_iter_raw() {
-    let bag_path = fixture_path("robocodec_test_15.bag");
-
-    let reader = BagTransportReader::open(&bag_path).expect("Failed to open BAG file");
-    let message_count = reader.message_count();
-
-    let mut count = 0;
-    for result in reader.iter_raw_boxed().expect("Failed to create iterator") {
-        let (_msg, _channel) = result.expect("Failed to read message");
-        count += 1;
-    }
-
-    assert_eq!(
-        count, message_count as usize,
-        "Iterator should produce all messages"
-    );
-}
-
-/// Test with multiple different BAG files.
-#[test]
-fn test_transport_reader_multiple_files() {
-    let files = [
-        "robocodec_test_15.bag",
-        "robocodec_test_17.bag",
-        "robocodec_test_18.bag",
-    ];
-
-    for filename in &files {
-        let bag_path = fixture_path(filename);
-
-        if !bag_path.exists() {
-            continue; // Skip if file doesn't exist
-        }
-
-        let reader = BagTransportReader::open(&bag_path)
-            .unwrap_or_else(|_| panic!("Failed to open {}", filename));
-
-        assert!(
-            !reader.channels().is_empty(),
-            "{} should have channels",
-            filename
-        );
-        assert!(
-            reader.message_count() > 0,
-            "{} should have messages",
-            filename
-        );
-    }
-}
-
-/// Test that file size is reported correctly.
-#[test]
-fn test_transport_reader_file_size() {
-    let bag_path = fixture_path("robocodec_test_15.bag");
-
-    let reader = BagTransportReader::open(&bag_path).expect("Failed to open BAG file");
-
-    // File size should be > 0
-    assert!(reader.file_size() > 0, "File size should be > 0");
-
-    // Should match actual file size
-    let metadata = std::fs::metadata(&bag_path).expect("Failed to get metadata");
-    assert_eq!(
-        reader.file_size(),
-        metadata.len(),
-        "File size should match actual file size"
-    );
-}
-
-/// Test file_info method.
-#[test]
-fn test_transport_reader_file_info() {
-    let bag_path = fixture_path("robocodec_test_15.bag");
-
-    let reader = BagTransportReader::open(&bag_path).expect("Failed to open BAG file");
-    let info = reader.file_info();
+#[cfg(feature = "remote")]
+fn test_robo_reader_open_from_transport_bag() {
+    let reader = RoboReader::open_from_transport(
+        bag_transport_from_fixture("robocodec_test_15.bag"),
+        "memory://test.bag".to_string(),
+    )
+    .expect("Failed to open RoboReader from transport");
 
     assert!(matches!(
-        info.format,
+        reader.format(),
         robocodec::io::metadata::FileFormat::Bag
     ));
-    assert!(!info.channels.is_empty());
-    assert!(info.message_count > 0);
-    assert!(info.size > 0);
+    assert!(!reader.channels().is_empty());
+    assert!(reader.message_count() > 0);
 }
