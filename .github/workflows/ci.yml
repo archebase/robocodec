@@ -63,7 +63,7 @@ jobs:
         run: cargo build --bin robocodec --package robocodec-cli
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --no-default-features
 
   rust-test-coverage:
     name: Rust Tests + Coverage
@@ -116,7 +116,7 @@ jobs:
         run: cargo build --bin robocodec --package robocodec-cli
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --no-default-features
 
   python-test:
     name: Python Tests
