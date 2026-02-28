@@ -352,7 +352,7 @@ fn test_simple_mcap_file() {
 
     // Verify parser discovered channels/messages from real fixture data.
     assert!(
-        parser.channels().len() > 0,
+        !parser.channels().is_empty(),
         "Expected at least one channel in fixture"
     );
     assert!(
