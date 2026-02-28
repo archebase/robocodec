@@ -11,19 +11,15 @@ use robocodec::io::streaming::{
 use super::fixture_path;
 use super::integration::{S3Config, ensure_bucket_exists, s3_available, upload_to_s3};
 
-fn spawn_best_effort_cleanup(config: &S3Config, key: &str) {
-    let endpoint = config.endpoint.clone();
-    let bucket = config.bucket.clone();
-    let key_cleanup = key.to_string();
-
-    tokio::spawn(async move {
-        let client = reqwest::Client::new();
-        let url = format!("{}/{}/{}", endpoint, bucket, key_cleanup);
-        let _ = client.delete(&url).send().await;
-    });
+/// Async cleanup helper - call AFTER test assertions to avoid race conditions.
+async fn cleanup_s3_object(config: &S3Config, key: &str) {
+    let client = reqwest::Client::new();
+    let url = format!("{}/{}/{}", config.endpoint, config.bucket, key);
+    let _ = client.delete(&url).send().await;
 }
 
-async fn run_streaming_reader_s3_case(fixture_name: &str, key: &str) {
+/// Helper that uploads fixture and returns config+key for cleanup after assertions.
+async fn setup_streaming_reader_s3_case(fixture_name: &str, key: &str) -> (S3Config, String) {
     assert!(
         s3_available().await,
         "MinIO/S3 is unavailable; StreamingRoboReader S3 test requires MinIO"
@@ -46,53 +42,83 @@ async fn run_streaming_reader_s3_case(fixture_name: &str, key: &str) {
         .await
         .expect("Failed to upload fixture to S3/MinIO");
 
-    spawn_best_effort_cleanup(&config, key);
-
     let s3_url = format!(
         "s3://{}/{}?endpoint={}",
         config.bucket, key, config.endpoint
     );
 
-    let reader = StreamingRoboReader::open(&s3_url, StreamConfig::new())
-        .await
-        .unwrap_or_else(|e| panic!("StreamingRoboReader::open failed for {fixture_name}: {e}"));
-
-    let messages = tokio::task::spawn_blocking(move || reader.collect_messages())
-        .await
-        .expect("collect_messages worker task panicked")
-        .unwrap_or_else(|e| panic!("collect_messages failed for {fixture_name}: {e}"));
-
-    assert!(
-        !messages.is_empty(),
-        "Expected at least one streamed message for {fixture_name}"
-    );
+    (config, s3_url)
 }
 
 #[tokio::test]
 async fn test_streaming_robo_reader_open_s3_rrd_collects_messages() {
-    run_streaming_reader_s3_case("rrd/file1.rrd", "test/streaming_reader_file1.rrd").await;
+    let key = "test/streaming_reader_file1.rrd";
+    let (config, s3_url) = setup_streaming_reader_s3_case("rrd/file1.rrd", key).await;
+
+    let reader = StreamingRoboReader::open(&s3_url, StreamConfig::new())
+        .await
+        .expect("StreamingRoboReader::open failed for rrd/file1.rrd");
+
+    let messages = tokio::task::spawn_blocking(move || reader.collect_messages())
+        .await
+        .expect("collect_messages worker task panicked")
+        .expect("collect_messages failed for rrd/file1.rrd");
+
+    assert!(
+        !messages.is_empty(),
+        "Expected at least one streamed message for rrd/file1.rrd"
+    );
+
+    cleanup_s3_object(&config, key).await;
 }
 
 #[tokio::test]
 async fn test_streaming_robo_reader_open_s3_mcap_collects_messages() {
-    run_streaming_reader_s3_case(
-        "robocodec_test_0.mcap",
-        "test/streaming_reader_robocodec_test_0.mcap",
-    )
-    .await;
+    let key = "test/streaming_reader_robocodec_test_0.mcap";
+    let (config, s3_url) = setup_streaming_reader_s3_case("robocodec_test_0.mcap", key).await;
+
+    let reader = StreamingRoboReader::open(&s3_url, StreamConfig::new())
+        .await
+        .expect("StreamingRoboReader::open failed for robocodec_test_0.mcap");
+
+    let messages = tokio::task::spawn_blocking(move || reader.collect_messages())
+        .await
+        .expect("collect_messages worker task panicked")
+        .expect("collect_messages failed for robocodec_test_0.mcap");
+
+    assert!(
+        !messages.is_empty(),
+        "Expected at least one streamed message for robocodec_test_0.mcap"
+    );
+
+    cleanup_s3_object(&config, key).await;
 }
 
 #[tokio::test]
 async fn test_streaming_robo_reader_open_s3_bag_collects_messages() {
-    run_streaming_reader_s3_case(
-        "robocodec_test_24_leju_claw.bag",
-        "test/streaming_reader_robocodec_test_24_leju_claw.bag",
-    )
-    .await;
+    let key = "test/streaming_reader_robocodec_test_24_leju_claw.bag";
+    let (config, s3_url) =
+        setup_streaming_reader_s3_case("robocodec_test_24_leju_claw.bag", key).await;
+
+    let reader = StreamingRoboReader::open(&s3_url, StreamConfig::new())
+        .await
+        .expect("StreamingRoboReader::open failed for robocodec_test_24_leju_claw.bag");
+
+    let messages = tokio::task::spawn_blocking(move || reader.collect_messages())
+        .await
+        .expect("collect_messages worker task panicked")
+        .expect("collect_messages failed for robocodec_test_24_leju_claw.bag");
+
+    assert!(
+        !messages.is_empty(),
+        "Expected at least one streamed message for robocodec_test_24_leju_claw.bag"
+    );
+
+    cleanup_s3_object(&config, key).await;
 }
 
 /// Helper for S3 frame alignment tests.
-async fn run_s3_frame_alignment_test(fixture_name: &str, key: &str) -> (S3Config, String) {
+async fn setup_s3_frame_alignment_test(fixture_name: &str, key: &str) -> (S3Config, String) {
     assert!(
         s3_available().await,
         "MinIO/S3 is unavailable; S3 frame alignment test requires MinIO"
@@ -115,8 +141,6 @@ async fn run_s3_frame_alignment_test(fixture_name: &str, key: &str) -> (S3Config
         .await
         .expect("Failed to upload fixture to S3/MinIO");
 
-    spawn_best_effort_cleanup(&config, key);
-
     let s3_url = format!(
         "s3://{}/{}?endpoint={}",
         config.bucket, key, config.endpoint
@@ -127,11 +151,9 @@ async fn run_s3_frame_alignment_test(fixture_name: &str, key: &str) -> (S3Config
 
 #[tokio::test]
 async fn test_streaming_robo_reader_open_s3_bag_collect_frames() {
-    let (_config, s3_url) = run_s3_frame_alignment_test(
-        "robocodec_test_24_leju_claw.bag",
-        "test/frame_align_collect_robocodec_test_24_leju_claw.bag",
-    )
-    .await;
+    let key = "test/frame_align_collect_robocodec_test_24_leju_claw.bag";
+    let (config, s3_url) =
+        setup_s3_frame_alignment_test("robocodec_test_24_leju_claw.bag", key).await;
 
     let reader = StreamingRoboReader::open(&s3_url, StreamConfig::new())
         .await
@@ -157,15 +179,15 @@ async fn test_streaming_robo_reader_open_s3_bag_collect_frames() {
         );
         last_timestamp = frame.timestamp;
     }
+
+    cleanup_s3_object(&config, key).await;
 }
 
 #[tokio::test]
 async fn test_streaming_robo_reader_open_s3_bag_process_frames() {
-    let (_config, s3_url) = run_s3_frame_alignment_test(
-        "robocodec_test_24_leju_claw.bag",
-        "test/frame_align_process_robocodec_test_24_leju_claw.bag",
-    )
-    .await;
+    let key = "test/frame_align_process_robocodec_test_24_leju_claw.bag";
+    let (config, s3_url) =
+        setup_s3_frame_alignment_test("robocodec_test_24_leju_claw.bag", key).await;
 
     let reader = StreamingRoboReader::open(&s3_url, StreamConfig::new())
         .await
@@ -201,4 +223,6 @@ async fn test_streaming_robo_reader_open_s3_bag_process_frames() {
         count > 0,
         "Expected at least one frame from S3 via process_frames"
     );
+
+    cleanup_s3_object(&config, key).await;
 }
