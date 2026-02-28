@@ -4,7 +4,9 @@
 
 //! StreamingRoboReader S3 integration tests.
 
-use robocodec::io::streaming::{StreamConfig, StreamingRoboReader};
+use robocodec::io::streaming::{
+    AlignedFrame, FrameAlignmentConfig, StreamConfig, StreamingRoboReader,
+};
 
 use super::fixture_path;
 use super::integration::{S3Config, ensure_bucket_exists, s3_available, upload_to_s3};
@@ -87,4 +89,116 @@ async fn test_streaming_robo_reader_open_s3_bag_collects_messages() {
         "test/streaming_reader_robocodec_test_24_leju_claw.bag",
     )
     .await;
+}
+
+/// Helper for S3 frame alignment tests.
+async fn run_s3_frame_alignment_test(fixture_name: &str, key: &str) -> (S3Config, String) {
+    assert!(
+        s3_available().await,
+        "MinIO/S3 is unavailable; S3 frame alignment test requires MinIO"
+    );
+
+    let fixture = fixture_path(fixture_name);
+    assert!(
+        fixture.exists(),
+        "Fixture required for S3 frame alignment test is missing: {}",
+        fixture.display()
+    );
+
+    let config = S3Config::default();
+    ensure_bucket_exists(&config)
+        .await
+        .expect("S3/MinIO bucket check failed");
+
+    let data = std::fs::read(&fixture).expect("Failed to read fixture for S3 upload");
+    upload_to_s3(&config, key, &data)
+        .await
+        .expect("Failed to upload fixture to S3/MinIO");
+
+    spawn_best_effort_cleanup(&config, key);
+
+    let s3_url = format!(
+        "s3://{}/{}?endpoint={}",
+        config.bucket, key, config.endpoint
+    );
+
+    (config, s3_url)
+}
+
+#[tokio::test]
+async fn test_streaming_robo_reader_open_s3_bag_collect_frames() {
+    let (_config, s3_url) = run_s3_frame_alignment_test(
+        "robocodec_test_24_leju_claw.bag",
+        "test/frame_align_collect_robocodec_test_24_leju_claw.bag",
+    )
+    .await;
+
+    let reader = StreamingRoboReader::open(&s3_url, StreamConfig::new())
+        .await
+        .expect("StreamingRoboReader::open failed for S3 frame alignment");
+
+    let frame_config = FrameAlignmentConfig::new(30)
+        .with_image_topic("/cam_l/color/image_raw/compressed")
+        .with_state_topic("/kuavo_arm_traj");
+
+    let frames = tokio::task::spawn_blocking(move || reader.collect_frames(frame_config))
+        .await
+        .expect("collect_frames worker task panicked")
+        .expect("collect_frames failed for S3 frame alignment");
+
+    assert!(!frames.is_empty(), "Expected at least one frame from S3");
+
+    let mut last_timestamp = 0u64;
+    for (i, frame) in frames.iter().enumerate() {
+        assert_eq!(frame.frame_index, i, "Frame index should be sequential");
+        assert!(
+            frame.timestamp >= last_timestamp,
+            "Frames should be in timestamp order"
+        );
+        last_timestamp = frame.timestamp;
+    }
+}
+
+#[tokio::test]
+async fn test_streaming_robo_reader_open_s3_bag_process_frames() {
+    let (_config, s3_url) = run_s3_frame_alignment_test(
+        "robocodec_test_24_leju_claw.bag",
+        "test/frame_align_process_robocodec_test_24_leju_claw.bag",
+    )
+    .await;
+
+    let reader = StreamingRoboReader::open(&s3_url, StreamConfig::new())
+        .await
+        .expect("StreamingRoboReader::open failed for S3 frame alignment");
+
+    let frame_config = FrameAlignmentConfig::new(30)
+        .with_image_topic("/cam_l/color/image_raw/compressed")
+        .with_state_topic("/kuavo_arm_traj");
+
+    let frame_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let frame_count_clone = frame_count.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        reader.process_frames(frame_config, move |frame: AlignedFrame| {
+            frame_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+            assert!(frame.timestamp > 0, "Frame should have timestamp");
+            assert!(
+                !frame.images.is_empty() || !frame.states.is_empty(),
+                "Frame should have either images or states"
+            );
+
+            Ok(())
+        })
+    })
+    .await
+    .expect("process_frames worker task panicked");
+
+    result.expect("process_frames failed for S3 frame alignment");
+
+    let count = frame_count.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(
+        count > 0,
+        "Expected at least one frame from S3 via process_frames"
+    );
 }
