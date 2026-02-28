@@ -333,6 +333,216 @@ fn test_aligned_frame_helpers() {
     assert!(!frame.has_required_state(&["missing_state"]));
 }
 
+/// Test AlignedFrame with multiple images and states.
+#[test]
+fn test_aligned_frame_multiple_images_and_states() {
+    let mut frame = AlignedFrame::new(0, 1_000_000_000);
+
+    // Add multiple images
+    frame.add_image("camera_left", 640, 480, vec![0u8; 100], true);
+    frame.add_image("camera_right", 640, 480, vec![1u8; 100], true);
+    frame.add_image("camera_center", 1280, 720, vec![2u8; 200], true);
+
+    // Add multiple states
+    frame.add_state("joint_positions", vec![0.1, 0.2, 0.3, 0.4, 0.5]);
+    frame.add_state("joint_velocities", vec![0.01, 0.02, 0.03, 0.04, 0.05]);
+    frame.add_state("imu", vec![9.8, 0.1, 0.2, 0.0, 0.0, 0.0]);
+
+    // Verify all images can be retrieved
+    let left = frame.get_image("camera_left").unwrap();
+    assert_eq!(left.width, 640);
+    assert_eq!(left.height, 480);
+    assert_eq!(left.data[0], 0u8);
+
+    let right = frame.get_image("camera_right").unwrap();
+    assert_eq!(right.width, 640);
+    assert_eq!(right.height, 480);
+    assert_eq!(right.data[0], 1u8);
+
+    let center = frame.get_image("camera_center").unwrap();
+    assert_eq!(center.width, 1280);
+    assert_eq!(center.height, 720);
+    assert_eq!(center.data[0], 2u8);
+
+    // Verify all states can be retrieved
+    let positions = frame.get_state("joint_positions").unwrap();
+    assert_eq!(positions.len(), 5);
+    assert_eq!(positions[0], 0.1);
+
+    let velocities = frame.get_state("joint_velocities").unwrap();
+    assert_eq!(velocities.len(), 5);
+    assert_eq!(velocities[0], 0.01);
+
+    let imu = frame.get_state("imu").unwrap();
+    assert_eq!(imu.len(), 6);
+    assert_eq!(imu[0], 9.8);
+
+    // Verify has_required_images with partial list (should pass)
+    assert!(frame.has_required_images(&["camera_left"]));
+    assert!(frame.has_required_images(&["camera_left", "camera_right"]));
+    assert!(frame.has_required_images(&["camera_center", "camera_left"]));
+
+    // Verify has_required_images with extra missing image (should fail)
+    assert!(!frame.has_required_images(&["camera_left", "camera_missing"]));
+    assert!(!frame.has_required_images(&["nonexistent"]));
+    assert!(!frame.has_required_images(&[
+        "camera_left",
+        "camera_right",
+        "camera_center",
+        "missing"
+    ]));
+
+    // Verify has_required_state with partial list (should pass)
+    assert!(frame.has_required_state(&["joint_positions"]));
+    assert!(frame.has_required_state(&["joint_positions", "joint_velocities"]));
+    assert!(frame.has_required_state(&["imu", "joint_positions"]));
+
+    // Verify has_required_state with extra missing state (should fail)
+    assert!(!frame.has_required_state(&["joint_positions", "missing_state"]));
+    assert!(!frame.has_required_state(&["nonexistent"]));
+    assert!(!frame.has_required_state(&["joint_positions", "joint_velocities", "imu", "missing"]));
+
+    // Verify empty requirement always passes
+    assert!(frame.has_required_images(&[] as &[&str]));
+    assert!(frame.has_required_state(&[] as &[&str]));
+}
+
+/// Test empty AlignedFrame behavior.
+#[test]
+fn test_aligned_frame_empty() {
+    let frame = AlignedFrame::new(0, 1_000_000_000);
+
+    // Verify frame metadata
+    assert_eq!(frame.frame_index, 0);
+    assert_eq!(frame.timestamp, 1_000_000_000);
+
+    // Verify has_required_images returns false for any requirement
+    assert!(!frame.has_required_images(&["any_image"]));
+    assert!(!frame.has_required_images(&["camera_left", "camera_right"]));
+    assert!(!frame.has_required_images(&[""]));
+
+    // Verify has_required_state returns false for any requirement
+    assert!(!frame.has_required_state(&["any_state"]));
+    assert!(!frame.has_required_state(&["joint_positions", "joint_velocities"]));
+    assert!(!frame.has_required_state(&[""]));
+
+    // Empty requirement list should pass
+    assert!(frame.has_required_images(&[] as &[&str]));
+    assert!(frame.has_required_state(&[] as &[&str]));
+
+    // Verify getters return None for non-existent keys
+    assert!(frame.get_image("camera_left").is_none());
+    assert!(frame.get_image("").is_none());
+    assert!(frame.get_image("any_key").is_none());
+
+    assert!(frame.get_state("joint_positions").is_none());
+    assert!(frame.get_state("").is_none());
+    assert!(frame.get_state("any_key").is_none());
+
+    // Verify internal collections are empty
+    assert!(frame.images.is_empty());
+    assert!(frame.states.is_empty());
+    assert!(frame.messages.is_empty());
+}
+
+/// Test AlignedFrame messages tracking.
+#[test]
+fn test_aligned_frame_messages_tracking() {
+    use robocodec::io::metadata::ChannelInfo;
+
+    let mut frame = AlignedFrame::new(0, 1_000_000_000);
+
+    // Create a sample channel
+    let channel = ChannelInfo {
+        id: 1,
+        topic: "/test/topic".to_string(),
+        message_type: "std_msgs/String".to_string(),
+        encoding: "cdr".to_string(),
+        schema: None,
+        schema_data: None,
+        schema_encoding: None,
+        message_count: 0,
+        callerid: None,
+    };
+
+    // Create and add TimestampedMessage entries
+    let msg1 = TimestampedMessage {
+        topic: "/test/topic".to_string(),
+        log_time: 1_000_000_000,
+        publish_time: 999_999_000,
+        sequence: 1,
+        data: robocodec::CodecValue::String("message 1".to_string()),
+        channel: channel.clone(),
+    };
+
+    let msg2 = TimestampedMessage {
+        topic: "/test/topic".to_string(),
+        log_time: 1_000_000_100,
+        publish_time: 999_999_100,
+        sequence: 2,
+        data: robocodec::CodecValue::String("message 2".to_string()),
+        channel: channel.clone(),
+    };
+
+    let msg3 = TimestampedMessage {
+        topic: "/other/topic".to_string(),
+        log_time: 1_000_000_200,
+        publish_time: 999_999_200,
+        sequence: 3,
+        data: robocodec::CodecValue::Int32(42),
+        channel: ChannelInfo {
+            id: 2,
+            topic: "/other/topic".to_string(),
+            message_type: "std_msgs/Int32".to_string(),
+            encoding: "cdr".to_string(),
+            schema: None,
+            schema_data: None,
+            schema_encoding: None,
+            message_count: 0,
+            callerid: None,
+        },
+    };
+
+    // Add messages to frame
+    frame.messages.push(msg1.clone());
+    frame.messages.push(msg2.clone());
+    frame.messages.push(msg3.clone());
+
+    // Verify messages are stored
+    assert_eq!(frame.messages.len(), 3);
+
+    // Verify first message
+    assert_eq!(frame.messages[0].topic, "/test/topic");
+    assert_eq!(frame.messages[0].log_time, 1_000_000_000);
+    assert_eq!(frame.messages[0].sequence, 1);
+    match &frame.messages[0].data {
+        robocodec::CodecValue::String(s) => assert_eq!(s, "message 1"),
+        _ => panic!("Expected String data"),
+    }
+
+    // Verify second message
+    assert_eq!(frame.messages[1].topic, "/test/topic");
+    assert_eq!(frame.messages[1].log_time, 1_000_000_100);
+    assert_eq!(frame.messages[1].sequence, 2);
+
+    // Verify third message
+    assert_eq!(frame.messages[2].topic, "/other/topic");
+    assert_eq!(frame.messages[2].log_time, 1_000_000_200);
+    assert_eq!(frame.messages[2].sequence, 3);
+    match &frame.messages[2].data {
+        robocodec::CodecValue::Int32(n) => assert_eq!(*n, 42),
+        _ => panic!("Expected Int32 data"),
+    }
+
+    // Verify messages can be iterated
+    let topics: Vec<&str> = frame.messages.iter().map(|m| m.topic.as_str()).collect();
+    assert_eq!(topics, vec!["/test/topic", "/test/topic", "/other/topic"]);
+
+    // Verify messages can be cleared
+    frame.messages.clear();
+    assert!(frame.messages.is_empty());
+}
+
 /// Test TimestampedMessage structure.
 #[test]
 fn test_timestamped_message() {

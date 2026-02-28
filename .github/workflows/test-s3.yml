@@ -20,8 +20,8 @@ on:
 env:
   RUST_BACKTRACE: 1
   MINIO_ENDPOINT: http://localhost:9000
-  MINIO_ACCESS_KEY: minioadmin
-  MINIO_SECRET_KEY: minioadmin
+  MINIO_USER: minioadmin
+  MINIO_PASSWORD: minioadmin
   MINIO_BUCKET: test-fixtures
   MINIO_REGION: us-east-1
 
