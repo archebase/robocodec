@@ -4,6 +4,8 @@
 
 //! Integration tests for the streaming API.
 
+#![cfg(feature = "remote")]
+
 use std::path::PathBuf;
 
 use robocodec::io::streaming::{

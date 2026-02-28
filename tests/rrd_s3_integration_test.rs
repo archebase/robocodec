@@ -7,6 +7,8 @@
 //! These tests use actual RRD files from Rerun to verify that the S3 streaming
 //! parser works correctly with real-world data in ArrowMsg protobuf format.
 
+#![cfg(feature = "remote")]
+
 use std::fs;
 use std::path::Path;
 
