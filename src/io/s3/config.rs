@@ -80,9 +80,9 @@ impl AwsCredentials {
 
     /// Create credentials from environment variables.
     ///
-    /// Reads from:
-    /// - `AWS_ACCESS_KEY_ID` or `AWS_ACCESS_KEY`
-    /// - `AWS_SECRET_ACCESS_KEY` or `AWS_SECRET_KEY`
+    /// Reads from (in order of priority):
+    /// - `AWS_ACCESS_KEY_ID` or `AWS_ACCESS_KEY` or `MINIO_USER`
+    /// - `AWS_SECRET_ACCESS_KEY` or `AWS_SECRET_KEY` or `MINIO_PASSWORD`
     /// - `AWS_SESSION_TOKEN` (optional)
     ///
     /// Returns `None` if the required environment variables are not set.
@@ -90,10 +90,12 @@ impl AwsCredentials {
     pub fn from_env() -> Option<Self> {
         let access_key_id = std::env::var("AWS_ACCESS_KEY_ID")
             .or_else(|_| std::env::var("AWS_ACCESS_KEY"))
+            .or_else(|_| std::env::var("MINIO_USER"))
             .ok()?;
 
         let secret_access_key = std::env::var("AWS_SECRET_ACCESS_KEY")
             .or_else(|_| std::env::var("AWS_SECRET_KEY"))
+            .or_else(|_| std::env::var("MINIO_PASSWORD"))
             .ok()?;
 
         let session_token = std::env::var("AWS_SESSION_TOKEN").ok();
