@@ -70,3 +70,21 @@ async fn run_streaming_reader_s3_case(fixture_name: &str, key: &str) {
 async fn test_streaming_robo_reader_open_s3_rrd_collects_messages() {
     run_streaming_reader_s3_case("rrd/file1.rrd", "test/streaming_reader_file1.rrd").await;
 }
+
+#[tokio::test]
+async fn test_streaming_robo_reader_open_s3_mcap_collects_messages() {
+    run_streaming_reader_s3_case(
+        "robocodec_test_0.mcap",
+        "test/streaming_reader_robocodec_test_0.mcap",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_streaming_robo_reader_open_s3_bag_collects_messages() {
+    run_streaming_reader_s3_case(
+        "robocodec_test_24_leju_claw.bag",
+        "test/streaming_reader_robocodec_test_24_leju_claw.bag",
+    )
+    .await;
+}
