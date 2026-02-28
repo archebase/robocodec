@@ -68,6 +68,12 @@ jobs:
   rust-test-coverage:
     name: Rust Tests + Coverage
     runs-on: ubuntu-latest
+    env:
+      MINIO_ENDPOINT: http://127.0.0.1:9000
+      MINIO_BUCKET: test-bucket
+      MINIO_REGION: us-east-1
+      MINIO_USER: minioadmin
+      MINIO_PASSWORD: minioadmin
     steps:
       - uses: actions/checkout@v4
 
@@ -88,8 +94,34 @@ jobs:
         if: steps.cache-llvm-cov.outputs.cache-hit != 'true'
         run: cargo install cargo-llvm-cov
 
-      # Note: Do NOT use --all-features or --features python here.
-      # PyO3's extension-module feature prevents linking in standalone test binaries.
+      - name: Start MinIO container
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest \
+            server /data --console-address ":9001"
+
+      - name: Wait for MinIO to be ready
+        run: |
+          timeout 60 bash -c 'until curl -f http://127.0.0.1:9000/minio/health/live; do sleep 1; done'
+
+      - name: Install MinIO client
+        run: |
+          wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /tmp/mc
+          chmod +x /tmp/mc
+
+      - name: Configure MinIO alias and create bucket
+        run: |
+          /tmp/mc alias set robocodec-test http://127.0.0.1:9000 minioadmin minioadmin
+          /tmp/mc mb robocodec-test/test-bucket --ignore-existing
+
+      - name: Upload test fixtures to MinIO
+        run: |
+          /tmp/mc cp tests/fixtures/robocodec_test_0.mcap robocodec-test/test-bucket/test/robocodec_test_0.mcap
+          /tmp/mc cp tests/fixtures/robocodec_test_15.bag robocodec-test/test-bucket/test/robocodec_test_15.bag
+
       - name: Run tests with coverage
         run: cargo llvm-cov --workspace --features remote --lcov --output-path lcov-rust.info
 
@@ -196,53 +228,3 @@ jobs:
 
       - name: Test Python examples for API compatibility
         run: make test-examples
-
-  s3-test:
-    name: S3 Streaming Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Start MinIO container
-        run: |
-          docker run -d --name minio \
-            -p 9000:9000 -p 9001:9001 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=minioadmin \
-            minio/minio:latest \
-            server /data --console-address ":9001"
-
-      - name: Wait for MinIO to be ready
-        run: |
-          timeout 60 bash -c 'until curl -f http://127.0.0.1:9000/minio/health/live; do sleep 1; done'
-
-      - name: Install MinIO client
-        run: |
-          wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /tmp/mc
-          chmod +x /tmp/mc
-
-      - name: Configure MinIO alias and create bucket
-        run: |
-          /tmp/mc alias set robocodec-test http://127.0.0.1:9000 minioadmin minioadmin
-          /tmp/mc mb robocodec-test/test-bucket --ignore-existing
-
-      - name: Upload MCAP fixture to MinIO
-        run: |
-          /tmp/mc cp tests/fixtures/robocodec_test_0.mcap robocodec-test/test-bucket/test/robocodec_test_0.mcap
-
-      - name: Upload BAG fixture to MinIO
-        run: |
-          /tmp/mc cp tests/fixtures/robocodec_test_15.bag robocodec-test/test-bucket/test/robocodec_test_15.bag
-
-      - name: Run S3 tests
-        env:
-          MINIO_ENDPOINT: http://127.0.0.1:9000
-          MINIO_BUCKET: test-bucket
-          MINIO_REGION: us-east-1
-          MINIO_USER: minioadmin
-          MINIO_PASSWORD: minioadmin
-        run: 'cargo test --features remote --test s3_tests s3::'
