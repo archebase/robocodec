@@ -248,30 +248,68 @@ impl RoboReader {
                 let path_for_detection = path.split('?').next().unwrap_or(path);
                 let path_obj = std::path::Path::new(path_for_detection);
                 let format = detect_format(path_obj)?;
+                let path_owned = path.to_string();
 
                 match format {
                     FileFormat::Mcap => {
+                        let open_path = path_owned.clone();
+                        let error_path = path_owned.clone();
+                        let reader = std::thread::spawn(move || {
+                            shared_runtime().block_on(McapFormat::open_from_transport(
+                                transport, open_path,
+                            ))
+                        })
+                        .join()
+                        .map_err(|_| {
+                            CodecError::encode(
+                                "RoboReader",
+                                format!(
+                                    "Failed to join MCAP transport initialization for '{error_path}'"
+                                ),
+                            )
+                        })??;
                         return Ok(Self {
-                            inner: Box::new(McapFormat::open_from_transport(
-                                transport,
-                                path.to_string(),
-                            )?),
+                            inner: Box::new(reader),
                         });
                     }
                     FileFormat::Bag => {
+                        let open_path = path_owned.clone();
+                        let error_path = path_owned.clone();
+                        let reader = std::thread::spawn(move || {
+                            shared_runtime()
+                                .block_on(BagFormat::open_from_transport(transport, open_path))
+                        })
+                        .join()
+                        .map_err(|_| {
+                            CodecError::encode(
+                                "RoboReader",
+                                format!(
+                                    "Failed to join BAG transport initialization for '{error_path}'"
+                                ),
+                            )
+                        })??;
                         return Ok(Self {
-                            inner: Box::new(BagFormat::open_from_transport(
-                                transport,
-                                path.to_string(),
-                            )?),
+                            inner: Box::new(reader),
                         });
                     }
                     FileFormat::Rrd => {
+                        let open_path = path_owned.clone();
+                        let error_path = path_owned.clone();
+                        let reader = std::thread::spawn(move || {
+                            shared_runtime()
+                                .block_on(RrdFormat::open_from_transport(transport, open_path))
+                        })
+                        .join()
+                        .map_err(|_| {
+                            CodecError::encode(
+                                "RoboReader",
+                                format!(
+                                    "Failed to join RRD transport initialization for '{error_path}'"
+                                ),
+                            )
+                        })??;
                         return Ok(Self {
-                            inner: Box::new(RrdFormat::open_from_transport(
-                                transport,
-                                path.to_string(),
-                            )?),
+                            inner: Box::new(reader),
                         });
                     }
                     FileFormat::Unknown => {
@@ -467,7 +505,7 @@ impl RoboReader {
 
 impl FormatReader for RoboReader {
     #[cfg(feature = "remote")]
-    fn open_from_transport(
+    async fn open_from_transport(
         transport: Box<dyn crate::io::transport::Transport>,
         path: String,
     ) -> Result<Self>
@@ -479,9 +517,9 @@ impl FormatReader for RoboReader {
         let format = detect_format(path_obj)?;
 
         let inner: Box<dyn FormatReader> = match format {
-            FileFormat::Mcap => Box::new(McapFormat::open_from_transport(transport, path)?),
-            FileFormat::Bag => Box::new(BagFormat::open_from_transport(transport, path)?),
-            FileFormat::Rrd => Box::new(RrdFormat::open_from_transport(transport, path)?),
+            FileFormat::Mcap => Box::new(McapFormat::open_from_transport(transport, path).await?),
+            FileFormat::Bag => Box::new(BagFormat::open_from_transport(transport, path).await?),
+            FileFormat::Rrd => Box::new(RrdFormat::open_from_transport(transport, path).await?),
             FileFormat::Unknown => {
                 return Err(CodecError::parse(
                     "RoboReader",
@@ -568,7 +606,7 @@ mod tests {
 
     impl FormatReader for MockReader {
         #[cfg(feature = "remote")]
-        fn open_from_transport(
+        async fn open_from_transport(
             _transport: Box<dyn crate::io::transport::Transport>,
             path: String,
         ) -> Result<Self>
@@ -925,6 +963,124 @@ mod tests {
         assert!(result.unwrap().is_none());
     }
 
+    /// Regression test for transport readers:
+    /// Pending must not cause busy-spin in open_from_transport.
+    #[test]
+    #[cfg(feature = "remote")]
+    fn test_transport_open_does_not_busy_spin_on_pending() {
+        use crate::io::traits::FormatReader;
+        use crate::io::transport::Transport;
+        use std::io;
+        use std::pin::Pin;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::task::{Context, Poll};
+        use std::time::{Duration, Instant};
+
+        struct PendingThenReadyTransport {
+            data: Vec<u8>,
+            pos: usize,
+            delay: Duration,
+            start: Instant,
+            wake_scheduled: bool,
+            poll_count: Arc<AtomicUsize>,
+        }
+
+        impl PendingThenReadyTransport {
+            fn new(data: Vec<u8>, delay: Duration, poll_count: Arc<AtomicUsize>) -> Self {
+                Self {
+                    data,
+                    pos: 0,
+                    delay,
+                    start: Instant::now(),
+                    wake_scheduled: false,
+                    poll_count,
+                }
+            }
+        }
+
+        impl Transport for PendingThenReadyTransport {
+            fn poll_read(
+                mut self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+                buf: &mut [u8],
+            ) -> Poll<io::Result<usize>> {
+                self.poll_count.fetch_add(1, Ordering::Relaxed);
+
+                if self.start.elapsed() < self.delay {
+                    if !self.wake_scheduled {
+                        self.wake_scheduled = true;
+                        let waker = cx.waker().clone();
+                        let remaining = self.delay.saturating_sub(self.start.elapsed());
+                        std::thread::spawn(move || {
+                            std::thread::sleep(remaining);
+                            waker.wake();
+                        });
+                    }
+                    return Poll::Pending;
+                }
+
+                let this = self.as_mut().get_mut();
+                if this.pos >= this.data.len() {
+                    return Poll::Ready(Ok(0));
+                }
+
+                let n = buf.len().min(this.data.len() - this.pos);
+                buf[..n].copy_from_slice(&this.data[this.pos..this.pos + n]);
+                this.pos += n;
+                Poll::Ready(Ok(n))
+            }
+
+            fn poll_seek(
+                mut self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+                pos: u64,
+            ) -> Poll<io::Result<u64>> {
+                let this = self.as_mut().get_mut();
+                this.pos = pos as usize;
+                Poll::Ready(Ok(pos))
+            }
+
+            fn position(&self) -> u64 {
+                self.pos as u64
+            }
+
+            fn len(&self) -> Option<u64> {
+                Some(self.data.len() as u64)
+            }
+
+            fn is_seekable(&self) -> bool {
+                true
+            }
+        }
+
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/robocodec_test_0.mcap");
+        if !fixture_path.exists() {
+            eprintln!("Skipping test: fixture not found");
+            return;
+        }
+
+        let data = std::fs::read(fixture_path).expect("failed to read mcap fixture");
+        let poll_count = Arc::new(AtomicUsize::new(0));
+        let transport = PendingThenReadyTransport::new(
+            data,
+            Duration::from_millis(25),
+            Arc::clone(&poll_count),
+        );
+
+        let result = shared_runtime().block_on(RoboReader::open_from_transport(
+            Box::new(transport),
+            "pending.mcap".to_string(),
+        ));
+
+        assert!(result.is_ok(), "open_from_transport should succeed");
+        assert!(
+            poll_count.load(Ordering::Relaxed) < 200,
+            "poll_read should not busy-spin while Pending"
+        );
+    }
+
     /// Test that BAG opens via FormatReader::open_from_transport
     /// Regression test: Previously BAG returned "unsupported" error
     #[test]
@@ -947,7 +1103,10 @@ mod tests {
             Box::new(MemoryTransport::new(data)) as Box<dyn crate::io::transport::Transport>;
 
         // This should NOT return "unsupported" error anymore
-        let result = RoboReader::open_from_transport(transport, "test.bag".to_string());
+        let result = shared_runtime().block_on(RoboReader::open_from_transport(
+            transport,
+            "test.bag".to_string(),
+        ));
 
         match result {
             Ok(reader) => {
@@ -984,7 +1143,10 @@ mod tests {
             Box::new(MemoryTransport::new(data)) as Box<dyn crate::io::transport::Transport>;
 
         // This should NOT return "unsupported" error anymore
-        let result = RoboReader::open_from_transport(transport, "test.rrd".to_string());
+        let result = shared_runtime().block_on(RoboReader::open_from_transport(
+            transport,
+            "test.rrd".to_string(),
+        ));
 
         match result {
             Ok(reader) => {

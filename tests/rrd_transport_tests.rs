@@ -27,10 +27,10 @@ fn rrd_transport_from_fixture(filename: &str) -> Box<dyn robocodec::io::transpor
 #[test]
 #[cfg(feature = "remote")]
 fn test_rrd_format_open_from_transport() {
-    let reader = RrdFormat::open_from_transport(
+    let reader = tokio_test::block_on(RrdFormat::open_from_transport(
         rrd_transport_from_fixture("file1.rrd"),
         "memory://test.rrd".to_string(),
-    )
+    ))
     .expect("Failed to open RRD via transport");
 
     // Should have at least one channel
@@ -59,10 +59,10 @@ fn test_rrd_format_transport_channels_match_local() {
     let rrd_path = fixture_path("file1.rrd");
 
     // Open via transport-based reader
-    let transport_reader = RrdFormat::open_from_transport(
+    let transport_reader = tokio_test::block_on(RrdFormat::open_from_transport(
         rrd_transport_from_fixture("file1.rrd"),
         "memory://test.rrd".to_string(),
-    )
+    ))
     .expect("Failed to open with transport");
     let transport_channels: HashMap<_, _> = transport_reader
         .channels()
@@ -103,10 +103,10 @@ fn test_rrd_format_transport_channels_match_local() {
 #[test]
 #[cfg(feature = "remote")]
 fn test_robo_reader_open_from_transport_rrd() {
-    let reader = RoboReader::open_from_transport(
+    let reader = tokio_test::block_on(RoboReader::open_from_transport(
         rrd_transport_from_fixture("file1.rrd"),
         "memory://test.rrd".to_string(),
-    )
+    ))
     .expect("Failed to open RoboReader from transport");
 
     assert!(matches!(

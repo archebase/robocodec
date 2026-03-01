@@ -28,8 +28,11 @@ fn bag_transport_from_fixture(filename: &str) -> Box<dyn robocodec::io::transpor
 #[cfg(feature = "remote")]
 fn test_bag_format_open_from_transport() {
     let transport = bag_transport_from_fixture("robocodec_test_15.bag");
-    let reader = BagFormat::open_from_transport(transport, "memory://test.bag".to_string())
-        .expect("Failed to open BAG via transport");
+    let reader = tokio_test::block_on(BagFormat::open_from_transport(
+        transport,
+        "memory://test.bag".to_string(),
+    ))
+    .expect("Failed to open BAG via transport");
 
     // Should have at least one channel
     assert!(
@@ -57,10 +60,10 @@ fn test_bag_format_transport_channels_match_local() {
     let bag_path = fixture_path("robocodec_test_15.bag");
 
     // Open via transport-based reader
-    let transport_reader = BagFormat::open_from_transport(
+    let transport_reader = tokio_test::block_on(BagFormat::open_from_transport(
         bag_transport_from_fixture("robocodec_test_15.bag"),
         "memory://test.bag".to_string(),
-    )
+    ))
     .expect("Failed to open with transport");
     let transport_channels: HashMap<_, _> = transport_reader
         .channels()
@@ -111,10 +114,10 @@ fn test_bag_format_transport_channels_match_local() {
 #[test]
 #[cfg(feature = "remote")]
 fn test_robo_reader_open_from_transport_bag() {
-    let reader = RoboReader::open_from_transport(
+    let reader = tokio_test::block_on(RoboReader::open_from_transport(
         bag_transport_from_fixture("robocodec_test_15.bag"),
         "memory://test.bag".to_string(),
-    )
+    ))
     .expect("Failed to open RoboReader from transport");
 
     assert!(matches!(

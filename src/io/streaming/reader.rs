@@ -104,15 +104,14 @@ impl StreamingRoboReader {
                 let format = detect_format(path_obj)?;
 
                 let inner: Box<dyn FormatReader> = match format {
-                    FileFormat::Mcap => Box::new(McapFormat::open_from_transport(
-                        transport,
-                        path.to_string(),
-                    )?),
+                    FileFormat::Mcap => Box::new(
+                        McapFormat::open_from_transport(transport, path.to_string()).await?,
+                    ),
                     FileFormat::Bag => {
-                        Box::new(BagFormat::open_from_transport(transport, path.to_string())?)
+                        Box::new(BagFormat::open_from_transport(transport, path.to_string()).await?)
                     }
                     FileFormat::Rrd => {
-                        Box::new(RrdFormat::open_from_transport(transport, path.to_string())?)
+                        Box::new(RrdFormat::open_from_transport(transport, path.to_string()).await?)
                     }
                     FileFormat::Unknown => {
                         return Err(CodecError::parse(
