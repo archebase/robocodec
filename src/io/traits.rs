@@ -62,6 +62,7 @@ impl<T> DecodedMessageIterator for T where
 ///     println!("Messages: {}", reader.message_count());
 /// }
 /// ```
+#[allow(async_fn_in_trait)]
 pub trait FormatReader: Send + Sync {
     /// Open a reader from any transport source.
     ///
@@ -86,7 +87,7 @@ pub trait FormatReader: Send + Sync {
     /// - The data is not a valid file for this format
     /// - Required metadata cannot be extracted
     #[cfg(feature = "remote")]
-    fn open_from_transport(
+    async fn open_from_transport(
         transport: Box<dyn crate::io::transport::Transport>,
         path: String,
     ) -> Result<Self>
@@ -775,7 +776,7 @@ mod tests {
 
         impl FormatReader for TestReader {
             #[cfg(feature = "remote")]
-            fn open_from_transport(
+            async fn open_from_transport(
                 _transport: Box<dyn crate::io::transport::Transport>,
                 _path: String,
             ) -> Result<Self>
@@ -952,7 +953,7 @@ mod tests {
 
         impl FormatReader for TestReader {
             #[cfg(feature = "remote")]
-            fn open_from_transport(
+            async fn open_from_transport(
                 _transport: Box<dyn crate::io::transport::Transport>,
                 _path: String,
             ) -> Result<Self>
@@ -1022,7 +1023,7 @@ mod tests {
 
         impl FormatReader for TestReader {
             #[cfg(feature = "remote")]
-            fn open_from_transport(
+            async fn open_from_transport(
                 _transport: Box<dyn crate::io::transport::Transport>,
                 _path: String,
             ) -> Result<Self>
@@ -1087,7 +1088,7 @@ mod tests {
 
         impl FormatReader for TestReader {
             #[cfg(feature = "remote")]
-            fn open_from_transport(
+            async fn open_from_transport(
                 _transport: Box<dyn crate::io::transport::Transport>,
                 _path: String,
             ) -> Result<Self>

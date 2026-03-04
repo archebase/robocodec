@@ -59,30 +59,26 @@ impl McapFormat {
 
     /// Open an MCAP reader from a transport source.
     #[cfg(feature = "remote")]
-    pub fn open_from_transport(
-        mut transport: Box<dyn crate::io::transport::Transport>,
+    pub async fn open_from_transport(
+        transport: Box<dyn crate::io::transport::Transport>,
         path: String,
     ) -> Result<McapReader> {
-        use std::pin::Pin;
-        use std::task::{Context, Poll, Waker};
+        use std::future::poll_fn;
 
         let mut data = Vec::new();
         let mut buffer = vec![0u8; 64 * 1024];
-        let waker = Waker::noop();
-        let mut cx = Context::from_waker(waker);
-        let mut pinned_transport = unsafe { Pin::new_unchecked(transport.as_mut()) };
+        let mut pinned_transport = Box::into_pin(transport);
 
         loop {
-            match pinned_transport.as_mut().poll_read(&mut cx, &mut buffer) {
-                Poll::Ready(Ok(0)) => break,
-                Poll::Ready(Ok(n)) => data.extend_from_slice(&buffer[..n]),
-                Poll::Ready(Err(e)) => {
+            match poll_fn(|cx| pinned_transport.as_mut().poll_read(cx, &mut buffer)).await {
+                Ok(0) => break,
+                Ok(n) => data.extend_from_slice(&buffer[..n]),
+                Err(e) => {
                     return Err(CodecError::encode(
                         "Transport",
                         format!("Failed to read from {path}: {e}"),
                     ));
                 }
-                Poll::Pending => std::thread::yield_now(),
             }
         }
 
@@ -271,7 +267,7 @@ impl McapReader {
 
 impl FormatReader for McapReader {
     #[cfg(feature = "remote")]
-    fn open_from_transport(
+    async fn open_from_transport(
         _transport: Box<dyn crate::io::transport::Transport>,
         _path: String,
     ) -> Result<Self>
