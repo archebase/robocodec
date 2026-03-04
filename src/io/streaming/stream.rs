@@ -213,11 +213,11 @@ impl FrameStream {
         let log_time = msg.log_time;
 
         // Extract state data if this is a state topic
-        if self.config.state_topics.contains(&msg.topic) {
-            if let Some(state) = Self::extract_state(&msg.data) {
-                let entries = self.state_buffer.entry(msg.topic.clone()).or_default();
-                entries.push((msg.log_time, state));
-            }
+        if self.config.state_topics.contains(&msg.topic)
+            && let Some(state) = Self::extract_state(&msg.data)
+        {
+            let entries = self.state_buffer.entry(msg.topic.clone()).or_default();
+            entries.push((msg.log_time, state));
         }
 
         // Only buffer image-topic messages (which are searched by find_image_at_time).
