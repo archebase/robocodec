@@ -210,20 +210,27 @@ impl FrameStream {
 
     /// Process a message and return any completed frames.
     pub fn process_message(&mut self, msg: TimestampedMessage) -> Vec<AlignedFrame> {
-        self.message_buffer.push(msg.clone());
-        self.progress
-            .set_messages_buffered(self.message_buffer.len());
+        let log_time = msg.log_time;
 
         // Extract state data if this is a state topic
-        if self.config.state_topics.contains(&msg.topic)
-            && let Some(state) = Self::extract_state(&msg.data)
-        {
-            let entries = self.state_buffer.entry(msg.topic.clone()).or_default();
-            entries.push((msg.log_time, state));
+        if self.config.state_topics.contains(&msg.topic) {
+            if let Some(state) = Self::extract_state(&msg.data) {
+                let entries = self.state_buffer.entry(msg.topic.clone()).or_default();
+                entries.push((msg.log_time, state));
+            }
+        }
+
+        // Only buffer image-topic messages (which are searched by find_image_at_time).
+        // Non-image/non-state messages are never used, so skip them to avoid
+        // cloning megabytes of image data for irrelevant topics.
+        if self.config.image_topics.contains(&msg.topic) {
+            self.message_buffer.push(msg);
+            self.progress
+                .set_messages_buffered(self.message_buffer.len());
         }
 
         // Check if we should emit frames
-        self.try_emit_frames(msg.log_time)
+        self.try_emit_frames(log_time)
     }
 
     /// Drain any remaining frames from the buffer.
@@ -296,6 +303,22 @@ impl FrameStream {
             }
 
             self.next_frame_time = Some(frame_time + frame_interval_ns);
+        }
+
+        // Evict old messages that can no longer match any future frame.
+        // Without this, the buffer grows unboundedly (hundreds of thousands of
+        // messages, including MB-sized images), causing O(n) scans to stall.
+        if let Some(next_frame) = self.next_frame_time {
+            let image_tolerance = 16_666_667u64; // ~16ms, same as find_image_at_time
+            let msg_cutoff = next_frame.saturating_sub(image_tolerance);
+            self.message_buffer.retain(|msg| msg.log_time >= msg_cutoff);
+            self.progress
+                .set_messages_buffered(self.message_buffer.len());
+
+            let state_cutoff = next_frame.saturating_sub(self.config.max_state_latency_ns);
+            for entries in self.state_buffer.values_mut() {
+                entries.retain(|(time, _)| *time >= state_cutoff);
+            }
         }
 
         frames
